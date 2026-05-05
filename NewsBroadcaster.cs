@@ -20,6 +20,7 @@ namespace Oxide.Plugins
 
         private const string LayerName = "NewsBroadcasterUI";
         private const string NotificationLayer = "NewsNotificationUI";
+        private const string ConfirmLayer = "NewsConfirmUI";
         private const string DataFile = "NewsBroadcaster_Data";
 
         private const string PermAdmin = "newsbroadcaster.admin";
@@ -39,7 +40,7 @@ namespace Oxide.Plugins
         private Dictionary<ulong, int> historyContentScrollOffsets = new Dictionary<ulong, int>();
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 14;
-        private const int BodyScrollStepLines = 6;
+        private const int BodyScrollStepLines = 3;
         private const int BodyWrapCharacters = 52;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
@@ -465,7 +466,15 @@ namespace Oxide.Plugins
             {
                 DestroyUI(player);
                 DestroyNotification(player);
+                CuiHelper.DestroyUi(player, ConfirmLayer);
             }
+        }
+
+        void OnPlayerDisconnected(BasePlayer player, string reason)
+        {
+            historyContentScrollOffsets.Remove(player.userID);
+            activeEditors.Remove(player.userID);
+            activeEditorIndices.Remove(player.userID);
         }
         #endregion
 
@@ -619,8 +628,33 @@ namespace Oxide.Plugins
             }
             else
             {
-                SendReply(arg, "Invalid index. Use 'news.list' (not implemented, check data file) or guess based on order.");
+                SendReply(arg, "Invalid index. Use 'news.list' to see all announcements with their indices.");
             }
+        }
+
+        [ConsoleCommand("news.list")]
+        private void CmdNewsList(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin && !permission.UserHasPermission(arg.Connection.userid.ToString(), PermAdmin))
+            {
+                SendReply(arg, Msg("NoPermissionCommand"));
+                return;
+            }
+
+            if (announcements.Count == 0)
+            {
+                SendReply(arg, "No announcements stored.");
+                return;
+            }
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"=== Stored Announcements ({announcements.Count}) ===");
+            for (int i = 0; i < announcements.Count; i++)
+            {
+                var a = announcements[i];
+                sb.AppendLine($"[{i}] [{a.Type}] \"{a.Title}\" — {a.Date} by {a.Author}");
+            }
+            SendReply(arg, sb.ToString().TrimEnd());
         }
 
         [ChatCommand("news")]
@@ -711,7 +745,11 @@ namespace Oxide.Plugins
         {
             var player = arg.Connection?.player as BasePlayer;
             if (player == null) return;
-            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin))
+            {
+                SendReply(arg, Msg("NoPermissionCommand"));
+                return;
+            }
             ShowAdminList(player, arg.GetInt(0, 0));
         }
 
@@ -755,7 +793,7 @@ namespace Oxide.Plugins
                     Author = original.Author,
                     Type = original.Type,
                     Timestamp = original.Timestamp,
-                    LikedPlayers = original.LikedPlayers
+                    LikedPlayers = new HashSet<ulong>(original.LikedPlayers)
                 };
                 activeEditorIndices[player.userID] = index;
                 ShowEditor(player);
@@ -774,6 +812,7 @@ namespace Oxide.Plugins
             {
                 announcements.RemoveAt(index);
                 SaveAnnouncements();
+                CuiHelper.DestroyUi(player, ConfirmLayer);
                 ShowAdminList(player, 0);
             }
         }
@@ -866,19 +905,22 @@ namespace Oxide.Plugins
             if (!string.IsNullOrEmpty(ann.ImageUrl) && ImageLibrary != null)
                  ImageLibrary.Call("AddImage", ann.ImageUrl, ann.ImageUrl, 0UL);
 
-            foreach (var p in BasePlayer.activePlayerList)
+            if (index == -1)
             {
-                if (config.Notification.Enabled)
-                    ShowNotification(p, ann);
-                else
-                    ShowPopup(p, ann, false, true);
+                foreach (var p in BasePlayer.activePlayerList)
+                {
+                    if (config.Notification.Enabled)
+                        ShowNotification(p, ann);
+                    else
+                        ShowPopup(p, ann, false, true);
+                }
             }
 
             activeEditors.Remove(player.userID);
             activeEditorIndices.Remove(player.userID);
 
             ShowAdminList(player, 0);
-            SendReply(player, "Announcement saved and broadcasted to all players!");
+            SendReply(player, index == -1 ? "Announcement saved and broadcasted to all players!" : "Announcement updated.");
         }
 
         [ConsoleCommand("news.editor.cancel")]
@@ -935,6 +977,9 @@ namespace Oxide.Plugins
 
             DestroyNotification(player);
 
+            int annIndex = announcements.IndexOf(ann);
+            if (annIndex < 0) annIndex = 0;
+
             string anchorMin, anchorMax;
             bool isLeft = config.Notification.Position.ToLower() == "left";
 
@@ -955,7 +1000,7 @@ namespace Oxide.Plugins
 
             container.Add(new CuiButton
             {
-                Button = { Color = "0 0 0 0.85", Command = "news.view 0" }, 
+                Button = { Color = "0 0 0 0.85", Command = $"news.view {annIndex}" },
                 RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax },
                 Text = { Text = "" }
             }, "Hud", NotificationLayer);
@@ -1015,7 +1060,6 @@ namespace Oxide.Plugins
 
         private void ShowPopup(BasePlayer player, Announcement ann, bool fromHistory = false, bool playSound = false)
         {
-            ann.Text = NormalizeBodyText(ann.Text);
             DestroyUI(player);
             DestroyNotification(player); 
             playersWithUiOpen.Add(player.userID);
@@ -1108,69 +1152,94 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0.15" },
-                RectTransform = { AnchorMin = $"{contentLeft} 0.15", AnchorMax = "0.98 0.70" }
+                RectTransform = { AnchorMin = $"{contentLeft} 0.15", AnchorMax = "0.925 0.70" }
             }, mainPanel, mainPanel + ".TextViewport");
 
             container.Add(new CuiLabel
             {
                 Text = { Text = GetVisibleBodySlice(ann.Text, currentOffset), FontSize = 14, Align = TextAnchor.UpperLeft, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
-                RectTransform = { AnchorMin = $"{contentLeft + 0.01f} 0.16", AnchorMax = "0.955 0.69" }
+                RectTransform = { AnchorMin = $"{contentLeft + 0.01f} 0.16", AnchorMax = "0.915 0.69" }
             }, mainPanel);
 
             if (CanScrollBody(ann.Text))
             {
-                int upOffset = ClampBodyOffset(ann.Text, currentOffset - BodyScrollStepLines);
-                int downOffset = ClampBodyOffset(ann.Text, currentOffset + BodyScrollStepLines);
                 int maxOffset = GetBodyMaxOffset(ann.Text);
-                float progress = maxOffset <= 0 ? 1f : Mathf.Clamp01((float)currentOffset / Math.Max(1, maxOffset));
-                float handleHeight = 0.10f;
-                float trackMin = 0.16f;
-                float trackMax = 0.69f;
-                float usable = (trackMax - trackMin) - handleHeight;
-                float handleMin = trackMax - handleHeight - (usable * progress);
-                float handleMax = handleMin + handleHeight;
+                int upOffset   = ClampBodyOffset(ann.Text, currentOffset - BodyScrollStepLines);
+                int downOffset = ClampBodyOffset(ann.Text, currentOffset + BodyScrollStepLines);
                 int announcementIndex = announcements.IndexOf(ann);
                 if (announcementIndex < 0) announcementIndex = 0;
 
+                const float trackLeft   = 0.932f;
+                const float trackRight  = 0.978f;
+                const float trackBottom = 0.165f;
+                const float trackTop    = 0.690f;
+
+                // Track background
                 container.Add(new CuiPanel
                 {
-                    Image = { Color = "0 0 0 0.35" },
-                    RectTransform = { AnchorMin = "0.96 0.16", AnchorMax = "0.975 0.69" }
+                    Image = { Color = "0 0 0 0.40" },
+                    RectTransform = { AnchorMin = $"{trackLeft} {trackBottom}", AnchorMax = $"{trackRight} {trackTop}" }
                 }, mainPanel);
 
+                // Clickable jump zones stacked along the track — clicking anywhere scrolls to that position
+                if (maxOffset > 0)
+                {
+                    const int jumpZones = 8;
+                    float zoneH = (trackTop - trackBottom) / jumpZones;
+                    for (int z = 0; z < jumpZones; z++)
+                    {
+                        float zMin = trackBottom + z * zoneH;
+                        float zMax = zMin + zoneH;
+                        // zone 0 = bottom of track = end of text; zone N-1 = top of track = start of text
+                        int targetOffset = ClampBodyOffset(ann.Text, Mathf.RoundToInt((float)(jumpZones - 1 - z) / (jumpZones - 1) * maxOffset));
+                        container.Add(new CuiButton
+                        {
+                            Button = { Color = "0 0 0 0", Command = $"news.scrollbody {announcementIndex} {targetOffset}" },
+                            Text = { Text = "" },
+                            RectTransform = { AnchorMin = $"{trackLeft} {zMin:F3}", AnchorMax = $"{trackRight} {zMax:F3}" }
+                        }, mainPanel);
+                    }
+                }
+
+                // Scroll handle — drawn over the zones; shows position and blocks clicks in its area
+                float progress = maxOffset <= 0 ? 0f : Mathf.Clamp01((float)currentOffset / maxOffset);
+                float handleH  = 0.08f;
+                float usable   = (trackTop - trackBottom) - handleH;
+                float handleMin = trackTop - handleH - usable * progress;
+                float handleMax = handleMin + handleH;
                 container.Add(new CuiPanel
                 {
                     Image = { Color = c.ButtonPrimary },
-                    RectTransform = { AnchorMin = $"0.96 {handleMin}", AnchorMax = $"0.975 {handleMax}" }
+                    RectTransform = { AnchorMin = $"{trackLeft + 0.003f} {handleMin:F3}", AnchorMax = $"{trackRight - 0.003f} {handleMax:F3}" }
                 }, mainPanel);
 
-                int currentPage = GetBodyPageIndex(ann.Text, currentOffset) + 1;
-                int totalPages = GetBodyPageCount(ann.Text);
+                // Up arrow — greyed out when already at top
+                bool canUp = currentOffset > 0;
+                container.Add(new CuiButton
+                {
+                    Button = { Color = canUp ? c.ButtonSecondary : "0.12 0.12 0.12 0.6", Command = canUp ? $"news.scrollbody {announcementIndex} {upOffset}" : "" },
+                    Text = { Text = "▲", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = canUp ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = $"{trackLeft} 0.698", AnchorMax = $"{trackRight} 0.744" }
+                }, mainPanel);
+
+                // Down arrow — greyed out when already at bottom
+                bool canDown = currentOffset < maxOffset;
+                container.Add(new CuiButton
+                {
+                    Button = { Color = canDown ? c.ButtonSecondary : "0.12 0.12 0.12 0.6", Command = canDown ? $"news.scrollbody {announcementIndex} {downOffset}" : "" },
+                    Text = { Text = "▼", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = canDown ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = $"{trackLeft} 0.108", AnchorMax = $"{trackRight} 0.154" }
+                }, mainPanel);
+
+                // Line counter shown in the footer bar on the scrollbar column
+                var allLines = BuildBodyDisplayLines(ann.Text);
+                int firstLine = currentOffset + 1;
+                int lastLine  = Math.Min(currentOffset + BodyVisibleLineCount, allLines.Count);
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = $"{currentPage}/{totalPages}", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.925 0.15", AnchorMax = "0.98 0.19" }
+                    Text = { Text = $"{firstLine}-{lastLine}/{allLines.Count}", FontSize = 8, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                    RectTransform = { AnchorMin = "0.925 0.015", AnchorMax = "0.988 0.093" }
                 }, mainPanel);
-
-                if (currentOffset > 0)
-                {
-                    container.Add(new CuiButton
-                    {
-                        Button = { Color = c.ButtonSecondary, Command = $"news.scrollbody {announcementIndex} {upOffset}" },
-                        Text = { Text = "▲", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                        RectTransform = { AnchorMin = "0.945 0.70", AnchorMax = "0.98 0.745" }
-                    }, mainPanel);
-                }
-
-                if (currentOffset < maxOffset)
-                {
-                    container.Add(new CuiButton
-                    {
-                        Button = { Color = c.ButtonSecondary, Command = $"news.scrollbody {announcementIndex} {downOffset}" },
-                        Text = { Text = "▼", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                        RectTransform = { AnchorMin = "0.945 0.105", AnchorMax = "0.98 0.15" }
-                    }, mainPanel);
-                }
             }
 
              container.Add(new CuiPanel
@@ -1505,7 +1574,7 @@ namespace Oxide.Plugins
 
                 container.Add(new CuiButton
                 {
-                    Button = { Color = "0.6 0.2 0.2 0.8", Command = $"news.admin.del {i}" },
+                    Button = { Color = "0.6 0.2 0.2 0.8", Command = $"news.admin.delconfirm {i}" },
                     Text = { Text = "DEL", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
                     RectTransform = { AnchorMin = "0.89 0.2", AnchorMax = "0.97 0.8" }
                 }, itemPanel);
@@ -1623,6 +1692,83 @@ namespace Oxide.Plugins
             }, footerPanel);
 
             CuiHelper.AddUi(player, container);
+        }
+
+        private void ShowDeleteConfirm(BasePlayer player, int index)
+        {
+            if (index < 0 || index >= announcements.Count) return;
+            CuiHelper.DestroyUi(player, ConfirmLayer);
+
+            var ann = announcements[index];
+            var container = new CuiElementContainer();
+            var c = config.Colors;
+
+            container.Add(new CuiPanel
+            {
+                Image = { Color = "0 0 0 0.65" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+                CursorEnabled = true
+            }, "Overlay", ConfirmLayer);
+
+            string dialogPanel = ConfirmLayer + ".Dialog";
+            container.Add(new CuiPanel
+            {
+                Image = { Color = c.PanelBg },
+                RectTransform = { AnchorMin = "0.34 0.40", AnchorMax = "0.66 0.60" }
+            }, ConfirmLayer, dialogPanel);
+
+            container.Add(new CuiPanel
+            {
+                Image = { Color = "0.55 0.12 0.12 0.95" },
+                RectTransform = { AnchorMin = "0 0.76", AnchorMax = "1 1" }
+            }, dialogPanel);
+
+            container.Add(new CuiLabel
+            {
+                Text = { Text = "DELETE ANNOUNCEMENT", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0 0.76", AnchorMax = "1 1" }
+            }, dialogPanel);
+
+            string displayTitle = (ann.Title ?? "").Length > 32 ? ann.Title.Substring(0, 29) + "..." : (ann.Title ?? "");
+            container.Add(new CuiLabel
+            {
+                Text = { Text = $"\"{displayTitle}\"\nThis cannot be undone.", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
+                RectTransform = { AnchorMin = "0.05 0.30", AnchorMax = "0.95 0.74" }
+            }, dialogPanel);
+
+            container.Add(new CuiButton
+            {
+                Button = { Color = c.ButtonSecondary, Command = "news.confirm.close" },
+                Text = { Text = "✕ CANCEL", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.05 0.06", AnchorMax = "0.46 0.27" }
+            }, dialogPanel);
+
+            container.Add(new CuiButton
+            {
+                Button = { Color = "0.65 0.12 0.12 1", Command = $"news.admin.del {index}" },
+                Text = { Text = "✓ DELETE", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.54 0.06", AnchorMax = "0.95 0.27" }
+            }, dialogPanel);
+
+            CuiHelper.AddUi(player, container);
+        }
+
+        [ConsoleCommand("news.admin.delconfirm")]
+        private void CmdNewsAdminDelConfirm(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+
+            int index = arg.GetInt(0, -1);
+            ShowDeleteConfirm(player, index);
+        }
+
+        [ConsoleCommand("news.confirm.close")]
+        private void CmdConfirmClose(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player != null) CuiHelper.DestroyUi(player, ConfirmLayer);
         }
         #endregion
 
