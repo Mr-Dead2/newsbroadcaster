@@ -11,7 +11,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.0.2")]
+    [Info("NewsBroadcaster", "DEDA", "1.0.3")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -38,9 +38,9 @@ namespace Oxide.Plugins
         private Dictionary<ulong, int> activeEditorIndices = new Dictionary<ulong, int>();
         private Dictionary<ulong, int> historyContentScrollOffsets = new Dictionary<ulong, int>();
         private const int MaxContentChars = 32768;
-        private const int BodyVisibleLineCount = 18;
-        private const int BodyScrollStepLines = 8;
-        private const int BodyWrapCharacters = 88;
+        private const int BodyVisibleLineCount = 14;
+        private const int BodyScrollStepLines = 6;
+        private const int BodyWrapCharacters = 52;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
 
@@ -157,7 +157,7 @@ namespace Oxide.Plugins
                 ["ImageUrl"] = "IMAGE URL (leave empty for no image)",
                 ["AnnouncementType"] = "ANNOUNCEMENT TYPE (click to cycle)",
                 ["ContentBody"] = "CONTENT BODY",
-                ["ContentBodyHint"] = "Supports \\n for line breaks. Long content is supported and displayed with scrolling.",
+                ["ContentBodyHint"] = "Supports \\n for line breaks. Long content is supported and displayed with paged scrolling.",
                 ["SaveBroadcast"] = "✔ SAVE & BROADCAST",
                 ["Cancel"] = "✕ CANCEL",
                 ["SelectTheme"] = "SELECT THEME",
@@ -1788,4 +1788,4 @@ namespace Oxide.Plugins
         #endregion
     }
 }
- 
+  
