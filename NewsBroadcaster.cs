@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Libraries;
 using Oxide.Core.Plugins;
@@ -11,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.0.3")]
+    [Info("NewsBroadcaster", "DEDA", "1.0.4")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -36,11 +38,11 @@ namespace Oxide.Plugins
         private HashSet<ulong> playersWithUiOpen = new HashSet<ulong>();
 
         private Dictionary<ulong, Announcement> activeEditors = new Dictionary<ulong, Announcement>();
-        private Dictionary<ulong, int> activeEditorIndices = new Dictionary<ulong, int>();
+        private Dictionary<ulong, string> activeEditorIds = new Dictionary<ulong, string>();
         private Dictionary<ulong, int> historyContentScrollOffsets = new Dictionary<ulong, int>();
+        private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 14;
-        private const int BodyScrollStepLines = 3;
         private const int BodyWrapCharacters = 52;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
@@ -54,6 +56,7 @@ namespace Oxide.Plugins
 
         class Announcement
         {
+            public string Id;
             public string Title;
             public string ImageUrl;
             public string Text;
@@ -163,7 +166,15 @@ namespace Oxide.Plugins
                 ["Cancel"] = "✕ CANCEL",
                 ["SelectTheme"] = "SELECT THEME",
                 ["Active"] = "(ACTIVE)",
-                ["Unknown"] = "UNKNOWN"
+                ["Unknown"] = "UNKNOWN",
+                ["EditButton"] = "EDIT",
+                ["DelButton"] = "DEL",
+                ["DeleteAnnouncement"] = "DELETE ANNOUNCEMENT",
+                ["DeleteConfirmBody"] = "\"{0}\"\nThis cannot be undone.",
+                ["ConfirmDelete"] = "✓ DELETE",
+                ["EditTargetGone"] = "The announcement you were editing was removed before you could save.",
+                ["AnnouncementSavedNew"] = "Announcement saved and broadcasted to all players!",
+                ["AnnouncementUpdated"] = "Announcement updated."
             }, this);
         }
 
@@ -237,21 +248,6 @@ namespace Oxide.Plugins
             return Math.Max(0, lines.Count - BodyVisibleLineCount);
         }
 
-        private int GetBodyPageCount(string text)
-        {
-            var lines = BuildBodyDisplayLines(text);
-            if (lines.Count <= BodyVisibleLineCount)
-                return 1;
-
-            return Math.Max(1, (int)Math.Ceiling((double)(lines.Count - BodyVisibleLineCount) / BodyScrollStepLines) + 1);
-        }
-
-        private int GetBodyPageIndex(string text, int offset)
-        {
-            offset = ClampBodyOffset(text, offset);
-            return Math.Max(0, offset / BodyScrollStepLines);
-        }
-
         private int ClampBodyOffset(string text, int offset)
         {
             int maxOffset = GetBodyMaxOffset(text);
@@ -264,6 +260,26 @@ namespace Oxide.Plugins
         {
             return BuildBodyDisplayLines(text).Count > BodyVisibleLineCount;
         }
+
+        private static string NewAnnouncementId() => Guid.NewGuid().ToString("N");
+
+        private Announcement FindById(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            for (int i = 0; i < announcements.Count; i++)
+                if (string.Equals(announcements[i].Id, id, StringComparison.Ordinal))
+                    return announcements[i];
+            return null;
+        }
+
+        private int FindIndexById(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return -1;
+            for (int i = 0; i < announcements.Count; i++)
+                if (string.Equals(announcements[i].Id, id, StringComparison.Ordinal))
+                    return i;
+            return -1;
+        }
         #endregion
 
         #region Configuration
@@ -275,22 +291,17 @@ namespace Oxide.Plugins
                 config = Config.ReadObject<ConfigData>();
                 if (config == null) throw new Exception();
 
-                // MIGRATION: If Themes is missing or empty, populate defaults and try to save old colors
+                // MIGRATION: If Themes is missing or empty, populate defaults and preserve legacy "Colors"
                 if (config.Themes == null) config.Themes = new Dictionary<string, UIColors>();
 
                 if (config.Themes.Count == 0)
                 {
-                    // Create defaults first (similar to LoadDefaultConfig)
-                    config.Themes["Default"] = new UIColors(); 
+                    UIColors legacyColors = TryReadLegacyColors();
+
+                    config.Themes["Default"] = legacyColors ?? new UIColors();
                     config.Themes["Dark"] = new UIColors { PanelBg = "0.05 0.05 0.05 0.98", HeaderBg = "0.02 0.02 0.02 0.9", ContentBg = "0.1 0.1 0.1 0.8", ButtonPrimary = "0.2 0.2 0.2 1.0", ButtonSecondary = "0.15 0.15 0.15 1.0", TextTitle = "0.9 0.9 0.9 1.0", TextNormal = "0.7 0.7 0.7 1.0", TextMuted = "0.4 0.4 0.4 1.0" };
                     config.Themes["Ocean"] = new UIColors { PanelBg = "0.05 0.1 0.15 0.96", HeaderBg = "0.02 0.05 0.08 0.8", ContentBg = "0.08 0.15 0.2 0.6", ButtonPrimary = "0.0 0.6 0.8 0.9", ButtonSecondary = "0.1 0.25 0.3 0.8", TextTitle = "0.8 0.95 1.0 1.0", TextNormal = "0.8 0.9 0.9 1.0", TextMuted = "0.4 0.6 0.7 1.0" };
                     config.Themes["Rust"] = new UIColors { PanelBg = "0.15 0.12 0.1 0.96", HeaderBg = "0.1 0.08 0.06 0.9", ContentBg = "0.2 0.18 0.15 0.6", ButtonPrimary = "0.8 0.25 0.1 0.9", ButtonSecondary = "0.3 0.25 0.2 0.9", TextTitle = "0.9 0.85 0.8 1.0", TextNormal = "0.8 0.75 0.7 1.0", TextMuted = "0.6 0.5 0.4 1.0" };
-
-                    // If we had old colors (config.Colors would need be read manually from a JObject to be perfect, 
-                    // but here we just rely on the fact that if it was loaded, it might be lost if we don't handle it precisely.
-                    // For simplicity in this structure: The property 'Colors' is now a getter. 
-                    // If JSON had "Colors": {...}, it's now ignored by the serializer for the new property.
-                    // Realistically, users will just get the new defaults.
 
                     config.SelectedTheme = "Default";
                     SaveConfig();
@@ -300,6 +311,21 @@ namespace Oxide.Plugins
             {
                 config = new ConfigData();
                 SaveConfig();
+            }
+        }
+
+        private UIColors TryReadLegacyColors()
+        {
+            try
+            {
+                var raw = Config.ReadObject<JObject>();
+                var colorsToken = raw?["Colors"];
+                if (colorsToken == null || colorsToken.Type != JTokenType.Object) return null;
+                return colorsToken.ToObject<UIColors>();
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -404,12 +430,13 @@ namespace Oxide.Plugins
             // Fix/Backfill timestamps for older data
             long baseTime = DateTime.UtcNow.Ticks;
             bool changed = false;
+            var seenIds = new HashSet<string>(StringComparer.Ordinal);
             for (int i = 0; i < announcements.Count; i++)
             {
                 if (announcements[i].Timestamp == 0)
                 {
                     // Assume index 0 is newest
-                    announcements[i].Timestamp = baseTime - (i * 10000); 
+                    announcements[i].Timestamp = baseTime - (i * 10000);
                     changed = true;
                 }
 
@@ -417,6 +444,14 @@ namespace Oxide.Plugins
                 if (announcements[i].LikedPlayers == null)
                 {
                     announcements[i].LikedPlayers = new HashSet<ulong>();
+                    changed = true;
+                }
+
+                // DATA MIGRATION: Ensure every announcement has a stable Id
+                if (string.IsNullOrEmpty(announcements[i].Id) || !seenIds.Add(announcements[i].Id))
+                {
+                    announcements[i].Id = NewAnnouncementId();
+                    seenIds.Add(announcements[i].Id);
                     changed = true;
                 }
 
@@ -439,25 +474,20 @@ namespace Oxide.Plugins
 
         void OnPlayerSleepEnded(BasePlayer player)
         {
-            if (config.General.ShowNewsOnConnect && announcements.Count > 0)
-            {
-                var latest = announcements[0];
-                long lastSeen = 0;
-                if (storedData.LastSeenNews.TryGetValue(player.userID, out lastSeen))
-                {
-                    if (lastSeen >= latest.Timestamp) return;
-                }
+            if (!config.General.ShowNewsOnConnect || announcements.Count == 0) return;
 
-                timer.Once(2f, () => 
-                {
-                    if (player != null && player.IsConnected && announcements.Count > 0)
-                    {
-                        ShowPopup(player, announcements[0], true);
-                        storedData.LastSeenNews[player.userID] = latest.Timestamp;
-                        SaveAnnouncements();
-                    }
-                });
-            }
+            var latest = announcements[0];
+            if (storedData.LastSeenNews.TryGetValue(player.userID, out long lastSeen) && lastSeen >= latest.Timestamp)
+                return;
+
+            timer.Once(2f, () =>
+            {
+                if (player == null || !player.IsConnected || announcements.Count == 0) return;
+                var current = announcements[0];
+                ShowPopup(player, current, false);
+                storedData.LastSeenNews[player.userID] = current.Timestamp;
+                SaveAnnouncements();
+            });
         }
 
         void Unload()
@@ -468,13 +498,35 @@ namespace Oxide.Plugins
                 DestroyNotification(player);
                 CuiHelper.DestroyUi(player, ConfirmLayer);
             }
+
+            foreach (var t in autoCloseTimers.Values) t?.Destroy();
+            foreach (var t in notificationTimers.Values) t?.Destroy();
+            autoCloseTimers.Clear();
+            notificationTimers.Clear();
+            playersWithUiOpen.Clear();
+            historyContentScrollOffsets.Clear();
+            activeEditors.Clear();
+            activeEditorIds.Clear();
         }
 
         void OnPlayerDisconnected(BasePlayer player, string reason)
         {
-            historyContentScrollOffsets.Remove(player.userID);
-            activeEditors.Remove(player.userID);
-            activeEditorIndices.Remove(player.userID);
+            ulong id = player.userID;
+            historyContentScrollOffsets.Remove(id);
+            activeEditors.Remove(id);
+            activeEditorIds.Remove(id);
+            playersWithUiOpen.Remove(id);
+
+            if (autoCloseTimers.TryGetValue(id, out var ac))
+            {
+                ac?.Destroy();
+                autoCloseTimers.Remove(id);
+            }
+            if (notificationTimers.TryGetValue(id, out var nt))
+            {
+                nt?.Destroy();
+                notificationTimers.Remove(id);
+            }
         }
         #endregion
 
@@ -488,59 +540,49 @@ namespace Oxide.Plugins
                 return;
             }
 
-            // Use the raw full string to avoid default console splitting issues
-            string fullCommand = arg.FullString;
+            // Use the raw full string to avoid default console splitting issues.
+            // Regex matches a quoted string OR a single non-space token.
+            string fullCommand = arg.FullString ?? string.Empty;
+            var rawMatches = CommandSplitRegex.Matches(fullCommand).Cast<Match>().ToList();
+            var values = rawMatches.Select(m => m.Value.Trim('"')).ToList();
 
-            // Regex to match quoted strings OR unquoted words
-            // Matches: "content with spaces" OR content_without_spaces
-            var matches = CommandSplitRegex.Matches(fullCommand)
-                .Cast<Match>()
-                .Select(m => m.Value.Trim('"')) 
-                .ToList();
-
-            if (matches.Count > 0 && matches[0].Equals("news.show", StringComparison.OrdinalIgnoreCase))
+            if (values.Count < 3)
             {
-                matches.RemoveAt(0);
-            }
-
-            if (matches.Count < 3)
-            {
-                SendReply(arg, $"Error: Invalid arguments. Parsed {matches.Count}, expected at least 3.\nUsage: news.show \"Title\" \"ImageURL\" \"Text\" [Type]");
+                SendReply(arg, $"Error: Invalid arguments. Parsed {values.Count}, expected at least 3.\nUsage: news.show \"Title\" \"ImageURL\" \"Text\" [Type]");
                 return;
             }
 
-            string title = matches[0];
-            string img = matches[1];
+            string title = values[0];
+            string img = values[1];
             if (img == "-") img = "";
 
             string text;
             AnnouncementType type = AnnouncementType.Info;
 
-            string potentialType = matches[matches.Count - 1];
-            if (matches.Count > 3 && Enum.TryParse(potentialType, true, out AnnouncementType parsedType))
+            // Only treat the trailing token as a type when it was passed unquoted —
+            // otherwise a body containing a type-name word (e.g. "Status: Update") would lose its last word.
+            bool lastWasUnquoted = rawMatches.Count > 0 && !rawMatches[rawMatches.Count - 1].Value.StartsWith("\"");
+            if (values.Count > 3 && lastWasUnquoted && Enum.TryParse(values[values.Count - 1], true, out AnnouncementType parsedType))
             {
                 type = parsedType;
-
-                text = string.Join(" ", matches.GetRange(2, matches.Count - 3));
+                text = string.Join(" ", values.GetRange(2, values.Count - 3));
             }
             else
             {
-
-                text = string.Join(" ", matches.GetRange(2, matches.Count - 2));
+                text = string.Join(" ", values.GetRange(2, values.Count - 2));
             }
 
-            text = Regex.Replace(text, @"https?:\/\/[^\s]+", "").Trim();
-            text = Regex.Replace(text, @"[ \t]+", " ");
             text = NormalizeBodyText(text);
 
             string authorName = arg.Connection != null ? arg.Connection.username : config.General.ServerName;
 
             var ann = new Announcement
             {
+                Id = NewAnnouncementId(),
                 Title = title,
                 ImageUrl = img,
                 Text = text,
-                Date = DateTime.Now.ToString("MM/dd HH:mm"),
+                Date = DateTime.Now.ToString(InvariantDateFormat, CultureInfo.InvariantCulture),
                 Author = authorName,
                 Type = type,
                 Timestamp = DateTime.UtcNow.Ticks
@@ -685,12 +727,11 @@ namespace Oxide.Plugins
             var player = arg.Connection?.player as BasePlayer;
             if (player == null) return;
 
-            int index = arg.GetInt(0, 0);
-            if (index >= 0 && index < announcements.Count)
-            {
-                historyContentScrollOffsets[player.userID] = 0;
-                ShowPopup(player, announcements[index], true);
-            }
+            var ann = FindById(arg.GetString(0));
+            if (ann == null) return;
+
+            historyContentScrollOffsets[player.userID] = 0;
+            ShowPopup(player, ann, true);
         }
 
         [ConsoleCommand("news.scrollbody")]
@@ -699,12 +740,12 @@ namespace Oxide.Plugins
             var player = arg.Connection?.player as BasePlayer;
             if (player == null) return;
 
-            int index = arg.GetInt(0, -1);
+            var ann = FindById(arg.GetString(0));
+            if (ann == null) return;
             int offset = arg.GetInt(1, 0);
-            if (index < 0 || index >= announcements.Count) return;
 
-            historyContentScrollOffsets[player.userID] = ClampBodyOffset(announcements[index].Text, offset);
-            ShowPopup(player, announcements[index], true);
+            historyContentScrollOffsets[player.userID] = ClampBodyOffset(ann.Text, offset);
+            ShowPopup(player, ann, true);
         }
 
         [ConsoleCommand("news.close")]
@@ -760,16 +801,16 @@ namespace Oxide.Plugins
             if (player == null) return;
             if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
 
-            activeEditors[player.userID] = new Announcement 
-            { 
-                Title = "New Announcement", 
-                Text = "Enter text here...", 
+            activeEditors[player.userID] = new Announcement
+            {
+                Title = "New Announcement",
+                Text = "Enter text here...",
                 Type = AnnouncementType.Info,
                 Author = player.displayName,
-                Date = DateTime.Now.ToString("MM/dd HH:mm"),
+                Date = DateTime.Now.ToString(InvariantDateFormat, CultureInfo.InvariantCulture),
                 ImageUrl = ""
             };
-            activeEditorIndices[player.userID] = -1;
+            activeEditorIds[player.userID] = string.Empty;
             ShowEditor(player);
         }
 
@@ -780,24 +821,23 @@ namespace Oxide.Plugins
             if (player == null) return;
             if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
 
-            int index = arg.GetInt(0, -1);
-            if (index >= 0 && index < announcements.Count)
+            var original = FindById(arg.GetString(0));
+            if (original == null) return;
+
+            activeEditors[player.userID] = new Announcement
             {
-                var original = announcements[index];
-                activeEditors[player.userID] = new Announcement
-                {
-                    Title = original.Title,
-                    ImageUrl = original.ImageUrl,
-                    Text = original.Text,
-                    Date = original.Date,
-                    Author = original.Author,
-                    Type = original.Type,
-                    Timestamp = original.Timestamp,
-                    LikedPlayers = new HashSet<ulong>(original.LikedPlayers)
-                };
-                activeEditorIndices[player.userID] = index;
-                ShowEditor(player);
-            }
+                Id = original.Id,
+                Title = original.Title,
+                ImageUrl = original.ImageUrl,
+                Text = original.Text,
+                Date = original.Date,
+                Author = original.Author,
+                Type = original.Type,
+                Timestamp = original.Timestamp,
+                LikedPlayers = new HashSet<ulong>(original.LikedPlayers)
+            };
+            activeEditorIds[player.userID] = original.Id;
+            ShowEditor(player);
         }
 
         [ConsoleCommand("news.admin.del")]
@@ -807,8 +847,8 @@ namespace Oxide.Plugins
             if (player == null) return;
             if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
 
-            int index = arg.GetInt(0, -1);
-            if (index >= 0 && index < announcements.Count)
+            int index = FindIndexById(arg.GetString(0));
+            if (index >= 0)
             {
                 announcements.RemoveAt(index);
                 SaveAnnouncements();
@@ -825,33 +865,29 @@ namespace Oxide.Plugins
             if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
             if (!activeEditors.ContainsKey(player.userID)) return;
 
-            if (arg.Args == null || arg.Args.Length < 2) return;
+            if (arg.Args == null || arg.Args.Length < 1) return;
 
-            string field = arg.Args[0].ToLower();
+            string field = arg.Args[0].ToLowerInvariant();
 
-            string value = string.Join(" ", arg.Args.Skip(1));
-            string fullStr = arg.FullString;
-
-            if (!string.IsNullOrEmpty(fullStr))
+            // Reconstruct the value from FullString so multi-space/multi-line input is preserved verbatim.
+            string fullStr = arg.FullString ?? string.Empty;
+            string value;
+            if (fullStr.StartsWith(field, StringComparison.OrdinalIgnoreCase))
             {
-                if (fullStr.StartsWith("news.editor.input", StringComparison.OrdinalIgnoreCase))
-                    fullStr = fullStr.Substring("news.editor.input".Length).TrimStart();
-
-                if (fullStr.StartsWith(field, StringComparison.OrdinalIgnoreCase))
-                {
-                    value = fullStr.Substring(field.Length).TrimStart();
-                    if (value.StartsWith("\"") && value.EndsWith("\"") && value.Length >= 2)
-                        value = value.Substring(1, value.Length - 2);
-                }
+                value = fullStr.Substring(field.Length).TrimStart();
+                if (value.Length >= 2 && value.StartsWith("\"") && value.EndsWith("\""))
+                    value = value.Substring(1, value.Length - 2);
             }
-            var ann = activeEditors[player.userID];
+            else
+            {
+                value = string.Join(" ", arg.Args.Skip(1));
+            }
 
+            var ann = activeEditors[player.userID];
             switch (field)
             {
                 case "title": ann.Title = value; break;
-                case "text":
-                    ann.Text = NormalizeBodyText(value);
-                    break;
+                case "text": ann.Text = NormalizeBodyText(value); break;
                 case "image": ann.ImageUrl = value; break;
             }
 
@@ -884,28 +920,40 @@ namespace Oxide.Plugins
 
             var ann = activeEditors[player.userID];
             ann.Text = NormalizeBodyText(ann.Text);
-            int index = activeEditorIndices[player.userID];
+            activeEditorIds.TryGetValue(player.userID, out string editingId);
+            bool isNew = string.IsNullOrEmpty(editingId);
 
-            if (index == -1)
+            if (isNew)
             {
+                ann.Id = NewAnnouncementId();
                 ann.Timestamp = DateTime.UtcNow.Ticks;
-                ann.Date = DateTime.Now.ToString("MM/dd HH:mm");
+                ann.Date = DateTime.Now.ToString(InvariantDateFormat, CultureInfo.InvariantCulture);
                 announcements.Insert(0, ann);
                 SendToDiscord(ann);
             }
             else
             {
-                if (index < announcements.Count)
+                int idx = FindIndexById(editingId);
+                if (idx >= 0)
                 {
-                    announcements[index] = ann;
+                    ann.Id = editingId;
+                    announcements[idx] = ann;
+                }
+                else
+                {
+                    SendReply(player, Msg("EditTargetGone", player));
+                    activeEditors.Remove(player.userID);
+                    activeEditorIds.Remove(player.userID);
+                    ShowAdminList(player, 0);
+                    return;
                 }
             }
 
             SaveAnnouncements();
             if (!string.IsNullOrEmpty(ann.ImageUrl) && ImageLibrary != null)
-                 ImageLibrary.Call("AddImage", ann.ImageUrl, ann.ImageUrl, 0UL);
+                ImageLibrary.Call("AddImage", ann.ImageUrl, ann.ImageUrl, 0UL);
 
-            if (index == -1)
+            if (isNew)
             {
                 foreach (var p in BasePlayer.activePlayerList)
                 {
@@ -917,10 +965,10 @@ namespace Oxide.Plugins
             }
 
             activeEditors.Remove(player.userID);
-            activeEditorIndices.Remove(player.userID);
+            activeEditorIds.Remove(player.userID);
 
             ShowAdminList(player, 0);
-            SendReply(player, index == -1 ? "Announcement saved and broadcasted to all players!" : "Announcement updated.");
+            SendReply(player, isNew ? Msg("AnnouncementSavedNew", player) : Msg("AnnouncementUpdated", player));
         }
 
         [ConsoleCommand("news.editor.cancel")]
@@ -931,7 +979,7 @@ namespace Oxide.Plugins
             if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
 
             activeEditors.Remove(player.userID);
-            activeEditorIndices.Remove(player.userID);
+            activeEditorIds.Remove(player.userID);
             ShowAdminList(player, 0);
         }
         #endregion
@@ -943,18 +991,14 @@ namespace Oxide.Plugins
             var player = arg.Connection?.player as BasePlayer;
             if (player == null) return;
 
-            int index = arg.GetInt(0, -1);
-            if (index >= 0 && index < announcements.Count)
-            {
-                var ann = announcements[index];
-                if (ann.LikedPlayers.Contains(player.userID))
-                    ann.LikedPlayers.Remove(player.userID);
-                else
-                    ann.LikedPlayers.Add(player.userID);
+            var ann = FindById(arg.GetString(0));
+            if (ann == null) return;
 
-                SaveAnnouncements();
-                ShowPopup(player, ann, true, false); 
-            }
+            if (!ann.LikedPlayers.Remove(player.userID))
+                ann.LikedPlayers.Add(player.userID);
+
+            SaveAnnouncements();
+            ShowPopup(player, ann, true, false);
         }
 
         private void DestroyNotification(BasePlayer player)
@@ -977,18 +1021,15 @@ namespace Oxide.Plugins
 
             DestroyNotification(player);
 
-            int annIndex = announcements.IndexOf(ann);
-            if (annIndex < 0) annIndex = 0;
-
             string anchorMin, anchorMax;
-            bool isLeft = config.Notification.Position.ToLower() == "left";
+            bool isLeft = string.Equals(config.Notification.Position, "left", StringComparison.OrdinalIgnoreCase);
 
             if (isLeft)
             {
                 anchorMin = "0.01 0.85";
                 anchorMax = "0.15 0.93";
             }
-            else 
+            else
             {
                 anchorMin = "0.84 0.85";
                 anchorMax = "0.98 0.93";
@@ -1000,7 +1041,7 @@ namespace Oxide.Plugins
 
             container.Add(new CuiButton
             {
-                Button = { Color = "0 0 0 0.85", Command = $"news.view {annIndex}" },
+                Button = { Color = "0 0 0 0.85", Command = $"news.view {ann.Id}" },
                 RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax },
                 Text = { Text = "" }
             }, "Hud", NotificationLayer);
@@ -1164,15 +1205,28 @@ namespace Oxide.Plugins
             if (CanScrollBody(ann.Text))
             {
                 int maxOffset = GetBodyMaxOffset(ann.Text);
-                int upOffset   = ClampBodyOffset(ann.Text, currentOffset - BodyScrollStepLines);
-                int downOffset = ClampBodyOffset(ann.Text, currentOffset + BodyScrollStepLines);
-                int announcementIndex = announcements.IndexOf(ann);
-                if (announcementIndex < 0) announcementIndex = 0;
+                int lineUp     = ClampBodyOffset(ann.Text, currentOffset - 1);
+                int lineDown   = ClampBodyOffset(ann.Text, currentOffset + 1);
+                int pageUp     = ClampBodyOffset(ann.Text, currentOffset - BodyVisibleLineCount);
+                int pageDown   = ClampBodyOffset(ann.Text, currentOffset + BodyVisibleLineCount);
+                string annId   = ann.Id;
 
                 const float trackLeft   = 0.932f;
                 const float trackRight  = 0.978f;
                 const float trackBottom = 0.165f;
-                const float trackTop    = 0.690f;
+                const float trackTop    = 0.677f;
+                const float btnHeight   = 0.032f;
+                const float btnGap      = 0.002f;
+
+                float lineUpBottom = trackTop + btnGap;
+                float lineUpTop    = lineUpBottom + btnHeight;
+                float pageUpBottom = lineUpTop + btnGap;
+                float pageUpTop    = pageUpBottom + btnHeight;
+
+                float lineDnTop    = trackBottom - btnGap;
+                float lineDnBottom = lineDnTop - btnHeight;
+                float pageDnTop    = lineDnBottom - btnGap;
+                float pageDnBottom = pageDnTop - btnHeight;
 
                 // Track background
                 container.Add(new CuiPanel
@@ -1181,10 +1235,10 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = $"{trackLeft} {trackBottom}", AnchorMax = $"{trackRight} {trackTop}" }
                 }, mainPanel);
 
-                // Clickable jump zones stacked along the track — clicking anywhere scrolls to that position
+                // Clickable jump zones stacked along the track — click anywhere to scroll to that position
                 if (maxOffset > 0)
                 {
-                    const int jumpZones = 8;
+                    const int jumpZones = 14;
                     float zoneH = (trackTop - trackBottom) / jumpZones;
                     for (int z = 0; z < jumpZones; z++)
                     {
@@ -1194,51 +1248,73 @@ namespace Oxide.Plugins
                         int targetOffset = ClampBodyOffset(ann.Text, Mathf.RoundToInt((float)(jumpZones - 1 - z) / (jumpZones - 1) * maxOffset));
                         container.Add(new CuiButton
                         {
-                            Button = { Color = "0 0 0 0", Command = $"news.scrollbody {announcementIndex} {targetOffset}" },
+                            Button = { Color = "0 0 0 0", Command = $"news.scrollbody {annId} {targetOffset}" },
                             Text = { Text = "" },
                             RectTransform = { AnchorMin = $"{trackLeft} {zMin:F3}", AnchorMax = $"{trackRight} {zMax:F3}" }
                         }, mainPanel);
                     }
                 }
 
-                // Scroll handle — drawn over the zones; shows position and blocks clicks in its area
-                float progress = maxOffset <= 0 ? 0f : Mathf.Clamp01((float)currentOffset / maxOffset);
-                float handleH  = 0.08f;
-                float usable   = (trackTop - trackBottom) - handleH;
-                float handleMin = trackTop - handleH - usable * progress;
-                float handleMax = handleMin + handleH;
+                // Scroll handle — drawn over the zones; shows position and blocks clicks in its area.
+                // Handle height is proportional to the visible-window / total-content ratio so it
+                // visually communicates how much of the body is on screen.
+                var allLines = BuildBodyDisplayLines(ann.Text);
+                float windowRatio = allLines.Count <= 0 ? 1f : Mathf.Clamp((float)BodyVisibleLineCount / allLines.Count, 0.10f, 0.90f);
+                float trackH      = trackTop - trackBottom;
+                float handleH     = trackH * windowRatio;
+                float usable      = trackH - handleH;
+                float progress    = maxOffset <= 0 ? 0f : Mathf.Clamp01((float)currentOffset / maxOffset);
+                float handleMin   = trackTop - handleH - usable * progress;
+                float handleMax   = handleMin + handleH;
                 container.Add(new CuiPanel
                 {
                     Image = { Color = c.ButtonPrimary },
                     RectTransform = { AnchorMin = $"{trackLeft + 0.003f} {handleMin:F3}", AnchorMax = $"{trackRight - 0.003f} {handleMax:F3}" }
                 }, mainPanel);
 
-                // Up arrow — greyed out when already at top
                 bool canUp = currentOffset > 0;
+                bool canDown = currentOffset < maxOffset;
+                string disabledColor = "0.12 0.12 0.12 0.6";
+
+                // Page up (▲▲) — jumps a full visible page
                 container.Add(new CuiButton
                 {
-                    Button = { Color = canUp ? c.ButtonSecondary : "0.12 0.12 0.12 0.6", Command = canUp ? $"news.scrollbody {announcementIndex} {upOffset}" : "" },
-                    Text = { Text = "▲", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = canUp ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = $"{trackLeft} 0.698", AnchorMax = $"{trackRight} 0.744" }
+                    Button = { Color = canUp ? c.ButtonSecondary : disabledColor, Command = canUp ? $"news.scrollbody {annId} {pageUp}" : "" },
+                    Text = { Text = "▲▲", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = canUp ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = $"{trackLeft} {pageUpBottom:F3}", AnchorMax = $"{trackRight} {pageUpTop:F3}" }
                 }, mainPanel);
 
-                // Down arrow — greyed out when already at bottom
-                bool canDown = currentOffset < maxOffset;
+                // Line up (▲) — single-line step
                 container.Add(new CuiButton
                 {
-                    Button = { Color = canDown ? c.ButtonSecondary : "0.12 0.12 0.12 0.6", Command = canDown ? $"news.scrollbody {announcementIndex} {downOffset}" : "" },
+                    Button = { Color = canUp ? c.ButtonSecondary : disabledColor, Command = canUp ? $"news.scrollbody {annId} {lineUp}" : "" },
+                    Text = { Text = "▲", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = canUp ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = $"{trackLeft} {lineUpBottom:F3}", AnchorMax = $"{trackRight} {lineUpTop:F3}" }
+                }, mainPanel);
+
+                // Line down (▼) — single-line step
+                container.Add(new CuiButton
+                {
+                    Button = { Color = canDown ? c.ButtonSecondary : disabledColor, Command = canDown ? $"news.scrollbody {annId} {lineDown}" : "" },
                     Text = { Text = "▼", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = canDown ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = $"{trackLeft} 0.108", AnchorMax = $"{trackRight} 0.154" }
+                    RectTransform = { AnchorMin = $"{trackLeft} {lineDnBottom:F3}", AnchorMax = $"{trackRight} {lineDnTop:F3}" }
+                }, mainPanel);
+
+                // Page down (▼▼) — jumps a full visible page
+                container.Add(new CuiButton
+                {
+                    Button = { Color = canDown ? c.ButtonSecondary : disabledColor, Command = canDown ? $"news.scrollbody {annId} {pageDown}" : "" },
+                    Text = { Text = "▼▼", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = canDown ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = $"{trackLeft} {pageDnBottom:F3}", AnchorMax = $"{trackRight} {pageDnTop:F3}" }
                 }, mainPanel);
 
                 // Line counter shown in the footer bar on the scrollbar column
-                var allLines = BuildBodyDisplayLines(ann.Text);
                 int firstLine = currentOffset + 1;
                 int lastLine  = Math.Min(currentOffset + BodyVisibleLineCount, allLines.Count);
                 container.Add(new CuiLabel
                 {
                     Text = { Text = $"{firstLine}-{lastLine}/{allLines.Count}", FontSize = 8, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = "0.925 0.015", AnchorMax = "0.988 0.093" }
+                    RectTransform = { AnchorMin = "0.925 0.015", AnchorMax = "0.988 0.078" }
                 }, mainPanel);
             }
 
@@ -1263,15 +1339,14 @@ namespace Oxide.Plugins
 
             bool liked = ann.LikedPlayers.Contains(player.userID);
             string heartColor = liked ? "0.8 0.25 0.25 1" : "0.6 0.6 0.6 1";
-            int count = ann.LikedPlayers.Count;
-            int index = announcements.IndexOf(ann); 
+            int likeCount = ann.LikedPlayers.Count;
 
-            if (index >= 0)
+            if (!string.IsNullOrEmpty(ann.Id))
             {
                 container.Add(new CuiButton
                 {
-                    Button = { Color = "0 0 0 0", Command = $"news.like {index}" },
-                    Text = { Text = $"❤ {count}", FontSize = 12, Align = TextAnchor.MiddleRight, Color = heartColor, Font = "robotocondensed-bold.ttf" },
+                    Button = { Color = "0 0 0 0", Command = $"news.like {ann.Id}" },
+                    Text = { Text = $"❤ {likeCount}", FontSize = 12, Align = TextAnchor.MiddleRight, Color = heartColor, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.65 0.015", AnchorMax = "0.80 0.085" }
                 }, mainPanel);
             }
@@ -1393,7 +1468,7 @@ namespace Oxide.Plugins
 
                 container.Add(new CuiButton
                 {
-                    Button = { Color = c.ButtonPrimary, Command = $"news.view {i}" },
+                    Button = { Color = c.ButtonPrimary, Command = $"news.view {ann.Id}" },
                     Text = { Text = Msg("ReadMore", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.88 0.15", AnchorMax = "0.98 0.45" }
                 }, itemPanel);
@@ -1456,9 +1531,9 @@ namespace Oxide.Plugins
             try
             {
                 var parts = rgba.Split(' ');
-                int r = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[0]) * 255), 0, 255);
-                int g = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[1]) * 255), 0, 255);
-                int b = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[2]) * 255), 0, 255);
+                int r = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[0], CultureInfo.InvariantCulture) * 255), 0, 255);
+                int g = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[1], CultureInfo.InvariantCulture) * 255), 0, 255);
+                int b = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[2], CultureInfo.InvariantCulture) * 255), 0, 255);
                 return $"#{r:X2}{g:X2}{b:X2}";
             }
             catch { return "#FFFFFF"; }
@@ -1567,15 +1642,15 @@ namespace Oxide.Plugins
 
                 container.Add(new CuiButton
                 {
-                    Button = { Color = "0.2 0.4 0.6 0.8", Command = $"news.admin.edit {i}" },
-                    Text = { Text = "EDIT", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+                    Button = { Color = "0.2 0.4 0.6 0.8", Command = $"news.admin.edit {ann.Id}" },
+                    Text = { Text = Msg("EditButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
                     RectTransform = { AnchorMin = "0.80 0.2", AnchorMax = "0.88 0.8" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
                 {
-                    Button = { Color = "0.6 0.2 0.2 0.8", Command = $"news.admin.delconfirm {i}" },
-                    Text = { Text = "DEL", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+                    Button = { Color = "0.6 0.2 0.2 0.8", Command = $"news.admin.delconfirm {ann.Id}" },
+                    Text = { Text = Msg("DelButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
                     RectTransform = { AnchorMin = "0.89 0.2", AnchorMax = "0.97 0.8" }
                 }, itemPanel);
 
@@ -1624,7 +1699,8 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel { Image = { Color = c.PanelBg }, RectTransform = { AnchorMin = "0.2 0.2", AnchorMax = "0.8 0.8" } }, LayerName, editorPanel);
 
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg }, RectTransform = { AnchorMin = "0 0.9", AnchorMax = "1 1" } }, editorPanel);
-            container.Add(new CuiLabel { Text = { Text = activeEditorIndices[player.userID] == -1 ? Msg("CreateAnnouncement", player) : Msg("EditAnnouncement", player), FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.9", AnchorMax = "0.9 1" } }, editorPanel);
+            bool editingExisting = activeEditorIds.TryGetValue(player.userID, out string editingId) && !string.IsNullOrEmpty(editingId);
+            container.Add(new CuiLabel { Text = { Text = editingExisting ? Msg("EditAnnouncement", player) : Msg("CreateAnnouncement", player), FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.9", AnchorMax = "0.9 1" } }, editorPanel);
 
             container.Add(new CuiButton { 
                 Button = { Color = "0 0 0 0", Command = "news.editor.cancel" }, 
@@ -1694,12 +1770,12 @@ namespace Oxide.Plugins
             CuiHelper.AddUi(player, container);
         }
 
-        private void ShowDeleteConfirm(BasePlayer player, int index)
+        private void ShowDeleteConfirm(BasePlayer player, string id)
         {
-            if (index < 0 || index >= announcements.Count) return;
+            var ann = FindById(id);
+            if (ann == null) return;
             CuiHelper.DestroyUi(player, ConfirmLayer);
 
-            var ann = announcements[index];
             var container = new CuiElementContainer();
             var c = config.Colors;
 
@@ -1725,28 +1801,28 @@ namespace Oxide.Plugins
 
             container.Add(new CuiLabel
             {
-                Text = { Text = "DELETE ANNOUNCEMENT", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                Text = { Text = Msg("DeleteAnnouncement", player), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = "0 0.76", AnchorMax = "1 1" }
             }, dialogPanel);
 
             string displayTitle = (ann.Title ?? "").Length > 32 ? ann.Title.Substring(0, 29) + "..." : (ann.Title ?? "");
             container.Add(new CuiLabel
             {
-                Text = { Text = $"\"{displayTitle}\"\nThis cannot be undone.", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
+                Text = { Text = Msg("DeleteConfirmBody", player, displayTitle), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
                 RectTransform = { AnchorMin = "0.05 0.30", AnchorMax = "0.95 0.74" }
             }, dialogPanel);
 
             container.Add(new CuiButton
             {
                 Button = { Color = c.ButtonSecondary, Command = "news.confirm.close" },
-                Text = { Text = "✕ CANCEL", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                Text = { Text = Msg("Cancel", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = "0.05 0.06", AnchorMax = "0.46 0.27" }
             }, dialogPanel);
 
             container.Add(new CuiButton
             {
-                Button = { Color = "0.65 0.12 0.12 1", Command = $"news.admin.del {index}" },
-                Text = { Text = "✓ DELETE", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                Button = { Color = "0.65 0.12 0.12 1", Command = $"news.admin.del {ann.Id}" },
+                Text = { Text = Msg("ConfirmDelete", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = "0.54 0.06", AnchorMax = "0.95 0.27" }
             }, dialogPanel);
 
@@ -1760,8 +1836,7 @@ namespace Oxide.Plugins
             if (player == null) return;
             if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
 
-            int index = arg.GetInt(0, -1);
-            ShowDeleteConfirm(player, index);
+            ShowDeleteConfirm(player, arg.GetString(0));
         }
 
         [ConsoleCommand("news.confirm.close")]
@@ -1908,6 +1983,8 @@ namespace Oxide.Plugins
             {
                 username = config.Discord.BotName,
                 content = content,
+                // Restrict to role mentions only — body text and titles cannot trigger @everyone/@here pings.
+                allowed_mentions = new { parse = new[] { "roles" } },
                 embeds = new[]
                 {
                     new
