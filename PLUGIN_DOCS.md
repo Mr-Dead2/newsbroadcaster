@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.0.4  
+**Version:** 1.1.0  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -29,6 +29,9 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 - ImageLibrary support for image caching
 - Notify plugin integration (optional)
 - Optional item rewards for reading announcements and/or liking them (once per player per announcement)
+- **Pinned announcements** — flag posts so they always sit on top of the archive and admin list
+- **Bulk admin operations** — multi-select rows, then delete / pin / unpin in one click
+- **API hooks** — `OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked` for integrations with other plugins
 
 ---
 
@@ -118,6 +121,13 @@ All UI-driven commands address announcements by their stable `Id` (a hex GUID as
 | `news.admin.edit <id>` | Open the editor for an existing announcement |
 | `news.admin.del <id>` | Delete an announcement via admin UI |
 | `news.admin.delconfirm <id>` | Show the delete-confirmation dialog |
+| `news.admin.togglepin <id> [page]` | Toggle the Pinned flag on an announcement |
+| `news.admin.toggleselect <id> [page]` | Toggle the bulk-action selection for an announcement |
+| `news.admin.selectpage <page>` | Select / deselect every announcement on the current page |
+| `news.admin.clearsel [page]` | Clear the entire bulk-action selection |
+| `news.admin.bulkdelconfirm [page]` | Show the bulk-delete confirmation dialog |
+| `news.admin.bulkdel [page]` | Delete every announcement in the current selection |
+| `news.admin.bulkpin <0\|1> [page]` | Pin (`1`) or unpin (`0`) every announcement in the current selection |
 | `news.admin.themes` | Open the theme selector UI |
 | `news.admin.settheme "ThemeName"` | Apply a theme |
 | `news.editor.input <field> <value>` | Update a field in the editor (`title` / `image` / `text`) |
@@ -281,6 +291,115 @@ Each theme exposes these RGBA string fields (`"R G B A"`, values 0–1):
 | `TextTitle` | Title text colour |
 | `TextNormal` | Body text colour |
 | `TextMuted` | Hint / meta text colour |
+
+---
+
+## Pinned Announcements
+
+Any announcement can be **pinned** so that it always sits at the top of the in-game archive (`/news`) and the admin list, regardless of its timestamp. Use cases: server rules, wipe schedule, donation links, current event banners.
+
+- Toggle the pin from the admin list — every row has a **📌 PIN** / **📌 UNPIN** button next to **EDIT** / **DEL**.
+- Pinned posts get a small `📌` glyph prefix on their title in both the archive and admin views.
+- Sort order: pinned (newest first) → unpinned (newest first). Insertion order in the underlying data is unchanged, so "show on connect" and `news.list` still surface the most recently broadcast announcement.
+
+A console-side toggle is also available:
+
+```
+news.admin.togglepin <id> [returnPage]
+```
+
+`<id>` is the announcement's hex id (find it via `news.list`). `returnPage` is the admin-list page to re-render afterwards; defaults to `0`.
+
+---
+
+## Bulk Admin Operations
+
+The admin list now supports multi-selection. Each row has a checkbox on the far left; click it to add the announcement to your selection set. While the selection is non-empty, a toolbar appears above the page footer:
+
+| Toolbar button | Action |
+|---|---|
+| `✕ DELETE` | Open a confirmation dialog, then delete every selected announcement |
+| `📌 PIN ALL` | Pin every selected announcement (fires `OnNewsEdited` per change) |
+| `📌 UNPIN ALL` | Unpin every selected announcement |
+| `CLEAR` | Empty the selection without affecting any data |
+| `☑ SELECT PAGE` | Toggle: select every announcement currently visible on the page; if everything on the page is already selected, deselect them all |
+
+Behavior details:
+
+- The selection is **per-admin** and lives only in memory; it is dropped when the player disconnects, on `Unload`, and after a successful bulk-delete.
+- Selecting items on one page and then paging to another does **not** lose the selection — the toolbar always reflects the global count.
+- Stale ids (announcements deleted by another admin while you had them selected) are pruned automatically before any bulk action.
+- Bulk delete fires `OnNewsDeleted` once **per** removed announcement.
+- Permissions: every bulk command requires `newsbroadcaster.admin` (or the F1 `IsAdmin` flag), exactly like the single-item operations.
+
+Console equivalents (mostly used by the UI buttons):
+
+```
+news.admin.toggleselect <id> [page]
+news.admin.selectpage <page>
+news.admin.clearsel [page]
+news.admin.bulkdelconfirm [page]
+news.admin.bulkdel [page]
+news.admin.bulkpin <0|1> [page]
+```
+
+---
+
+## API Hooks
+
+Other plugins can react to NewsBroadcaster events by subscribing to these hooks. All hook payloads are plain primitive types (`Dictionary<string, object>`, `BasePlayer`, `bool`, etc.) so consumers don't need to reference NewsBroadcaster's internal types.
+
+| Hook | Signature | When it fires |
+|---|---|---|
+| `OnNewsBroadcast` | `void OnNewsBroadcast(Dictionary<string, object> ann)` | A new announcement is published (RCON `news.show` or admin editor save with no existing id). |
+| `OnNewsEdited` | `void OnNewsEdited(Dictionary<string, object> ann)` | An existing announcement's body, type, or pinned-state is updated through the admin editor or `news.admin.togglepin` / bulk pin. |
+| `OnNewsDeleted` | `void OnNewsDeleted(Dictionary<string, object> ann)` | An announcement is removed (RCON `news.delete`, single delete, or any bulk delete — fires once per victim). |
+| `OnNewsRead` | `void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)` | A player has kept an announcement popup open for `Rewards.ReadDelaySeconds` (default 5s). Fires at most **once per player per announcement**, regardless of whether read rewards are enabled. |
+| `OnNewsLiked` | `void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)` | A player toggles the heart on an announcement. `added == true` for a like, `false` for an un-like. |
+
+The announcement payload dictionary contains:
+
+| Key | Type | Notes |
+|---|---|---|
+| `id` | `string` | Stable hex Guid for the announcement |
+| `title` | `string` | |
+| `author` | `string` | |
+| `type` | `string` | One of `Info`, `Warning`, `Alert`, `Event`, `Update` |
+| `timestamp` | `long` | `DateTime.UtcNow.Ticks` at creation |
+| `date` | `string` | `yyyy-MM-dd HH:mm` invariant-culture timestamp shown in the UI |
+| `text` | `string` | Body text (with `\n` line breaks) |
+| `imageUrl` | `string` | May be empty |
+| `likes` | `int` | Current number of likes |
+| `pinned` | `bool` | |
+
+### Example consumer
+
+```csharp
+using System.Collections.Generic;
+using Oxide.Core.Plugins;
+
+namespace Oxide.Plugins
+{
+    [Info("NewsListener", "you", "1.0.0")]
+    class NewsListener : RustPlugin
+    {
+        void OnNewsBroadcast(Dictionary<string, object> ann)
+        {
+            Puts($"[News] {ann["author"]} posted '{ann["title"]}' ({ann["type"]})");
+        }
+
+        void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)
+        {
+            Puts($"{player.displayName} read announcement {ann["id"]}");
+        }
+
+        void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)
+        {
+            Puts($"{player.displayName} {(added ? "liked" : "un-liked")} {ann["title"]}");
+        }
+    }
+}
+```
 
 ---
 
