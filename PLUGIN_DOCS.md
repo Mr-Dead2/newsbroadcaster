@@ -28,6 +28,7 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 - Sound effect on notification
 - ImageLibrary support for image caching
 - Notify plugin integration (optional)
+- Optional item rewards for reading announcements and/or liking them (once per player per announcement)
 
 ---
 
@@ -165,6 +166,18 @@ The handle height visually reflects the visible-window-to-content ratio.
     "BotName": "Server News",
     "RoleMention": ""
   },
+  "Rewards": {
+    "EnableReadReward": false,
+    "ReadDelaySeconds": 5,
+    "ReadRewards": [
+      { "Shortname": "scrap", "Amount": 5, "SkinId": 0 }
+    ],
+    "EnableLikeReward": false,
+    "LikeRewards": [
+      { "Shortname": "scrap", "Amount": 10, "SkinId": 0 }
+    ],
+    "NotifyOnReward": true
+  },
   "SelectedTheme": "Default",
   "Themes": {
     "Default": { ... },
@@ -205,6 +218,35 @@ The handle height visually reflects the visible-window-to-content ratio.
 | `WebhookUrl` | `""` | Discord channel webhook URL |
 | `BotName` | `"Server News"` | Webhook display name |
 | `RoleMention` | `""` | Role mention string (e.g. `<@&123456>`) |
+
+Note: the webhook payload sets `allowed_mentions: { parse: ["roles"] }`, so body text and titles cannot trigger `@everyone` or `@here` even if a user types those literally.
+
+### Reward Settings
+
+| Key | Default | Description |
+|---|---|---|
+| `EnableReadReward` | `false` | Grant items when a player keeps an announcement popup open for `ReadDelaySeconds` |
+| `ReadDelaySeconds` | `5` | Seconds the popup must remain open before the read reward fires |
+| `ReadRewards` | `[{scrap × 5}]` | List of items granted on a successful read |
+| `EnableLikeReward` | `false` | Grant items when a player likes (♥) an announcement |
+| `LikeRewards` | `[{scrap × 10}]` | List of items granted on the first like |
+| `NotifyOnReward` | `true` | Whisper the player a chat message listing what they received |
+
+Each entry in `ReadRewards` / `LikeRewards` has the shape:
+
+```json
+{ "Shortname": "scrap", "Amount": 5, "SkinId": 0 }
+```
+
+Use any valid Rust item shortname (`scrap`, `wood`, `stones`, `metal.refined`, etc.). `SkinId` is optional and defaults to `0` (vanilla skin).
+
+Behavior details:
+
+- Both rewards are granted **at most once per announcement per player**. Subsequent re-reads or like-toggles do not re-trigger.
+- The read reward only fires if the popup is still open when the timer elapses, so closing the popup early (or auto-close finishing first if `AutoCloseSeconds < ReadDelaySeconds`) skips the reward.
+- The like reward fires on the *first* like only; un-liking does not refund or block future re-likes from triggering it (since the player is already in the rewarded set).
+- If the player's inventory is full when a reward is granted, the items are dropped at their feet.
+- If a configured `Shortname` is invalid, that item is skipped and a warning is logged to the server console; other rewards in the list still apply.
 
 ### Theme Colors (`UIColors`)
 
