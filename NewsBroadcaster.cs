@@ -18,7 +18,7 @@ namespace Oxide.Plugins
     public class NewsBroadcaster : RustPlugin
     {
         #region Fields & Constants
-        [PluginReference] private Plugin ImageLibrary, Notify;
+        [PluginReference] private Plugin ImageLibrary, Notify, ServerRewards, Economics;
 
         private const string LayerName = "NewsBroadcasterUI";
         private const string NotificationLayer = "NewsNotificationUI";
@@ -137,27 +137,40 @@ namespace Oxide.Plugins
             public ulong SkinId { get; set; } = 0;
         }
 
+        class RewardBundle
+        {
+            public List<RewardItem> Items { get; set; } = new List<RewardItem>();
+            // ServerRewards (RP) integration. Requires ServerRewards plugin.
+            public int Points { get; set; } = 0;
+            // Economics (coins/cash) integration. Requires Economics plugin.
+            public double Currency { get; set; } = 0;
+        }
+
         class RewardSettings
         {
             // When enabled, players who keep an announcement popup open for at
             // least ReadDelaySeconds receive ReadRewards once per announcement.
             public bool EnableReadReward { get; set; } = false;
             public int ReadDelaySeconds { get; set; } = 5;
-            public List<RewardItem> ReadRewards { get; set; } = new List<RewardItem>
+            public RewardBundle ReadRewards { get; set; } = new RewardBundle
             {
-                new RewardItem { Shortname = "scrap", Amount = 5 }
+                Items = new List<RewardItem> { new RewardItem { Shortname = "scrap", Amount = 5 } }
             };
 
             // When enabled, players who like an announcement (heart button)
             // receive LikeRewards once per announcement. Un-liking does not refund.
             public bool EnableLikeReward { get; set; } = false;
-            public List<RewardItem> LikeRewards { get; set; } = new List<RewardItem>
+            public RewardBundle LikeRewards { get; set; } = new RewardBundle
             {
-                new RewardItem { Shortname = "scrap", Amount = 10 }
+                Items = new List<RewardItem> { new RewardItem { Shortname = "scrap", Amount = 10 } }
             };
 
-            // When true, whisper a chat message listing the items granted.
+            // When true, whisper a chat message listing the items / points / currency granted.
             public bool NotifyOnReward { get; set; } = true;
+
+            // Suffix labels used in the reward chat message.
+            public string PointsLabel { get; set; } = "RP";
+            public string CurrencyLabel { get; set; } = "coins";
         }
 
         class UIColors
@@ -330,24 +343,28 @@ namespace Oxide.Plugins
             base.LoadConfig();
             try
             {
-                config = Config.ReadObject<ConfigData>();
-                if (config == null) throw new Exception();
+                bool needsSave = false;
+
+                JObject raw = null;
+                try { raw = Config.ReadObject<JObject>(); }
+                catch { /* malformed file — fall through to plain deserialize below */ }
+
+                // MIGRATION: legacy Rewards.ReadRewards / LikeRewards were a JArray of items.
+                // The new schema is a RewardBundle object (Items / Points / Currency).
+                if (raw != null && MigrateLegacyRewardArrays(raw)) needsSave = true;
 
                 // MIGRATION: persist newly-defaulted blocks (e.g. Rewards on upgrade)
-                bool needsSave = false;
-                try
-                {
-                    var raw = Config.ReadObject<JObject>();
-                    if (raw != null && raw["Rewards"] == null) needsSave = true;
-                }
-                catch { /* ignored — defaults are already in place */ }
+                if (raw != null && raw["Rewards"] == null) needsSave = true;
+
+                config = raw != null ? raw.ToObject<ConfigData>() : Config.ReadObject<ConfigData>();
+                if (config == null) throw new Exception();
 
                 // MIGRATION: If Themes is missing or empty, populate defaults and preserve legacy "Colors"
                 if (config.Themes == null) config.Themes = new Dictionary<string, UIColors>();
 
                 if (config.Themes.Count == 0)
                 {
-                    UIColors legacyColors = TryReadLegacyColors();
+                    UIColors legacyColors = ExtractLegacyColors(raw);
 
                     config.Themes["Default"] = legacyColors ?? new UIColors();
                     config.Themes["Dark"] = new UIColors { PanelBg = "0.05 0.05 0.05 0.98", HeaderBg = "0.02 0.02 0.02 0.9", ContentBg = "0.1 0.1 0.1 0.8", ButtonPrimary = "0.2 0.2 0.2 1.0", ButtonSecondary = "0.15 0.15 0.15 1.0", TextTitle = "0.9 0.9 0.9 1.0", TextNormal = "0.7 0.7 0.7 1.0", TextMuted = "0.4 0.4 0.4 1.0" };
@@ -367,11 +384,32 @@ namespace Oxide.Plugins
             }
         }
 
-        private UIColors TryReadLegacyColors()
+        private static bool MigrateLegacyRewardArrays(JObject raw)
+        {
+            var rewards = raw?["Rewards"] as JObject;
+            if (rewards == null) return false;
+
+            bool changed = false;
+            foreach (var key in new[] { "ReadRewards", "LikeRewards" })
+            {
+                if (rewards[key] is JArray legacyItems)
+                {
+                    rewards[key] = new JObject
+                    {
+                        ["Items"] = legacyItems,
+                        ["Points"] = 0,
+                        ["Currency"] = 0.0
+                    };
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        private static UIColors ExtractLegacyColors(JObject raw)
         {
             try
             {
-                var raw = Config.ReadObject<JObject>();
                 var colorsToken = raw?["Colors"];
                 if (colorsToken == null || colorsToken.Type != JTokenType.Object) return null;
                 return colorsToken.ToObject<UIColors>();
@@ -2045,30 +2083,61 @@ namespace Oxide.Plugins
         #endregion
 
         #region Rewards
-        private void GiveRewards(BasePlayer player, List<RewardItem> rewards, string langKey)
+        private void GiveRewards(BasePlayer player, RewardBundle bundle, string langKey)
         {
-            if (rewards == null || rewards.Count == 0) return;
+            if (player == null || bundle == null) return;
 
             var grantedNames = new List<string>();
-            foreach (var r in rewards)
+
+            if (bundle.Items != null)
             {
-                if (r == null || string.IsNullOrEmpty(r.Shortname) || r.Amount <= 0) continue;
-
-                var item = ItemManager.CreateByName(r.Shortname, r.Amount, r.SkinId);
-                if (item == null)
+                foreach (var r in bundle.Items)
                 {
-                    PrintWarning($"Reward item '{r.Shortname}' could not be created — invalid shortname?");
-                    continue;
-                }
+                    if (r == null || string.IsNullOrEmpty(r.Shortname) || r.Amount <= 0) continue;
 
-                if (!player.inventory.GiveItem(item))
+                    var item = ItemManager.CreateByName(r.Shortname, r.Amount, r.SkinId);
+                    if (item == null)
+                    {
+                        PrintWarning($"Reward item '{r.Shortname}' could not be created — invalid shortname?");
+                        continue;
+                    }
+
+                    if (!player.inventory.GiveItem(item))
+                    {
+                        item.Drop(player.transform.position + Vector3.up, Vector3.up * 2f);
+                    }
+
+                    string label = item.info?.displayName?.translated;
+                    if (string.IsNullOrEmpty(label)) label = r.Shortname;
+                    grantedNames.Add($"{r.Amount}× {label}");
+                }
+            }
+
+            if (bundle.Points > 0)
+            {
+                if (ServerRewards != null && ServerRewards.IsLoaded)
                 {
-                    item.Drop(player.transform.position + Vector3.up, Vector3.up * 2f);
+                    ServerRewards.Call("AddPoints", player.userID, bundle.Points);
+                    grantedNames.Add($"{bundle.Points} {config.Rewards.PointsLabel}");
                 }
+                else
+                {
+                    PrintWarning("Reward configured Points but ServerRewards plugin is not loaded — skipping.");
+                }
+            }
 
-                string label = item.info?.displayName?.translated;
-                if (string.IsNullOrEmpty(label)) label = r.Shortname;
-                grantedNames.Add($"{r.Amount}× {label}");
+            if (bundle.Currency > 0)
+            {
+                if (Economics != null && Economics.IsLoaded)
+                {
+                    // Most Economics implementations accept a string user id; pass that for compatibility.
+                    Economics.Call("Deposit", player.UserIDString, bundle.Currency);
+                    grantedNames.Add($"{bundle.Currency.ToString("0.##", CultureInfo.InvariantCulture)} {config.Rewards.CurrencyLabel}");
+                }
+                else
+                {
+                    PrintWarning("Reward configured Currency but Economics plugin is not loaded — skipping.");
+                }
             }
 
             if (grantedNames.Count > 0 && config.Rewards.NotifyOnReward)
