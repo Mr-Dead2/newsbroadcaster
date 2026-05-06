@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.0.4")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.0")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -41,6 +41,7 @@ namespace Oxide.Plugins
         private Dictionary<ulong, string> activeEditorIds = new Dictionary<ulong, string>();
         private Dictionary<ulong, int> historyContentScrollOffsets = new Dictionary<ulong, int>();
         private Dictionary<ulong, ReadRewardState> readRewardTimers = new Dictionary<ulong, ReadRewardState>();
+        private Dictionary<ulong, HashSet<string>> adminSelections = new Dictionary<ulong, HashSet<string>>();
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 14;
@@ -65,7 +66,9 @@ namespace Oxide.Plugins
             public string Author;
             public AnnouncementType Type;
             public long Timestamp;
+            public bool Pinned;
             public HashSet<ulong> LikedPlayers = new HashSet<ulong>();
+            public HashSet<ulong> ReadByPlayers = new HashSet<ulong>();
             public HashSet<ulong> ReadRewardedPlayers = new HashSet<ulong>();
             public HashSet<ulong> LikeRewardedPlayers = new HashSet<ulong>();
         }
@@ -229,7 +232,20 @@ namespace Oxide.Plugins
                 ["AnnouncementSavedNew"] = "Announcement saved and broadcasted to all players!",
                 ["AnnouncementUpdated"] = "Announcement updated.",
                 ["RewardRead"] = "Thanks for reading the news! Reward: {0}",
-                ["RewardLike"] = "Thanks for the like! Reward: {0}"
+                ["RewardLike"] = "Thanks for the like! Reward: {0}",
+                ["PinButton"] = "📌 PIN",
+                ["UnpinButton"] = "📌 UNPIN",
+                ["SelectedCount"] = "{0} SELECTED",
+                ["BulkDelete"] = "✕ DELETE",
+                ["BulkPin"] = "📌 PIN ALL",
+                ["BulkUnpin"] = "📌 UNPIN ALL",
+                ["ClearSelection"] = "CLEAR",
+                ["SelectPageToggle"] = "☑ SELECT PAGE",
+                ["BulkDeleteTitle"] = "DELETE SELECTED",
+                ["BulkDeleteBody"] = "Delete {0} announcement(s)?\nThis cannot be undone.",
+                ["BulkDeleted"] = "Deleted {0} announcement(s).",
+                ["BulkPinned"] = "Pinned {0} announcement(s).",
+                ["BulkUnpinned"] = "Unpinned {0} announcement(s)."
             }, this);
         }
 
@@ -334,6 +350,57 @@ namespace Oxide.Plugins
                 if (string.Equals(announcements[i].Id, id, StringComparison.Ordinal))
                     return i;
             return -1;
+        }
+
+        private HashSet<string> GetAdminSelection(ulong userId)
+        {
+            if (!adminSelections.TryGetValue(userId, out var set))
+            {
+                set = new HashSet<string>(StringComparer.Ordinal);
+                adminSelections[userId] = set;
+            }
+            return set;
+        }
+
+        // Drop selection entries that no longer reference an existing announcement.
+        // Called before rendering / before bulk actions so stale ids don't accumulate.
+        private void PruneAdminSelection(ulong userId)
+        {
+            if (!adminSelections.TryGetValue(userId, out var set) || set.Count == 0) return;
+            var liveIds = new HashSet<string>(announcements.Select(a => a.Id), StringComparer.Ordinal);
+            set.RemoveWhere(id => !liveIds.Contains(id));
+        }
+
+        // Display ordering used by the archive list and admin list:
+        // pinned posts first, then by timestamp descending. Insertion order in the
+        // backing list is preserved, so "newest broadcast" lookups (announcements[0])
+        // are unaffected.
+        private List<Announcement> GetDisplayOrder()
+        {
+            return announcements
+                .OrderByDescending(a => a.Pinned)
+                .ThenByDescending(a => a.Timestamp)
+                .ToList();
+        }
+
+        // Snapshot of an announcement for external hook consumers — primitive types only,
+        // so other plugins can read the data without referencing this plugin's private types.
+        private Dictionary<string, object> BuildHookData(Announcement ann)
+        {
+            if (ann == null) return null;
+            return new Dictionary<string, object>
+            {
+                ["id"] = ann.Id,
+                ["title"] = ann.Title,
+                ["author"] = ann.Author,
+                ["type"] = ann.Type.ToString(),
+                ["timestamp"] = ann.Timestamp,
+                ["date"] = ann.Date,
+                ["text"] = ann.Text,
+                ["imageUrl"] = ann.ImageUrl,
+                ["likes"] = ann.LikedPlayers?.Count ?? 0,
+                ["pinned"] = ann.Pinned
+            };
         }
         #endregion
 
@@ -547,6 +614,13 @@ namespace Oxide.Plugins
                     announcements[i].LikeRewardedPlayers = new HashSet<ulong>();
                     changed = true;
                 }
+                if (announcements[i].ReadByPlayers == null)
+                {
+                    // Seed from the legacy ReadRewardedPlayers — anyone who got a read reward
+                    // has, by definition, read the announcement.
+                    announcements[i].ReadByPlayers = new HashSet<ulong>(announcements[i].ReadRewardedPlayers);
+                    changed = true;
+                }
 
                 // DATA MIGRATION: Ensure every announcement has a stable Id
                 if (string.IsNullOrEmpty(announcements[i].Id) || !seenIds.Add(announcements[i].Id))
@@ -610,6 +684,7 @@ namespace Oxide.Plugins
             historyContentScrollOffsets.Clear();
             activeEditors.Clear();
             activeEditorIds.Clear();
+            adminSelections.Clear();
         }
 
         void OnPlayerDisconnected(BasePlayer player, string reason)
@@ -619,6 +694,7 @@ namespace Oxide.Plugins
             activeEditors.Remove(id);
             activeEditorIds.Remove(id);
             playersWithUiOpen.Remove(id);
+            adminSelections.Remove(id);
             CancelReadRewardTimer(id);
 
             if (autoCloseTimers.TryGetValue(id, out var ac))
@@ -700,6 +776,7 @@ namespace Oxide.Plugins
             announcements.Insert(0, ann);
             SaveAnnouncements();
 
+            Interface.CallHook("OnNewsBroadcast", BuildHookData(ann));
             SendToDiscord(ann);
 
             foreach (var player in BasePlayer.activePlayerList)
@@ -770,6 +847,7 @@ namespace Oxide.Plugins
                 var removed = announcements[index];
                 announcements.RemoveAt(index);
                 SaveAnnouncements();
+                Interface.CallHook("OnNewsDeleted", BuildHookData(removed));
                 SendReply(arg, $"Deleted announcement: '{removed.Title}'");
             }
             else
@@ -944,6 +1022,156 @@ namespace Oxide.Plugins
             ShowEditor(player);
         }
 
+        [ConsoleCommand("news.admin.togglepin")]
+        private void CmdNewsAdminTogglePin(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+
+            var ann = FindById(arg.GetString(0));
+            if (ann == null) return;
+
+            ann.Pinned = !ann.Pinned;
+            SaveAnnouncements();
+            Interface.CallHook("OnNewsEdited", BuildHookData(ann));
+            ShowAdminList(player, arg.GetInt(1, 0));
+        }
+
+        [ConsoleCommand("news.admin.toggleselect")]
+        private void CmdNewsAdminToggleSelect(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+
+            string id = arg.GetString(0);
+            if (string.IsNullOrEmpty(id) || FindById(id) == null) return;
+
+            var sel = GetAdminSelection(player.userID);
+            if (!sel.Remove(id)) sel.Add(id);
+
+            ShowAdminList(player, arg.GetInt(1, 0));
+        }
+
+        [ConsoleCommand("news.admin.selectpage")]
+        private void CmdNewsAdminSelectPage(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+
+            int page = arg.GetInt(0, 0);
+            int perPage = config.General.AnnouncementsPerPage;
+            var displayList = GetDisplayOrder();
+            var sel = GetAdminSelection(player.userID);
+
+            int start = page * perPage;
+            int end = Math.Min(start + perPage, displayList.Count);
+
+            // If everything visible on the page is already selected, deselect it; otherwise select it.
+            bool allSelected = true;
+            for (int i = start; i < end; i++) { if (!sel.Contains(displayList[i].Id)) { allSelected = false; break; } }
+
+            for (int i = start; i < end; i++)
+            {
+                if (allSelected) sel.Remove(displayList[i].Id);
+                else sel.Add(displayList[i].Id);
+            }
+
+            ShowAdminList(player, page);
+        }
+
+        [ConsoleCommand("news.admin.clearsel")]
+        private void CmdNewsAdminClearSel(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+
+            adminSelections.Remove(player.userID);
+            ShowAdminList(player, arg.GetInt(0, 0));
+        }
+
+        [ConsoleCommand("news.admin.bulkpin")]
+        private void CmdNewsAdminBulkPin(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+
+            bool pin = arg.GetString(0) != "0";
+            int page = arg.GetInt(1, 0);
+
+            PruneAdminSelection(player.userID);
+            var sel = GetAdminSelection(player.userID);
+            if (sel.Count == 0) { ShowAdminList(player, page); return; }
+
+            int changed = 0;
+            foreach (var id in sel.ToList())
+            {
+                var ann = FindById(id);
+                if (ann == null || ann.Pinned == pin) continue;
+                ann.Pinned = pin;
+                changed++;
+                Interface.CallHook("OnNewsEdited", BuildHookData(ann));
+            }
+
+            if (changed > 0)
+            {
+                SaveAnnouncements();
+                SendReply(player, Msg(pin ? "BulkPinned" : "BulkUnpinned", player, changed));
+            }
+            ShowAdminList(player, page);
+        }
+
+        [ConsoleCommand("news.admin.bulkdelconfirm")]
+        private void CmdNewsAdminBulkDelConfirm(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+
+            PruneAdminSelection(player.userID);
+            ShowBulkDeleteConfirm(player, arg.GetInt(0, 0));
+        }
+
+        [ConsoleCommand("news.admin.bulkdel")]
+        private void CmdNewsAdminBulkDel(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+
+            PruneAdminSelection(player.userID);
+            var sel = GetAdminSelection(player.userID);
+            if (sel.Count == 0)
+            {
+                CuiHelper.DestroyUi(player, ConfirmLayer);
+                ShowAdminList(player, arg.GetInt(0, 0));
+                return;
+            }
+
+            // Collect victims, fire OnNewsDeleted, then remove. We iterate the selection set
+            // and remove from the announcements list one at a time so indices stay valid.
+            int removed = 0;
+            foreach (var id in sel.ToList())
+            {
+                int idx = FindIndexById(id);
+                if (idx < 0) continue;
+                var victim = announcements[idx];
+                announcements.RemoveAt(idx);
+                Interface.CallHook("OnNewsDeleted", BuildHookData(victim));
+                removed++;
+            }
+
+            adminSelections.Remove(player.userID);
+            if (removed > 0) SaveAnnouncements();
+            CuiHelper.DestroyUi(player, ConfirmLayer);
+            SendReply(player, Msg("BulkDeleted", player, removed));
+            ShowAdminList(player, 0);
+        }
+
         [ConsoleCommand("news.admin.del")]
         private void CmdNewsAdminDelete(ConsoleSystem.Arg arg)
         {
@@ -954,8 +1182,10 @@ namespace Oxide.Plugins
             int index = FindIndexById(arg.GetString(0));
             if (index >= 0)
             {
+                var removed = announcements[index];
                 announcements.RemoveAt(index);
                 SaveAnnouncements();
+                Interface.CallHook("OnNewsDeleted", BuildHookData(removed));
                 CuiHelper.DestroyUi(player, ConfirmLayer);
                 ShowAdminList(player, 0);
             }
@@ -1034,6 +1264,7 @@ namespace Oxide.Plugins
                 ann.Date = DateTime.Now.ToString(InvariantDateFormat, CultureInfo.InvariantCulture);
                 announcements.Insert(0, ann);
                 SendToDiscord(ann);
+                Interface.CallHook("OnNewsBroadcast", BuildHookData(ann));
             }
             else
             {
@@ -1042,6 +1273,7 @@ namespace Oxide.Plugins
                 {
                     ann.Id = editingId;
                     announcements[idx] = ann;
+                    Interface.CallHook("OnNewsEdited", BuildHookData(ann));
                 }
                 else
                 {
@@ -1120,6 +1352,7 @@ namespace Oxide.Plugins
             }
 
             SaveAnnouncements();
+            Interface.CallHook("OnNewsLiked", player, BuildHookData(ann), addedLike);
             ShowPopup(player, ann, true, false);
         }
 
@@ -1495,7 +1728,7 @@ namespace Oxide.Plugins
                 });
             }
 
-            ScheduleReadReward(player, ann);
+            ScheduleReadCompletion(player, ann);
         }
 
         private void ShowHistory(BasePlayer player, int page)
@@ -1513,8 +1746,9 @@ namespace Oxide.Plugins
             var container = new CuiElementContainer();
             var c = config.Colors;
 
+            var displayList = GetDisplayOrder();
             int perPage = config.General.AnnouncementsPerPage;
-            int totalPages = Mathf.CeilToInt((float)announcements.Count / perPage);
+            int totalPages = Mathf.CeilToInt((float)displayList.Count / perPage);
             if (page < 0) page = 0;
             if (page >= totalPages) page = totalPages - 1;
 
@@ -1552,9 +1786,9 @@ namespace Oxide.Plugins
             float rowHeight = 0.82f / perPage; 
             float padding = 0.015f; 
 
-            for (int i = start; i < announcements.Count && count < perPage; i++)
+            for (int i = start; i < displayList.Count && count < perPage; i++)
             {
-                var ann = announcements[i];
+                var ann = displayList[i];
                 float top = 0.90f - (count * rowHeight) - padding;
                 float bottom = top - rowHeight + (padding * 2);
 
@@ -1567,19 +1801,21 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = $"0.02 {bottom}", AnchorMax = $"0.98 {top}" }
                 }, mainPanel, itemPanel);
 
-                container.Add(new CuiPanel { 
-                    Image = { Color = typeColor }, 
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0.005 1" } 
+                container.Add(new CuiPanel {
+                    Image = { Color = typeColor },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0.005 1" }
                 }, itemPanel);
 
-                container.Add(new CuiLabel 
-                { 
-                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 13, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                string titleText = (ann.Title ?? "(no title)").ToUpper();
+                if (ann.Pinned) titleText = "📌 " + titleText;
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = titleText, FontSize = 13, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.025 0.55", AnchorMax = "0.75 0.9" }
                 }, itemPanel);
 
-                container.Add(new CuiLabel 
-                { 
+                container.Add(new CuiLabel
+                {
                     Text = { Text = ann.Date, FontSize = 10, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
                     RectTransform = { AnchorMin = "0.75 0.55", AnchorMax = "0.975 0.9" }
                 }, itemPanel);
@@ -1720,12 +1956,22 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0.94 0.90", AnchorMax = "0.99 1" } 
             }, mainPanel);
 
+            var displayList = GetDisplayOrder();
+            // Recompute totalPages against the display list (it's the same as announcements.Count today,
+            // but we keep this explicit for symmetry with ShowHistory).
+            totalPages = Mathf.CeilToInt((float)displayList.Count / perPage);
+            if (totalPages == 0) totalPages = 1;
+            if (page < 0) page = 0;
+            if (page >= totalPages) page = totalPages - 1;
+
+            PruneAdminSelection(player.userID);
+            var selection = GetAdminSelection(player.userID);
             int start = page * perPage;
             int count = 0;
-            float rowHeight = 0.82f / perPage; 
+            float rowHeight = 0.82f / perPage;
             float padding = 0.01f;
 
-            if (announcements.Count == 0)
+            if (displayList.Count == 0)
             {
                 container.Add(new CuiLabel
                 {
@@ -1734,14 +1980,15 @@ namespace Oxide.Plugins
                 }, mainPanel);
             }
 
-            for (int i = start; i < announcements.Count && count < perPage; i++)
+            for (int i = start; i < displayList.Count && count < perPage; i++)
             {
-                var ann = announcements[i];
+                var ann = displayList[i];
                 float top = 0.88f - (count * rowHeight) - padding;
                 float bottom = top - rowHeight + (padding * 2);
 
                 string itemPanel = mainPanel + $".{i}";
                 string typeColor = GetTypeColor(ann.Type);
+                bool selected = selection.Contains(ann.Id);
 
                 container.Add(new CuiPanel
                 {
@@ -1749,44 +1996,116 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = $"0.02 {bottom}", AnchorMax = $"0.98 {top}" }
                 }, mainPanel, itemPanel);
 
-                container.Add(new CuiPanel { 
-                    Image = { Color = typeColor }, 
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0.005 1" } 
+                // Selection checkbox
+                container.Add(new CuiButton
+                {
+                    Button = { Color = selected ? c.ButtonPrimary : "0.2 0.2 0.2 0.9", Command = $"news.admin.toggleselect {ann.Id} {page}" },
+                    Text = { Text = selected ? "✓" : "", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.005 0.2", AnchorMax = "0.04 0.8" }
                 }, itemPanel);
 
-                container.Add(new CuiLabel 
-                { 
-                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 12, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.02 0.4", AnchorMax = "0.6 0.9" }
+                // Type-color stripe
+                container.Add(new CuiPanel {
+                    Image = { Color = typeColor },
+                    RectTransform = { AnchorMin = "0.045 0", AnchorMax = "0.05 1" }
                 }, itemPanel);
 
-                container.Add(new CuiLabel 
-                { 
+                string titleText = (ann.Title ?? "(no title)").ToUpper();
+                if (ann.Pinned) titleText = "📌 " + titleText;
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = titleText, FontSize = 12, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.06 0.4", AnchorMax = "0.62 0.9" }
+                }, itemPanel);
+
+                container.Add(new CuiLabel
+                {
                     Text = { Text = ann.Date ?? "", FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted },
-                    RectTransform = { AnchorMin = "0.02 0.1", AnchorMax = "0.6 0.4" }
+                    RectTransform = { AnchorMin = "0.06 0.1", AnchorMax = "0.62 0.4" }
+                }, itemPanel);
+
+                // Pin / Unpin
+                container.Add(new CuiButton
+                {
+                    Button = { Color = ann.Pinned ? c.ButtonPrimary : "0.35 0.35 0.4 0.9", Command = $"news.admin.togglepin {ann.Id} {page}" },
+                    Text = { Text = ann.Pinned ? Msg("UnpinButton", player) : Msg("PinButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+                    RectTransform = { AnchorMin = "0.63 0.2", AnchorMax = "0.74 0.8" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
                 {
                     Button = { Color = "0.2 0.4 0.6 0.8", Command = $"news.admin.edit {ann.Id}" },
                     Text = { Text = Msg("EditButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
-                    RectTransform = { AnchorMin = "0.80 0.2", AnchorMax = "0.88 0.8" }
+                    RectTransform = { AnchorMin = "0.75 0.2", AnchorMax = "0.85 0.8" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
                 {
                     Button = { Color = "0.6 0.2 0.2 0.8", Command = $"news.admin.delconfirm {ann.Id}" },
                     Text = { Text = Msg("DelButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
-                    RectTransform = { AnchorMin = "0.89 0.2", AnchorMax = "0.97 0.8" }
+                    RectTransform = { AnchorMin = "0.86 0.2", AnchorMax = "0.96 0.8" }
                 }, itemPanel);
 
                 count++;
             }
 
+            // Bulk-action toolbar — only visible when at least one item is selected.
+            if (selection.Count > 0)
+            {
+                string bulkPanel = mainPanel + ".Bulk";
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = "0.10 0.10 0.12 0.95" },
+                    RectTransform = { AnchorMin = "0.02 0.085", AnchorMax = "0.98 0.155" }
+                }, mainPanel, bulkPanel);
+
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = Msg("SelectedCount", player, selection.Count), FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.02 0", AnchorMax = "0.18 1" }
+                }, bulkPanel);
+
+                container.Add(new CuiButton
+                {
+                    Button = { Color = "0.65 0.12 0.12 1", Command = $"news.admin.bulkdelconfirm {page}" },
+                    Text = { Text = Msg("BulkDelete", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.19 0.15", AnchorMax = "0.32 0.85" }
+                }, bulkPanel);
+
+                container.Add(new CuiButton
+                {
+                    Button = { Color = c.ButtonPrimary, Command = $"news.admin.bulkpin 1 {page}" },
+                    Text = { Text = Msg("BulkPin", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.33 0.15", AnchorMax = "0.46 0.85" }
+                }, bulkPanel);
+
+                container.Add(new CuiButton
+                {
+                    Button = { Color = "0.35 0.35 0.4 0.9", Command = $"news.admin.bulkpin 0 {page}" },
+                    Text = { Text = Msg("BulkUnpin", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.47 0.15", AnchorMax = "0.60 0.85" }
+                }, bulkPanel);
+
+                container.Add(new CuiButton
+                {
+                    Button = { Color = c.ButtonSecondary, Command = $"news.admin.clearsel {page}" },
+                    Text = { Text = Msg("ClearSelection", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.61 0.15", AnchorMax = "0.74 0.85" }
+                }, bulkPanel);
+            }
+
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.08" } }, mainPanel);
 
-            container.Add(new CuiLabel 
-            { 
+            // Page-wide "select all visible" toggle, parked in the bottom-left of the footer.
+            container.Add(new CuiButton
+            {
+                Button = { Color = c.ButtonSecondary, Command = $"news.admin.selectpage {page}" },
+                Text = { Text = Msg("SelectPageToggle", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = c.TextTitle },
+                RectTransform = { AnchorMin = "0.02 0.01", AnchorMax = "0.18 0.07" }
+            }, mainPanel);
+
+            container.Add(new CuiLabel
+            {
                 Text = { Text = Msg("Page", player, page + 1, totalPages), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
                 RectTransform = { AnchorMin = "0.4 0", AnchorMax = "0.6 0.08" }
             }, mainPanel);
@@ -1948,6 +2267,64 @@ namespace Oxide.Plugins
             container.Add(new CuiButton
             {
                 Button = { Color = "0.65 0.12 0.12 1", Command = $"news.admin.del {ann.Id}" },
+                Text = { Text = Msg("ConfirmDelete", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.54 0.06", AnchorMax = "0.95 0.27" }
+            }, dialogPanel);
+
+            CuiHelper.AddUi(player, container);
+        }
+
+        private void ShowBulkDeleteConfirm(BasePlayer player, int returnPage)
+        {
+            var sel = GetAdminSelection(player.userID);
+            if (sel.Count == 0) return;
+            CuiHelper.DestroyUi(player, ConfirmLayer);
+
+            var container = new CuiElementContainer();
+            var c = config.Colors;
+
+            container.Add(new CuiPanel
+            {
+                Image = { Color = "0 0 0 0.65" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+                CursorEnabled = true
+            }, "Overlay", ConfirmLayer);
+
+            string dialogPanel = ConfirmLayer + ".Dialog";
+            container.Add(new CuiPanel
+            {
+                Image = { Color = c.PanelBg },
+                RectTransform = { AnchorMin = "0.34 0.40", AnchorMax = "0.66 0.60" }
+            }, ConfirmLayer, dialogPanel);
+
+            container.Add(new CuiPanel
+            {
+                Image = { Color = "0.55 0.12 0.12 0.95" },
+                RectTransform = { AnchorMin = "0 0.76", AnchorMax = "1 1" }
+            }, dialogPanel);
+
+            container.Add(new CuiLabel
+            {
+                Text = { Text = Msg("BulkDeleteTitle", player), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0 0.76", AnchorMax = "1 1" }
+            }, dialogPanel);
+
+            container.Add(new CuiLabel
+            {
+                Text = { Text = Msg("BulkDeleteBody", player, sel.Count), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
+                RectTransform = { AnchorMin = "0.05 0.30", AnchorMax = "0.95 0.74" }
+            }, dialogPanel);
+
+            container.Add(new CuiButton
+            {
+                Button = { Color = c.ButtonSecondary, Command = "news.confirm.close" },
+                Text = { Text = Msg("Cancel", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.05 0.06", AnchorMax = "0.46 0.27" }
+            }, dialogPanel);
+
+            container.Add(new CuiButton
+            {
+                Button = { Color = "0.65 0.12 0.12 1", Command = $"news.admin.bulkdel {returnPage}" },
                 Text = { Text = Msg("ConfirmDelete", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = "0.54 0.06", AnchorMax = "0.95 0.27" }
             }, dialogPanel);
@@ -2155,23 +2532,28 @@ namespace Oxide.Plugins
             }
         }
 
-        private void ScheduleReadReward(BasePlayer player, Announcement ann)
+        private void ScheduleReadCompletion(BasePlayer player, Announcement ann)
         {
-            if (player == null || ann == null) return;
-            if (config.Rewards == null || !config.Rewards.EnableReadReward) return;
-            if (ann.ReadRewardedPlayers == null) ann.ReadRewardedPlayers = new HashSet<ulong>();
-            if (ann.ReadRewardedPlayers.Contains(player.userID)) return;
+            if (player == null || ann == null || string.IsNullOrEmpty(ann.Id)) return;
+            if (ann.ReadByPlayers == null) ann.ReadByPlayers = new HashSet<ulong>();
 
             // If a timer is already counting down for this same announcement, let it finish —
-            // re-renders (e.g. after liking) shouldn't reset the read timer.
+            // re-renders (e.g. after liking) shouldn't reset the read countdown.
             if (readRewardTimers.TryGetValue(player.userID, out var existing)
                 && string.Equals(existing.AnnId, ann.Id, StringComparison.Ordinal)
                 && existing.Timer != null && !existing.Timer.Destroyed)
                 return;
 
+            // Skip the timer entirely once both the read hook AND the read reward have already fired
+            // for this player on this announcement — there's nothing left to do.
+            bool alreadyRead = ann.ReadByPlayers.Contains(player.userID);
+            bool rewardsActive = config.Rewards != null && config.Rewards.EnableReadReward;
+            bool rewardAlreadyGranted = ann.ReadRewardedPlayers != null && ann.ReadRewardedPlayers.Contains(player.userID);
+            if (alreadyRead && (!rewardsActive || rewardAlreadyGranted)) return;
+
             CancelReadRewardTimer(player.userID);
 
-            int delay = Math.Max(1, config.Rewards.ReadDelaySeconds);
+            int delay = Math.Max(1, config.Rewards?.ReadDelaySeconds ?? 5);
             string targetId = ann.Id;
             ulong userId = player.userID;
 
@@ -2183,11 +2565,16 @@ namespace Oxide.Plugins
 
                 var current = FindById(targetId);
                 if (current == null) return;
+                if (current.ReadByPlayers == null) current.ReadByPlayers = new HashSet<ulong>();
                 if (current.ReadRewardedPlayers == null) current.ReadRewardedPlayers = new HashSet<ulong>();
-                if (!current.ReadRewardedPlayers.Add(userId)) return;
 
-                SaveAnnouncements();
-                GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
+                bool firstRead = current.ReadByPlayers.Add(userId);
+                bool grantReward = config.Rewards != null && config.Rewards.EnableReadReward
+                                   && current.ReadRewardedPlayers.Add(userId);
+
+                if (firstRead || grantReward) SaveAnnouncements();
+                if (firstRead) Interface.CallHook("OnNewsRead", player, BuildHookData(current));
+                if (grantReward) GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
             });
 
             readRewardTimers[userId] = new ReadRewardState { AnnId = targetId, Timer = t };
