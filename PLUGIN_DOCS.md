@@ -38,6 +38,8 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 |---|---|---|
 | ImageLibrary | Optional | Cache remote images for faster display |
 | Notify | Optional | Use third-party notification popup style |
+| ServerRewards | Optional | Grant RP (reward points) on read / like |
+| Economics | Optional | Grant currency on read / like |
 
 ---
 
@@ -169,14 +171,20 @@ The handle height visually reflects the visible-window-to-content ratio.
   "Rewards": {
     "EnableReadReward": false,
     "ReadDelaySeconds": 5,
-    "ReadRewards": [
-      { "Shortname": "scrap", "Amount": 5, "SkinId": 0 }
-    ],
+    "ReadRewards": {
+      "Items": [{ "Shortname": "scrap", "Amount": 5, "SkinId": 0 }],
+      "Points": 0,
+      "Currency": 0.0
+    },
     "EnableLikeReward": false,
-    "LikeRewards": [
-      { "Shortname": "scrap", "Amount": 10, "SkinId": 0 }
-    ],
-    "NotifyOnReward": true
+    "LikeRewards": {
+      "Items": [{ "Shortname": "scrap", "Amount": 10, "SkinId": 0 }],
+      "Points": 0,
+      "Currency": 0.0
+    },
+    "NotifyOnReward": true,
+    "PointsLabel": "RP",
+    "CurrencyLabel": "coins"
   },
   "SelectedTheme": "Default",
   "Themes": {
@@ -225,28 +233,39 @@ Note: the webhook payload sets `allowed_mentions: { parse: ["roles"] }`, so body
 
 | Key | Default | Description |
 |---|---|---|
-| `EnableReadReward` | `false` | Grant items when a player keeps an announcement popup open for `ReadDelaySeconds` |
+| `EnableReadReward` | `false` | Grant the read bundle when a player keeps an announcement popup open for `ReadDelaySeconds` |
 | `ReadDelaySeconds` | `5` | Seconds the popup must remain open before the read reward fires |
-| `ReadRewards` | `[{scrap × 5}]` | List of items granted on a successful read |
-| `EnableLikeReward` | `false` | Grant items when a player likes (♥) an announcement |
-| `LikeRewards` | `[{scrap × 10}]` | List of items granted on the first like |
+| `ReadRewards` | `{ Items: [scrap × 5], Points: 0, Currency: 0 }` | What to grant on a successful read |
+| `EnableLikeReward` | `false` | Grant the like bundle when a player likes (♥) an announcement |
+| `LikeRewards` | `{ Items: [scrap × 10], Points: 0, Currency: 0 }` | What to grant on the first like |
 | `NotifyOnReward` | `true` | Whisper the player a chat message listing what they received |
+| `PointsLabel` | `"RP"` | Label shown after the points amount in the chat message |
+| `CurrencyLabel` | `"coins"` | Label shown after the currency amount in the chat message |
 
-Each entry in `ReadRewards` / `LikeRewards` has the shape:
+Each `RewardBundle` (`ReadRewards` / `LikeRewards`) has three sections — any combination may be set:
 
 ```json
-{ "Shortname": "scrap", "Amount": 5, "SkinId": 0 }
+{
+  "Items":    [ { "Shortname": "scrap", "Amount": 5, "SkinId": 0 } ],
+  "Points":   25,
+  "Currency": 100.0
+}
 ```
 
-Use any valid Rust item shortname (`scrap`, `wood`, `stones`, `metal.refined`, etc.). `SkinId` is optional and defaults to `0` (vanilla skin).
+- **`Items`** — list of Rust items. Use any valid Rust shortname (`scrap`, `wood`, `stones`, `metal.refined`, etc.). `SkinId` is optional (default `0`).
+- **`Points`** — integer RP (reward points) deposited via the [ServerRewards](https://umod.org/plugins/server-rewards) plugin. Set to `0` to skip.
+- **`Currency`** — number of currency units deposited via the [Economics](https://umod.org/plugins/economics) plugin. Set to `0` to skip.
 
 Behavior details:
 
 - Both rewards are granted **at most once per announcement per player**. Subsequent re-reads or like-toggles do not re-trigger.
 - The read reward only fires if the popup is still open when the timer elapses, so closing the popup early (or auto-close finishing first if `AutoCloseSeconds < ReadDelaySeconds`) skips the reward.
-- The like reward fires on the *first* like only; un-liking does not refund or block future re-likes from triggering it (since the player is already in the rewarded set).
-- If the player's inventory is full when a reward is granted, the items are dropped at their feet.
-- If a configured `Shortname` is invalid, that item is skipped and a warning is logged to the server console; other rewards in the list still apply.
+- The like reward fires on the *first* like only; un-liking does not refund or re-trigger.
+- If the player's inventory is full, items are dropped at their feet.
+- Points / Currency are silently skipped (with a server-console warning) if `ServerRewards` / `Economics` are not loaded. The other reward components still apply.
+- Invalid item `Shortname`s are skipped with a warning; other items in the list still apply.
+
+Plugin upgrades from the previous reward schema (`ReadRewards` / `LikeRewards` as bare JSON arrays) are migrated automatically — the existing item list is wrapped into `Items` and `Points` / `Currency` start at `0`.
 
 ### Theme Colors (`UIColors`)
 
