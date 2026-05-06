@@ -40,6 +40,7 @@ namespace Oxide.Plugins
         private Dictionary<ulong, Announcement> activeEditors = new Dictionary<ulong, Announcement>();
         private Dictionary<ulong, string> activeEditorIds = new Dictionary<ulong, string>();
         private Dictionary<ulong, int> historyContentScrollOffsets = new Dictionary<ulong, int>();
+        private Dictionary<ulong, ReadRewardState> readRewardTimers = new Dictionary<ulong, ReadRewardState>();
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 14;
@@ -65,6 +66,14 @@ namespace Oxide.Plugins
             public AnnouncementType Type;
             public long Timestamp;
             public HashSet<ulong> LikedPlayers = new HashSet<ulong>();
+            public HashSet<ulong> ReadRewardedPlayers = new HashSet<ulong>();
+            public HashSet<ulong> LikeRewardedPlayers = new HashSet<ulong>();
+        }
+
+        class ReadRewardState
+        {
+            public string AnnId;
+            public Timer Timer;
         }
 
         enum AnnouncementType { Info, Warning, Alert, Event, Update }
@@ -74,6 +83,7 @@ namespace Oxide.Plugins
             public GeneralSettings General { get; set; } = new GeneralSettings();
             public NotificationSettings Notification { get; set; } = new NotificationSettings();
             public DiscordSettings Discord { get; set; } = new DiscordSettings();
+            public RewardSettings Rewards { get; set; } = new RewardSettings();
 
             // Replaced single Colors object with Themes dictionary
             public string SelectedTheme { get; set; } = "Default";
@@ -117,7 +127,37 @@ namespace Oxide.Plugins
             public bool Enabled { get; set; } = false;
             public string WebhookUrl { get; set; } = "";
             public string BotName { get; set; } = "Server News";
-            public string RoleMention { get; set; } = ""; 
+            public string RoleMention { get; set; } = "";
+        }
+
+        class RewardItem
+        {
+            public string Shortname { get; set; } = "";
+            public int Amount { get; set; } = 1;
+            public ulong SkinId { get; set; } = 0;
+        }
+
+        class RewardSettings
+        {
+            // When enabled, players who keep an announcement popup open for at
+            // least ReadDelaySeconds receive ReadRewards once per announcement.
+            public bool EnableReadReward { get; set; } = false;
+            public int ReadDelaySeconds { get; set; } = 5;
+            public List<RewardItem> ReadRewards { get; set; } = new List<RewardItem>
+            {
+                new RewardItem { Shortname = "scrap", Amount = 5 }
+            };
+
+            // When enabled, players who like an announcement (heart button)
+            // receive LikeRewards once per announcement. Un-liking does not refund.
+            public bool EnableLikeReward { get; set; } = false;
+            public List<RewardItem> LikeRewards { get; set; } = new List<RewardItem>
+            {
+                new RewardItem { Shortname = "scrap", Amount = 10 }
+            };
+
+            // When true, whisper a chat message listing the items granted.
+            public bool NotifyOnReward { get; set; } = true;
         }
 
         class UIColors
@@ -174,7 +214,9 @@ namespace Oxide.Plugins
                 ["ConfirmDelete"] = "✓ DELETE",
                 ["EditTargetGone"] = "The announcement you were editing was removed before you could save.",
                 ["AnnouncementSavedNew"] = "Announcement saved and broadcasted to all players!",
-                ["AnnouncementUpdated"] = "Announcement updated."
+                ["AnnouncementUpdated"] = "Announcement updated.",
+                ["RewardRead"] = "Thanks for reading the news! Reward: {0}",
+                ["RewardLike"] = "Thanks for the like! Reward: {0}"
             }, this);
         }
 
@@ -291,6 +333,15 @@ namespace Oxide.Plugins
                 config = Config.ReadObject<ConfigData>();
                 if (config == null) throw new Exception();
 
+                // MIGRATION: persist newly-defaulted blocks (e.g. Rewards on upgrade)
+                bool needsSave = false;
+                try
+                {
+                    var raw = Config.ReadObject<JObject>();
+                    if (raw != null && raw["Rewards"] == null) needsSave = true;
+                }
+                catch { /* ignored — defaults are already in place */ }
+
                 // MIGRATION: If Themes is missing or empty, populate defaults and preserve legacy "Colors"
                 if (config.Themes == null) config.Themes = new Dictionary<string, UIColors>();
 
@@ -304,8 +355,10 @@ namespace Oxide.Plugins
                     config.Themes["Rust"] = new UIColors { PanelBg = "0.15 0.12 0.1 0.96", HeaderBg = "0.1 0.08 0.06 0.9", ContentBg = "0.2 0.18 0.15 0.6", ButtonPrimary = "0.8 0.25 0.1 0.9", ButtonSecondary = "0.3 0.25 0.2 0.9", TextTitle = "0.9 0.85 0.8 1.0", TextNormal = "0.8 0.75 0.7 1.0", TextMuted = "0.6 0.5 0.4 1.0" };
 
                     config.SelectedTheme = "Default";
-                    SaveConfig();
+                    needsSave = true;
                 }
+
+                if (needsSave) SaveConfig();
             }
             catch
             {
@@ -440,10 +493,20 @@ namespace Oxide.Plugins
                     changed = true;
                 }
 
-                // DATA MIGRATION: Ensure LikedPlayers is not null
+                // DATA MIGRATION: Ensure tracking sets are not null
                 if (announcements[i].LikedPlayers == null)
                 {
                     announcements[i].LikedPlayers = new HashSet<ulong>();
+                    changed = true;
+                }
+                if (announcements[i].ReadRewardedPlayers == null)
+                {
+                    announcements[i].ReadRewardedPlayers = new HashSet<ulong>();
+                    changed = true;
+                }
+                if (announcements[i].LikeRewardedPlayers == null)
+                {
+                    announcements[i].LikeRewardedPlayers = new HashSet<ulong>();
                     changed = true;
                 }
 
@@ -501,8 +564,10 @@ namespace Oxide.Plugins
 
             foreach (var t in autoCloseTimers.Values) t?.Destroy();
             foreach (var t in notificationTimers.Values) t?.Destroy();
+            foreach (var s in readRewardTimers.Values) s?.Timer?.Destroy();
             autoCloseTimers.Clear();
             notificationTimers.Clear();
+            readRewardTimers.Clear();
             playersWithUiOpen.Clear();
             historyContentScrollOffsets.Clear();
             activeEditors.Clear();
@@ -516,6 +581,7 @@ namespace Oxide.Plugins
             activeEditors.Remove(id);
             activeEditorIds.Remove(id);
             playersWithUiOpen.Remove(id);
+            CancelReadRewardTimer(id);
 
             if (autoCloseTimers.TryGetValue(id, out var ac))
             {
@@ -994,8 +1060,26 @@ namespace Oxide.Plugins
             var ann = FindById(arg.GetString(0));
             if (ann == null) return;
 
-            if (!ann.LikedPlayers.Remove(player.userID))
+            bool addedLike;
+            if (ann.LikedPlayers.Remove(player.userID))
+            {
+                addedLike = false;
+            }
+            else
+            {
                 ann.LikedPlayers.Add(player.userID);
+                addedLike = true;
+            }
+
+            // Reward only on the *first* like for this announcement, never on un-like.
+            if (addedLike && config.Rewards != null && config.Rewards.EnableLikeReward)
+            {
+                if (ann.LikeRewardedPlayers == null) ann.LikeRewardedPlayers = new HashSet<ulong>();
+                if (ann.LikeRewardedPlayers.Add(player.userID))
+                {
+                    GiveRewards(player, config.Rewards.LikeRewards, "RewardLike");
+                }
+            }
 
             SaveAnnouncements();
             ShowPopup(player, ann, true, false);
@@ -1097,6 +1181,8 @@ namespace Oxide.Plugins
                 autoCloseTimers[player.userID]?.Destroy();
                 autoCloseTimers.Remove(player.userID);
             }
+
+            CancelReadRewardTimer(player.userID);
         }
 
         private void ShowPopup(BasePlayer player, Announcement ann, bool fromHistory = false, bool playSound = false)
@@ -1362,7 +1448,7 @@ namespace Oxide.Plugins
             {
                 if (autoCloseTimers.ContainsKey(player.userID)) autoCloseTimers[player.userID]?.Destroy();
 
-                autoCloseTimers[player.userID] = timer.Once(config.General.AutoCloseSeconds, () => 
+                autoCloseTimers[player.userID] = timer.Once(config.General.AutoCloseSeconds, () =>
                 {
                     if (player != null && player.IsConnected && playersWithUiOpen.Contains(player.userID))
                     {
@@ -1370,6 +1456,8 @@ namespace Oxide.Plugins
                     }
                 });
             }
+
+            ScheduleReadReward(player, ann);
         }
 
         private void ShowHistory(BasePlayer player, int page)
@@ -1953,6 +2041,87 @@ namespace Oxide.Plugins
             }
 
             CuiHelper.AddUi(player, container);
+        }
+        #endregion
+
+        #region Rewards
+        private void GiveRewards(BasePlayer player, List<RewardItem> rewards, string langKey)
+        {
+            if (rewards == null || rewards.Count == 0) return;
+
+            var grantedNames = new List<string>();
+            foreach (var r in rewards)
+            {
+                if (r == null || string.IsNullOrEmpty(r.Shortname) || r.Amount <= 0) continue;
+
+                var item = ItemManager.CreateByName(r.Shortname, r.Amount, r.SkinId);
+                if (item == null)
+                {
+                    PrintWarning($"Reward item '{r.Shortname}' could not be created — invalid shortname?");
+                    continue;
+                }
+
+                if (!player.inventory.GiveItem(item))
+                {
+                    item.Drop(player.transform.position + Vector3.up, Vector3.up * 2f);
+                }
+
+                string label = item.info?.displayName?.translated;
+                if (string.IsNullOrEmpty(label)) label = r.Shortname;
+                grantedNames.Add($"{r.Amount}× {label}");
+            }
+
+            if (grantedNames.Count > 0 && config.Rewards.NotifyOnReward)
+            {
+                SendReply(player, Msg(langKey, player, string.Join(", ", grantedNames)));
+            }
+        }
+
+        private void CancelReadRewardTimer(ulong userId)
+        {
+            if (readRewardTimers.TryGetValue(userId, out var state))
+            {
+                state.Timer?.Destroy();
+                readRewardTimers.Remove(userId);
+            }
+        }
+
+        private void ScheduleReadReward(BasePlayer player, Announcement ann)
+        {
+            if (player == null || ann == null) return;
+            if (config.Rewards == null || !config.Rewards.EnableReadReward) return;
+            if (ann.ReadRewardedPlayers == null) ann.ReadRewardedPlayers = new HashSet<ulong>();
+            if (ann.ReadRewardedPlayers.Contains(player.userID)) return;
+
+            // If a timer is already counting down for this same announcement, let it finish —
+            // re-renders (e.g. after liking) shouldn't reset the read timer.
+            if (readRewardTimers.TryGetValue(player.userID, out var existing)
+                && string.Equals(existing.AnnId, ann.Id, StringComparison.Ordinal)
+                && existing.Timer != null && !existing.Timer.Destroyed)
+                return;
+
+            CancelReadRewardTimer(player.userID);
+
+            int delay = Math.Max(1, config.Rewards.ReadDelaySeconds);
+            string targetId = ann.Id;
+            ulong userId = player.userID;
+
+            var t = timer.Once(delay, () =>
+            {
+                readRewardTimers.Remove(userId);
+                if (player == null || !player.IsConnected) return;
+                if (!playersWithUiOpen.Contains(userId)) return;
+
+                var current = FindById(targetId);
+                if (current == null) return;
+                if (current.ReadRewardedPlayers == null) current.ReadRewardedPlayers = new HashSet<ulong>();
+                if (!current.ReadRewardedPlayers.Add(userId)) return;
+
+                SaveAnnouncements();
+                GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
+            });
+
+            readRewardTimers[userId] = new ReadRewardState { AnnId = targetId, Timer = t };
         }
         #endregion
 
