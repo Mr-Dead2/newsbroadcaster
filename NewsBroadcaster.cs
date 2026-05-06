@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.0")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.1")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -142,6 +142,11 @@ namespace Oxide.Plugins
 
         class RewardBundle
         {
+            // Replace (not append) on deserialize. Without this, JSON.NET's default
+            // ObjectCreationHandling.Auto walks the existing list — populated by the
+            // RewardSettings initializer with the default scrap entry — and APPENDS the
+            // saved JSON entries to it, doubling the list on every load.
+            [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<RewardItem> Items { get; set; } = new List<RewardItem>();
             // ServerRewards (RP) integration. Requires ServerRewards plugin.
             public int Points { get; set; } = 0;
@@ -426,6 +431,20 @@ namespace Oxide.Plugins
                 config = raw != null ? raw.ToObject<ConfigData>() : Config.ReadObject<ConfigData>();
                 if (config == null) throw new Exception();
 
+                // CLEANUP: pre-1.1.1 deserialize bug doubled reward Items on every load.
+                // Collapse the runs that bug produces; one-time, idempotent.
+                if (config.Rewards != null)
+                {
+                    int collapsed = 0;
+                    collapsed += DeduplicateConsecutiveRewardItems(config.Rewards.ReadRewards?.Items);
+                    collapsed += DeduplicateConsecutiveRewardItems(config.Rewards.LikeRewards?.Items);
+                    if (collapsed > 0)
+                    {
+                        PrintWarning($"Cleaned up {collapsed} duplicate reward item(s) from config (pre-1.1.1 deserialization bug).");
+                        needsSave = true;
+                    }
+                }
+
                 // MIGRATION: If Themes is missing or empty, populate defaults and preserve legacy "Colors"
                 if (config.Themes == null) config.Themes = new Dictionary<string, UIColors>();
 
@@ -471,6 +490,29 @@ namespace Oxide.Plugins
                 }
             }
             return changed;
+        }
+
+        // Collapse runs of identical reward entries — the doubling pattern produced by
+        // the pre-1.1.1 deserialize bug (e.g. [scrap×5, scrap×5, scrap×5] -> [scrap×5]).
+        // Distinct entries with the same shortname but different amounts/skins are kept.
+        private static int DeduplicateConsecutiveRewardItems(List<RewardItem> items)
+        {
+            if (items == null || items.Count < 2) return 0;
+            int removed = 0;
+            for (int i = items.Count - 1; i > 0; i--)
+            {
+                var a = items[i];
+                var b = items[i - 1];
+                if (a == null || b == null) continue;
+                if (string.Equals(a.Shortname, b.Shortname, StringComparison.Ordinal)
+                    && a.Amount == b.Amount
+                    && a.SkinId == b.SkinId)
+                {
+                    items.RemoveAt(i);
+                    removed++;
+                }
+            }
+            return removed;
         }
 
         private static UIColors ExtractLegacyColors(JObject raw)
