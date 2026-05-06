@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.0.3  
+**Version:** 1.0.4  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -82,7 +82,7 @@ news.show "Alert!" "-" "PvP zone closing in 10 minutes." Alert
 
 - Use `"-"` as the image URL to post without an image.
 - Supported types: `Info`, `Warning`, `Alert`, `Event`, `Update` (case-insensitive, defaults to `Info`).
-- **Note:** URLs inside the body text are automatically stripped when posting via console.
+- The `[Type]` argument is only treated as a type when passed unquoted at the end of the line. Words inside the quoted body that happen to match a type name (e.g. `"Status: Update"`) are preserved verbatim.
 
 ### Announcement Types & Colours
 
@@ -100,24 +100,42 @@ news.show "Alert!" "-" "PvP zone closing in 10 minutes." Alert
 
 These are called by CUI buttons and should not be run directly:
 
+All UI-driven commands address announcements by their stable `Id` (a hex GUID assigned on creation), not by list position — this prevents a button from acting on the wrong announcement when posts are added/removed concurrently.
+
 | Command | Description |
 |---|---|
 | `news.page <page>` | Navigate archive pages |
-| `news.view <index>` | Open a specific announcement popup |
+| `news.view <id>` | Open a specific announcement popup |
 | `news.close` | Close the main UI |
 | `news.close.notif` | Dismiss the notification toast |
-| `news.scrollbody <index> <offset>` | Scroll the announcement body |
-| `news.like <index>` | Toggle like on an announcement |
+| `news.scrollbody <id> <offset>` | Scroll the announcement body to a line offset |
+| `news.like <id>` | Toggle like on an announcement |
 | `news.admin.page <page>` | Navigate admin list pages |
 | `news.admin.create` | Open the new-announcement editor |
-| `news.admin.edit <index>` | Open the editor for an existing announcement |
-| `news.admin.del <index>` | Delete an announcement via admin UI |
+| `news.admin.edit <id>` | Open the editor for an existing announcement |
+| `news.admin.del <id>` | Delete an announcement via admin UI |
+| `news.admin.delconfirm <id>` | Show the delete-confirmation dialog |
 | `news.admin.themes` | Open the theme selector UI |
 | `news.admin.settheme "ThemeName"` | Apply a theme |
-| `news.editor.input <field> <value>` | Update a field in the editor |
+| `news.editor.input <field> <value>` | Update a field in the editor (`title` / `image` / `text`) |
 | `news.editor.type` | Cycle the announcement type in the editor |
 | `news.editor.save` | Save and broadcast the edited/new announcement |
 | `news.editor.cancel` | Cancel editing and return to admin list |
+| `news.confirm.close` | Dismiss the delete-confirmation dialog |
+
+### Body scrollbar
+
+Long announcements use a paged scrollbar with four navigation buttons and a clickable track:
+
+| Button | Action |
+|---|---|
+| `▲▲` | Page up (jumps a full visible page) |
+| `▲` | Line up (one line) |
+| Track click | Jumps to the clicked position (14 zones) |
+| `▼` | Line down (one line) |
+| `▼▼` | Page down (jumps a full visible page) |
+
+The handle height visually reflects the visible-window-to-content ratio.
 
 ---
 
