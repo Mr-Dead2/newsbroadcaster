@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.2")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.3")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -1615,12 +1615,12 @@ namespace Oxide.Plugins
                 int pageDown   = ClampBodyOffset(ann.Text, currentOffset + BodyVisibleLineCount);
                 string annId   = ann.Id;
 
-                const float trackLeft   = 0.932f;
-                const float trackRight  = 0.978f;
+                const float trackLeft   = 0.929f;
+                const float trackRight  = 0.981f;
                 const float trackBottom = 0.165f;
                 const float trackTop    = 0.677f;
-                const float btnHeight   = 0.032f;
-                const float btnGap      = 0.002f;
+                const float btnHeight   = 0.034f;
+                const float btnGap      = 0.003f;
 
                 float lineUpBottom = trackTop + btnGap;
                 float lineUpTop    = lineUpBottom + btnHeight;
@@ -1632,14 +1632,21 @@ namespace Oxide.Plugins
                 float pageDnTop    = lineDnBottom - btnGap;
                 float pageDnBottom = pageDnTop - btnHeight;
 
-                // Track background
+                // Track outer (channel) — dark base
                 container.Add(new CuiPanel
                 {
-                    Image = { Color = "0 0 0 0.40" },
+                    Image = { Color = "0.04 0.04 0.05 0.85" },
                     RectTransform = { AnchorMin = $"{trackLeft} {trackBottom}", AnchorMax = $"{trackRight} {trackTop}" }
                 }, mainPanel);
 
-                // Clickable jump zones stacked along the track — click anywhere to scroll to that position
+                // Track inner — barely-there highlight to give a "channel" feel
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = "1 1 1 0.04" },
+                    RectTransform = { AnchorMin = $"{trackLeft + 0.0025f} {trackBottom + 0.003f}", AnchorMax = $"{trackRight - 0.0025f} {trackTop - 0.003f}" }
+                }, mainPanel);
+
+                // Clickable jump zones — invisible buttons over the track
                 if (maxOffset > 0)
                 {
                     const int jumpZones = 14;
@@ -1663,61 +1670,105 @@ namespace Oxide.Plugins
                 // Handle height is proportional to the visible-window / total-content ratio so it
                 // visually communicates how much of the body is on screen.
                 var allLines = BuildBodyDisplayLines(ann.Text);
-                float windowRatio = allLines.Count <= 0 ? 1f : Mathf.Clamp((float)BodyVisibleLineCount / allLines.Count, 0.10f, 0.90f);
+                float windowRatio = allLines.Count <= 0 ? 1f : Mathf.Clamp((float)BodyVisibleLineCount / allLines.Count, 0.12f, 0.90f);
                 float trackH      = trackTop - trackBottom;
                 float handleH     = trackH * windowRatio;
                 float usable      = trackH - handleH;
                 float progress    = maxOffset <= 0 ? 0f : Mathf.Clamp01((float)currentOffset / maxOffset);
                 float handleMin   = trackTop - handleH - usable * progress;
                 float handleMax   = handleMin + handleH;
+
+                const float handleInsetX = 0.004f;
+                string hLeft  = $"{(trackLeft + handleInsetX):F4}";
+                string hRight = $"{(trackRight - handleInsetX):F4}";
+
+                // Handle base
                 container.Add(new CuiPanel
                 {
                     Image = { Color = c.ButtonPrimary },
-                    RectTransform = { AnchorMin = $"{trackLeft + 0.003f} {handleMin:F3}", AnchorMax = $"{trackRight - 0.003f} {handleMax:F3}" }
+                    RectTransform = { AnchorMin = $"{hLeft} {handleMin:F3}", AnchorMax = $"{hRight} {handleMax:F3}" }
                 }, mainPanel);
+
+                // Top highlight strip — gives the handle a "raised" feel
+                float topHighlightBottom = handleMax - handleH * 0.20f;
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = "1 1 1 0.18" },
+                    RectTransform = { AnchorMin = $"{hLeft} {topHighlightBottom:F3}", AnchorMax = $"{hRight} {handleMax:F3}" }
+                }, mainPanel);
+
+                // Bottom shadow strip
+                float bottomShadowTop = handleMin + handleH * 0.14f;
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = "0 0 0 0.22" },
+                    RectTransform = { AnchorMin = $"{hLeft} {handleMin:F3}", AnchorMax = $"{hRight} {bottomShadowTop:F3}" }
+                }, mainPanel);
+
+                // Grip lines (3 horizontal stripes at center) — only when handle is tall enough to fit them
+                if (handleH >= 0.045f)
+                {
+                    float gripCenter = (handleMin + handleMax) / 2f;
+                    const float gripSpacing = 0.0065f;
+                    const float gripThickness = 0.0014f;
+                    for (int g = -1; g <= 1; g++)
+                    {
+                        float y = gripCenter + g * gripSpacing;
+                        container.Add(new CuiPanel
+                        {
+                            Image = { Color = "1 1 1 0.40" },
+                            RectTransform = { AnchorMin = $"{(trackLeft + 0.013f):F4} {(y - gripThickness):F4}", AnchorMax = $"{(trackRight - 0.013f):F4} {(y + gripThickness):F4}" }
+                        }, mainPanel);
+                    }
+                }
 
                 bool canUp = currentOffset > 0;
                 bool canDown = currentOffset < maxOffset;
-                string disabledColor = "0.12 0.12 0.12 0.6";
 
-                // Page up (▲▲) — jumps a full visible page
+                // Disabled looks: low-alpha secondary so it reads as "the same button, dimmed"
+                string activeColor   = c.ButtonSecondary;
+                string disabledColor = "0.18 0.18 0.20 0.45";
+                string activeText    = c.TextTitle;
+                string disabledText  = "0.55 0.55 0.55 0.6";
+
+                // Page up — jumps a full visible page
                 container.Add(new CuiButton
                 {
-                    Button = { Color = canUp ? c.ButtonSecondary : disabledColor, Command = canUp ? $"news.scrollbody {annId} {pageUp}" : "" },
-                    Text = { Text = "▲▲", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = canUp ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    Button = { Color = canUp ? activeColor : disabledColor, Command = canUp ? $"news.scrollbody {annId} {pageUp}" : "" },
+                    Text = { Text = "▲▲", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = canUp ? activeText : disabledText, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = $"{trackLeft} {pageUpBottom:F3}", AnchorMax = $"{trackRight} {pageUpTop:F3}" }
                 }, mainPanel);
 
-                // Line up (▲) — single-line step
+                // Line up — single-line step
                 container.Add(new CuiButton
                 {
-                    Button = { Color = canUp ? c.ButtonSecondary : disabledColor, Command = canUp ? $"news.scrollbody {annId} {lineUp}" : "" },
-                    Text = { Text = "▲", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = canUp ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    Button = { Color = canUp ? activeColor : disabledColor, Command = canUp ? $"news.scrollbody {annId} {lineUp}" : "" },
+                    Text = { Text = "▲", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = canUp ? activeText : disabledText, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = $"{trackLeft} {lineUpBottom:F3}", AnchorMax = $"{trackRight} {lineUpTop:F3}" }
                 }, mainPanel);
 
-                // Line down (▼) — single-line step
+                // Line down — single-line step
                 container.Add(new CuiButton
                 {
-                    Button = { Color = canDown ? c.ButtonSecondary : disabledColor, Command = canDown ? $"news.scrollbody {annId} {lineDown}" : "" },
-                    Text = { Text = "▼", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = canDown ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    Button = { Color = canDown ? activeColor : disabledColor, Command = canDown ? $"news.scrollbody {annId} {lineDown}" : "" },
+                    Text = { Text = "▼", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = canDown ? activeText : disabledText, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = $"{trackLeft} {lineDnBottom:F3}", AnchorMax = $"{trackRight} {lineDnTop:F3}" }
                 }, mainPanel);
 
-                // Page down (▼▼) — jumps a full visible page
+                // Page down — jumps a full visible page
                 container.Add(new CuiButton
                 {
-                    Button = { Color = canDown ? c.ButtonSecondary : disabledColor, Command = canDown ? $"news.scrollbody {annId} {pageDown}" : "" },
-                    Text = { Text = "▼▼", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = canDown ? c.TextTitle : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    Button = { Color = canDown ? activeColor : disabledColor, Command = canDown ? $"news.scrollbody {annId} {pageDown}" : "" },
+                    Text = { Text = "▼▼", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = canDown ? activeText : disabledText, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = $"{trackLeft} {pageDnBottom:F3}", AnchorMax = $"{trackRight} {pageDnTop:F3}" }
                 }, mainPanel);
 
-                // Line counter shown in the footer bar on the scrollbar column
+                // Line counter — uses an en-dash for the range and sits muted in the footer column
                 int firstLine = currentOffset + 1;
                 int lastLine  = Math.Min(currentOffset + BodyVisibleLineCount, allLines.Count);
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = $"{firstLine}-{lastLine}/{allLines.Count}", FontSize = 8, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                    Text = { Text = $"{firstLine}–{lastLine} / {allLines.Count}", FontSize = 8, Align = TextAnchor.MiddleCenter, Color = "0.55 0.55 0.6 0.85", Font = "robotocondensed-regular.ttf" },
                     RectTransform = { AnchorMin = "0.925 0.015", AnchorMax = "0.988 0.078" }
                 }, mainPanel);
             }
