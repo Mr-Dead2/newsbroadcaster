@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.1.0  
+**Version:** 1.1.2  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -299,7 +299,7 @@ Each theme exposes these RGBA string fields (`"R G B A"`, values 0–1):
 Any announcement can be **pinned** so that it always sits at the top of the in-game archive (`/news`) and the admin list, regardless of its timestamp. Use cases: server rules, wipe schedule, donation links, current event banners.
 
 - Toggle the pin from the admin list — every row has a **📌 PIN** / **📌 UNPIN** button next to **EDIT** / **DEL**.
-- Pinned posts get a small `📌` glyph prefix on their title in both the archive and admin views.
+- Pinned posts get a small `📌` glyph prefix on their title in the archive list, the admin list, and the popup view, plus a **📌 PINNED** badge inline with the type in the popup header — so the pinned status is visible to players the moment they open the announcement.
 - Sort order: pinned (newest first) → unpinned (newest first). Insertion order in the underlying data is unchanged, so "show on connect" and `news.list` still surface the most recently broadcast announcement.
 
 A console-side toggle is also available:
