@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.1")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.2")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -240,6 +240,7 @@ namespace Oxide.Plugins
                 ["RewardLike"] = "Thanks for the like! Reward: {0}",
                 ["PinButton"] = "📌 PIN",
                 ["UnpinButton"] = "📌 UNPIN",
+                ["PinnedBadge"] = "📌 PINNED",
                 ["SelectedCount"] = "{0} SELECTED",
                 ["BulkDelete"] = "✕ DELETE",
                 ["BulkPin"] = "📌 PIN ALL",
@@ -1527,9 +1528,13 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0 0.88", AnchorMax = "1 1" }
             }, mainPanel);
 
+            string headerText = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {ann.Type.ToString().ToUpper()}";
+            if (ann.Pinned)
+                headerText += $"  <color={RgbaToHex(c.ButtonPrimary)}>{Msg("PinnedBadge", player)}</color>";
+
             container.Add(new CuiLabel
             {
-                Text = { Text = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {ann.Type.ToString().ToUpper()}", FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                Text = { Text = headerText, FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = "0.03 0.88", AnchorMax = "0.8 1" }
             }, mainPanel);
 
@@ -1574,7 +1579,7 @@ namespace Oxide.Plugins
 
             container.Add(new CuiLabel
             {
-                Text = { Text = (ann.Title ?? "").ToUpper(), FontSize = 26, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                Text = { Text = (ann.Pinned ? "📌 " : "") + (ann.Title ?? "").ToUpper(), FontSize = 26, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = $"{contentLeft} 0.74", AnchorMax = "0.98 0.84" }
             }, mainPanel);
 
