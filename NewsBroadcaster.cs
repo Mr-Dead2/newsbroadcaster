@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.3")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.4")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -240,7 +240,7 @@ namespace Oxide.Plugins
                 ["RewardLike"] = "Thanks for the like! Reward: {0}",
                 ["PinButton"] = "📌 PIN",
                 ["UnpinButton"] = "📌 UNPIN",
-                ["PinnedBadge"] = "📌 PINNED",
+                ["PinnedBadge"] = "PINNED",
                 ["SelectedCount"] = "{0} SELECTED",
                 ["BulkDelete"] = "✕ DELETE",
                 ["BulkPin"] = "📌 PIN ALL",
@@ -1528,9 +1528,32 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0 0.88", AnchorMax = "1 1" }
             }, mainPanel);
 
-            string headerText = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {ann.Type.ToString().ToUpper()}";
+            // Pinned: gold frame around the whole popup + gold chip in the header.
             if (ann.Pinned)
-                headerText += $"  <color={RgbaToHex(c.ButtonPrimary)}>{Msg("PinnedBadge", player)}</color>";
+            {
+                const string pinGold     = "0.95 0.70 0.20 0.95";
+                const string pinGoldText = "0.05 0.05 0.05 1";
+
+                // 4-side frame
+                container.Add(new CuiPanel { Image = { Color = pinGold }, RectTransform = { AnchorMin = "0 0.997", AnchorMax = "1 1"     } }, mainPanel);
+                container.Add(new CuiPanel { Image = { Color = pinGold }, RectTransform = { AnchorMin = "0 0",     AnchorMax = "1 0.003" } }, mainPanel);
+                container.Add(new CuiPanel { Image = { Color = pinGold }, RectTransform = { AnchorMin = "0 0",     AnchorMax = "0.0015 1" } }, mainPanel);
+                container.Add(new CuiPanel { Image = { Color = pinGold }, RectTransform = { AnchorMin = "0.9985 0", AnchorMax = "1 1"    } }, mainPanel);
+
+                // Header chip
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = pinGold },
+                    RectTransform = { AnchorMin = "0.83 0.905", AnchorMax = "0.93 0.985" }
+                }, mainPanel);
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = Msg("PinnedBadge", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = pinGoldText, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.83 0.905", AnchorMax = "0.93 0.985" }
+                }, mainPanel);
+            }
+
+            string headerText = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {ann.Type.ToString().ToUpper()}";
 
             container.Add(new CuiLabel
             {
@@ -1579,7 +1602,7 @@ namespace Oxide.Plugins
 
             container.Add(new CuiLabel
             {
-                Text = { Text = (ann.Pinned ? "📌 " : "") + (ann.Title ?? "").ToUpper(), FontSize = 26, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                Text = { Text = (ann.Title ?? "").ToUpper(), FontSize = 26, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = $"{contentLeft} 0.74", AnchorMax = "0.98 0.84" }
             }, mainPanel);
 
@@ -1899,23 +1922,46 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = $"0.02 {bottom}", AnchorMax = $"0.98 {top}" }
                 }, mainPanel, itemPanel);
 
+                // Pinned: subtle gold tint over the whole row
+                if (ann.Pinned)
+                {
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = "0.95 0.70 0.20 0.10" },
+                        RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+                    }, itemPanel);
+                }
+
                 container.Add(new CuiPanel {
                     Image = { Color = typeColor },
                     RectTransform = { AnchorMin = "0 0", AnchorMax = "0.005 1" }
                 }, itemPanel);
 
-                string titleText = (ann.Title ?? "(no title)").ToUpper();
-                if (ann.Pinned) titleText = "📌 " + titleText;
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = titleText, FontSize = 13, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.025 0.55", AnchorMax = "0.75 0.9" }
+                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 13, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.025 0.55", AnchorMax = "0.62 0.9" }
                 }, itemPanel);
+
+                // Pinned chip — gold pill between title and date
+                if (ann.Pinned)
+                {
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = "0.95 0.70 0.20 0.95" },
+                        RectTransform = { AnchorMin = "0.63 0.62", AnchorMax = "0.74 0.86" }
+                    }, itemPanel);
+                    container.Add(new CuiLabel
+                    {
+                        Text = { Text = Msg("PinnedBadge", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1", Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.63 0.62", AnchorMax = "0.74 0.86" }
+                    }, itemPanel);
+                }
 
                 container.Add(new CuiLabel
                 {
                     Text = { Text = ann.Date, FontSize = 10, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = "0.75 0.55", AnchorMax = "0.975 0.9" }
+                    RectTransform = { AnchorMin = "0.75 0.55", AnchorMax = "0.86 0.9" }
                 }, itemPanel);
 
                 string rawPreview = (ann.Text ?? "").Replace("\n", " ");
@@ -2094,6 +2140,16 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = $"0.02 {bottom}", AnchorMax = $"0.98 {top}" }
                 }, mainPanel, itemPanel);
 
+                // Pinned: subtle gold tint over the whole row
+                if (ann.Pinned)
+                {
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = "0.95 0.70 0.20 0.10" },
+                        RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+                    }, itemPanel);
+                }
+
                 // Selection checkbox
                 container.Add(new CuiButton
                 {
@@ -2108,11 +2164,9 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0.045 0", AnchorMax = "0.05 1" }
                 }, itemPanel);
 
-                string titleText = (ann.Title ?? "(no title)").ToUpper();
-                if (ann.Pinned) titleText = "📌 " + titleText;
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = titleText, FontSize = 12, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 12, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.06 0.4", AnchorMax = "0.62 0.9" }
                 }, itemPanel);
 
@@ -2122,11 +2176,11 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0.06 0.1", AnchorMax = "0.62 0.4" }
                 }, itemPanel);
 
-                // Pin / Unpin
+                // Pin / Unpin — switches to gold when pinned so the whole row reads as a coherent unit
                 container.Add(new CuiButton
                 {
-                    Button = { Color = ann.Pinned ? c.ButtonPrimary : "0.35 0.35 0.4 0.9", Command = $"news.admin.togglepin {ann.Id} {page}" },
-                    Text = { Text = ann.Pinned ? Msg("UnpinButton", player) : Msg("PinButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+                    Button = { Color = ann.Pinned ? "0.95 0.70 0.20 1" : "0.35 0.35 0.4 0.9", Command = $"news.admin.togglepin {ann.Id} {page}" },
+                    Text = { Text = ann.Pinned ? Msg("UnpinButton", player) : Msg("PinButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = ann.Pinned ? "0.05 0.05 0.05 1" : "1 1 1 1" },
                     RectTransform = { AnchorMin = "0.63 0.2", AnchorMax = "0.74 0.8" }
                 }, itemPanel);
 
