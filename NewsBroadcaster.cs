@@ -88,17 +88,15 @@ namespace Oxide.Plugins
             public DiscordSettings Discord { get; set; } = new DiscordSettings();
             public RewardSettings Rewards { get; set; } = new RewardSettings();
 
-            // Replaced single Colors object with Themes dictionary
             public string SelectedTheme { get; set; } = "Default";
             public Dictionary<string, UIColors> Themes { get; set; } = new Dictionary<string, UIColors>();
 
-            // Helper to handle legacy config or missing themes
             [JsonIgnore]
-            public UIColors Colors 
+            public UIColors Colors
             {
                 get
                 {
-                    if (Themes == null || Themes.Count == 0) return new UIColors(); 
+                    if (Themes == null || Themes.Count == 0) return new UIColors();
                     if (Themes.TryGetValue(SelectedTheme, out var theme)) return theme;
                     return Themes.Values.First();
                 }
@@ -120,7 +118,7 @@ namespace Oxide.Plugins
             public bool Enabled { get; set; } = true;
             public bool UseNotifyPlugin { get; set; } = false;
             public int NotifyType { get; set; } = 0;
-            public string Position { get; set; } = "Right"; 
+            public string Position { get; set; } = "Right";
             public int Duration { get; set; } = 8;
             public string NotificationSound { get; set; } = "assets/bundled/prefabs/fx/notice/loot.drag.fx.prefab";
         }
@@ -142,22 +140,18 @@ namespace Oxide.Plugins
 
         class RewardBundle
         {
-            // Replace (not append) on deserialize. Without this, JSON.NET's default
-            // ObjectCreationHandling.Auto walks the existing list — populated by the
-            // RewardSettings initializer with the default scrap entry — and APPENDS the
-            // saved JSON entries to it, doubling the list on every load.
+
             [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<RewardItem> Items { get; set; } = new List<RewardItem>();
-            // ServerRewards (RP) integration. Requires ServerRewards plugin.
+
             public int Points { get; set; } = 0;
-            // Economics (coins/cash) integration. Requires Economics plugin.
+
             public double Currency { get; set; } = 0;
         }
 
         class RewardSettings
         {
-            // When enabled, players who keep an announcement popup open for at
-            // least ReadDelaySeconds receive ReadRewards once per announcement.
+
             public bool EnableReadReward { get; set; } = false;
             public int ReadDelaySeconds { get; set; } = 5;
             public RewardBundle ReadRewards { get; set; } = new RewardBundle
@@ -165,26 +159,21 @@ namespace Oxide.Plugins
                 Items = new List<RewardItem> { new RewardItem { Shortname = "scrap", Amount = 5 } }
             };
 
-            // When enabled, players who like an announcement (heart button)
-            // receive LikeRewards once per announcement. Un-liking does not refund.
             public bool EnableLikeReward { get; set; } = false;
             public RewardBundle LikeRewards { get; set; } = new RewardBundle
             {
                 Items = new List<RewardItem> { new RewardItem { Shortname = "scrap", Amount = 10 } }
             };
 
-            // When true, whisper a chat message listing the items / points / currency granted.
             public bool NotifyOnReward { get; set; } = true;
 
-            // Suffix labels used in the reward chat message.
             public string PointsLabel { get; set; } = "RP";
             public string CurrencyLabel { get; set; } = "coins";
         }
 
         class UIColors
         {
-            // Modern minimalistic palette: cool near-black surfaces, calm blue accent,
-            // soft text contrast. Keep slight transparency so the game blur shows through.
+
             public string PanelBg { get; set; } = "0.07 0.08 0.10 0.97";
             public string HeaderBg { get; set; } = "0.04 0.05 0.06 0.55";
             public string ContentBg { get; set; } = "0.13 0.14 0.16 0.55";
@@ -370,8 +359,6 @@ namespace Oxide.Plugins
             return set;
         }
 
-        // Drop selection entries that no longer reference an existing announcement.
-        // Called before rendering / before bulk actions so stale ids don't accumulate.
         private void PruneAdminSelection(ulong userId)
         {
             if (!adminSelections.TryGetValue(userId, out var set) || set.Count == 0) return;
@@ -379,10 +366,6 @@ namespace Oxide.Plugins
             set.RemoveWhere(id => !liveIds.Contains(id));
         }
 
-        // Display ordering used by the archive list and admin list:
-        // pinned posts first, then by timestamp descending. Insertion order in the
-        // backing list is preserved, so "newest broadcast" lookups (announcements[0])
-        // are unaffected.
         private List<Announcement> GetDisplayOrder()
         {
             return announcements
@@ -391,8 +374,6 @@ namespace Oxide.Plugins
                 .ToList();
         }
 
-        // Snapshot of an announcement for external hook consumers — primitive types only,
-        // so other plugins can read the data without referencing this plugin's private types.
         private Dictionary<string, object> BuildHookData(Announcement ann)
         {
             if (ann == null) return null;
@@ -422,20 +403,15 @@ namespace Oxide.Plugins
 
                 JObject raw = null;
                 try { raw = Config.ReadObject<JObject>(); }
-                catch { /* malformed file — fall through to plain deserialize below */ }
+                catch {  }
 
-                // MIGRATION: legacy Rewards.ReadRewards / LikeRewards were a JArray of items.
-                // The new schema is a RewardBundle object (Items / Points / Currency).
                 if (raw != null && MigrateLegacyRewardArrays(raw)) needsSave = true;
 
-                // MIGRATION: persist newly-defaulted blocks (e.g. Rewards on upgrade)
                 if (raw != null && raw["Rewards"] == null) needsSave = true;
 
                 config = raw != null ? raw.ToObject<ConfigData>() : Config.ReadObject<ConfigData>();
                 if (config == null) throw new Exception();
 
-                // CLEANUP: pre-1.1.1 deserialize bug doubled reward Items on every load.
-                // Collapse the runs that bug produces; one-time, idempotent.
                 if (config.Rewards != null)
                 {
                     int collapsed = 0;
@@ -448,7 +424,6 @@ namespace Oxide.Plugins
                     }
                 }
 
-                // MIGRATION: If Themes is missing or empty, populate defaults and preserve legacy "Colors"
                 if (config.Themes == null) config.Themes = new Dictionary<string, UIColors>();
 
                 if (config.Themes.Count == 0)
@@ -497,9 +472,6 @@ namespace Oxide.Plugins
             return changed;
         }
 
-        // Collapse runs of identical reward entries — the doubling pattern produced by
-        // the pre-1.1.1 deserialize bug (e.g. [scrap×5, scrap×5, scrap×5] -> [scrap×5]).
-        // Distinct entries with the same shortname but different amounts/skins are kept.
         private static int DeduplicateConsecutiveRewardItems(List<RewardItem> items)
         {
             if (items == null || items.Count < 2) return 0;
@@ -541,7 +513,7 @@ namespace Oxide.Plugins
             config = new ConfigData();
             config.Themes = new Dictionary<string, UIColors>
             {
-                ["Default"] = new UIColors(), // Modern minimalist (see UIColors defaults)
+                ["Default"] = new UIColors(),
                 ["Dark"] = new UIColors
                 {
                     PanelBg = "0.04 0.04 0.05 0.98",
@@ -654,7 +626,6 @@ namespace Oxide.Plugins
 
             announcements = storedData.Announcements;
 
-            // Fix/Backfill timestamps for older data
             long baseTime = DateTime.UtcNow.Ticks;
             bool changed = false;
             var seenIds = new HashSet<string>(StringComparer.Ordinal);
@@ -662,12 +633,11 @@ namespace Oxide.Plugins
             {
                 if (announcements[i].Timestamp == 0)
                 {
-                    // Assume index 0 is newest
+
                     announcements[i].Timestamp = baseTime - (i * 10000);
                     changed = true;
                 }
 
-                // DATA MIGRATION: Ensure tracking sets are not null
                 if (announcements[i].LikedPlayers == null)
                 {
                     announcements[i].LikedPlayers = new HashSet<ulong>();
@@ -685,13 +655,11 @@ namespace Oxide.Plugins
                 }
                 if (announcements[i].ReadByPlayers == null)
                 {
-                    // Seed from the legacy ReadRewardedPlayers — anyone who got a read reward
-                    // has, by definition, read the announcement.
+
                     announcements[i].ReadByPlayers = new HashSet<ulong>(announcements[i].ReadRewardedPlayers);
                     changed = true;
                 }
 
-                // DATA MIGRATION: Ensure every announcement has a stable Id
                 if (string.IsNullOrEmpty(announcements[i].Id) || !seenIds.Add(announcements[i].Id))
                 {
                     announcements[i].Id = NewAnnouncementId();
@@ -789,8 +757,6 @@ namespace Oxide.Plugins
                 return;
             }
 
-            // Use the raw full string to avoid default console splitting issues.
-            // Regex matches a quoted string OR a single non-space token.
             string fullCommand = arg.FullString ?? string.Empty;
             var rawMatches = CommandSplitRegex.Matches(fullCommand).Cast<Match>().ToList();
             var values = rawMatches.Select(m => m.Value.Trim('"')).ToList();
@@ -808,8 +774,6 @@ namespace Oxide.Plugins
             string text;
             AnnouncementType type = AnnouncementType.Info;
 
-            // Only treat the trailing token as a type when it was passed unquoted —
-            // otherwise a body containing a type-name word (e.g. "Status: Update") would lose its last word.
             bool lastWasUnquoted = rawMatches.Count > 0 && !rawMatches[rawMatches.Count - 1].Value.StartsWith("\"");
             if (values.Count > 3 && lastWasUnquoted && Enum.TryParse(values[values.Count - 1], true, out AnnouncementType parsedType))
             {
@@ -1138,7 +1102,6 @@ namespace Oxide.Plugins
             int start = page * perPage;
             int end = Math.Min(start + perPage, displayList.Count);
 
-            // If everything visible on the page is already selected, deselect it; otherwise select it.
             bool allSelected = true;
             for (int i = start; i < end; i++) { if (!sel.Contains(displayList[i].Id)) { allSelected = false; break; } }
 
@@ -1221,8 +1184,6 @@ namespace Oxide.Plugins
                 return;
             }
 
-            // Collect victims, fire OnNewsDeleted, then remove. We iterate the selection set
-            // and remove from the announcements list one at a time so indices stay valid.
             int removed = 0;
             foreach (var id in sel.ToList())
             {
@@ -1272,7 +1233,6 @@ namespace Oxide.Plugins
 
             string field = arg.Args[0].ToLowerInvariant();
 
-            // Reconstruct the value from FullString so multi-space/multi-line input is preserved verbatim.
             string fullStr = arg.FullString ?? string.Empty;
             string value;
             if (fullStr.StartsWith(field, StringComparison.OrdinalIgnoreCase))
@@ -1410,7 +1370,6 @@ namespace Oxide.Plugins
                 addedLike = true;
             }
 
-            // Reward only on the *first* like for this announcement, never on un-like.
             if (addedLike && config.Rewards != null && config.Rewards.EnableLikeReward)
             {
                 if (ann.LikeRewardedPlayers == null) ann.LikeRewardedPlayers = new HashSet<ulong>();
@@ -1470,14 +1429,12 @@ namespace Oxide.Plugins
                 Text = { Text = "" }
             }, "Hud", NotificationLayer);
 
-            // Type stripe — slim accent on the left edge.
             container.Add(new CuiPanel
             {
                 Image = { Color = typeColor, FadeIn = 0.30f },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "0.018 1" }
             }, NotificationLayer);
 
-            // Subtle bottom hairline divider for elevation.
             container.Add(new CuiPanel
             {
                 Image = { Color = "1 1 1 0.05", FadeIn = 0.30f },
@@ -1536,7 +1493,7 @@ namespace Oxide.Plugins
         private void ShowPopup(BasePlayer player, Announcement ann, bool fromHistory = false, bool playSound = false)
         {
             DestroyUI(player);
-            DestroyNotification(player); 
+            DestroyNotification(player);
             playersWithUiOpen.Add(player.userID);
 
             var container = new CuiElementContainer();
@@ -1562,26 +1519,22 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0 0.88", AnchorMax = "1 1" }
             }, mainPanel);
 
-            // Hairline header separator — modern UIs use thin dividers instead of heavy bars.
             container.Add(new CuiPanel
             {
                 Image = { Color = "1 1 1 0.06", FadeIn = 0.20f },
                 RectTransform = { AnchorMin = "0 0.879", AnchorMax = "1 0.881" }
             }, mainPanel);
 
-            // Pinned: gold frame around the whole popup + gold chip in the header.
             if (ann.Pinned)
             {
                 const string pinGold     = "0.95 0.70 0.20 0.95";
                 const string pinGoldText = "0.05 0.05 0.05 1";
 
-                // 4-side frame
                 container.Add(new CuiPanel { Image = { Color = pinGold }, RectTransform = { AnchorMin = "0 0.997", AnchorMax = "1 1"     } }, mainPanel);
                 container.Add(new CuiPanel { Image = { Color = pinGold }, RectTransform = { AnchorMin = "0 0",     AnchorMax = "1 0.003" } }, mainPanel);
                 container.Add(new CuiPanel { Image = { Color = pinGold }, RectTransform = { AnchorMin = "0 0",     AnchorMax = "0.0015 1" } }, mainPanel);
                 container.Add(new CuiPanel { Image = { Color = pinGold }, RectTransform = { AnchorMin = "0.9985 0", AnchorMax = "1 1"    } }, mainPanel);
 
-                // Header chip
                 container.Add(new CuiPanel
                 {
                     Image = { Color = pinGold },
@@ -1647,8 +1600,8 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = $"{contentLeft} 0.74", AnchorMax = "0.98 0.84" }
             }, mainPanel);
 
-            container.Add(new CuiPanel 
-            { 
+            container.Add(new CuiPanel
+            {
                  Image = { Color = c.ButtonPrimary },
                  RectTransform = { AnchorMin = $"{contentLeft} 0.73", AnchorMax = $"{contentLeft + 0.15f} 0.735" }
             }, mainPanel);
@@ -1672,9 +1625,7 @@ namespace Oxide.Plugins
 
             if (CanScrollBody(ann.Text))
             {
-                // Modern minimalist scrollbar: thin track, single rounded handle, page-step buttons
-                // only at the very ends. No grip lines, no double-arrow page buttons, no shadow strip —
-                // just a clean accent-colored pill on a near-invisible channel.
+
                 int maxOffset = GetBodyMaxOffset(ann.Text);
                 int pageUp     = ClampBodyOffset(ann.Text, currentOffset - BodyVisibleLineCount);
                 int pageDown   = ClampBodyOffset(ann.Text, currentOffset + BodyVisibleLineCount);
@@ -1685,15 +1636,12 @@ namespace Oxide.Plugins
                 const float trackBottom = 0.165f;
                 const float trackTop    = 0.677f;
 
-                // Channel — barely-there hairline so the handle reads as the focal element.
                 container.Add(new CuiPanel
                 {
                     Image = { Color = "1 1 1 0.05", FadeIn = 0.18f },
                     RectTransform = { AnchorMin = $"{trackLeft} {trackBottom}", AnchorMax = $"{trackRight} {trackTop}" }
                 }, mainPanel);
 
-                // Click-to-jump zones cover the whole track. Clicking anywhere on the channel jumps
-                // proportionally — the most common interaction with a modern scrollbar.
                 if (maxOffset > 0)
                 {
                     const int jumpZones = 16;
@@ -1712,7 +1660,6 @@ namespace Oxide.Plugins
                     }
                 }
 
-                // Handle: single flat accent pill, height proportional to visible-window ratio.
                 var allLines = BuildBodyDisplayLines(ann.Text);
                 float windowRatio = allLines.Count <= 0 ? 1f : Mathf.Clamp((float)BodyVisibleLineCount / allLines.Count, 0.12f, 0.90f);
                 float trackH      = trackTop - trackBottom;
@@ -1728,8 +1675,6 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = $"{trackLeft} {handleMin:F4}", AnchorMax = $"{trackRight} {handleMax:F4}" }
                 }, mainPanel);
 
-                // Optional page-up / page-down chevrons rendered to the LEFT of the track so the
-                // scrollbar itself stays visually clean. Only shown when there's somewhere to go.
                 bool canUp = currentOffset > 0;
                 bool canDown = currentOffset < maxOffset;
 
@@ -1754,7 +1699,6 @@ namespace Oxide.Plugins
                     }, mainPanel);
                 }
 
-                // Compact line counter, muted, sits in the bottom-right corner.
                 int firstLine = currentOffset + 1;
                 int lastLine  = Math.Min(currentOffset + BodyVisibleLineCount, allLines.Count);
                 container.Add(new CuiLabel
@@ -1766,7 +1710,7 @@ namespace Oxide.Plugins
 
              container.Add(new CuiPanel
             {
-                Image = { Color = c.HeaderBg }, 
+                Image = { Color = c.HeaderBg },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.10" }
             }, mainPanel);
 
@@ -1858,15 +1802,15 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.92", AnchorMax = "1 1" } }, mainPanel);
             container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.919", AnchorMax = "1 0.921" } }, mainPanel);
 
-            container.Add(new CuiLabel { 
-                Text = { Text = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {Msg("ArchiveTitle", player)}", FontSize = 16, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, 
-                RectTransform = { AnchorMin = "0.03 0.92", AnchorMax = "0.8 1" } 
+            container.Add(new CuiLabel {
+                Text = { Text = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {Msg("ArchiveTitle", player)}", FontSize = 16, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.03 0.92", AnchorMax = "0.8 1" }
             }, mainPanel);
 
-            container.Add(new CuiButton { 
-                Button = { Color = "0.8 0.2 0.2 0", Command = "news.close" }, 
-                Text = { Text = Msg("Close", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextMuted }, 
-                RectTransform = { AnchorMin = "0.92 0.92", AnchorMax = "1 1" } 
+            container.Add(new CuiButton {
+                Button = { Color = "0.8 0.2 0.2 0", Command = "news.close" },
+                Text = { Text = Msg("Close", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
+                RectTransform = { AnchorMin = "0.92 0.92", AnchorMax = "1 1" }
             }, mainPanel);
 
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.08" } }, mainPanel);
@@ -1886,7 +1830,6 @@ namespace Oxide.Plugins
                 string itemPanel = mainPanel + $".{i}";
                 string typeColor = GetTypeColor(ann.Type);
 
-                // Cards get a small staggered fade so the list "lands" rather than snapping in.
                 float rowFade = 0.18f + count * 0.04f;
 
                 container.Add(new CuiPanel
@@ -1895,7 +1838,6 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = $"0.02 {bottom}", AnchorMax = $"0.98 {top}" }
                 }, mainPanel, itemPanel);
 
-                // Pinned: subtle gold tint over the whole row
                 if (ann.Pinned)
                 {
                     container.Add(new CuiPanel
@@ -1916,7 +1858,6 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0.025 0.55", AnchorMax = "0.62 0.9" }
                 }, itemPanel);
 
-                // Pinned chip — gold pill between title and date
                 if (ann.Pinned)
                 {
                     container.Add(new CuiPanel
@@ -1939,8 +1880,8 @@ namespace Oxide.Plugins
 
                 string rawPreview = (ann.Text ?? "").Replace("\n", " ");
                 string preview = rawPreview.Length > 80 ? rawPreview.Substring(0, 77) + "..." : rawPreview;
-                container.Add(new CuiLabel 
-                { 
+                container.Add(new CuiLabel
+                {
                     Text = { Text = preview, FontSize = 11, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
                     RectTransform = { AnchorMin = "0.025 0.1", AnchorMax = "0.8 0.55" }
                 }, itemPanel);
@@ -1955,8 +1896,8 @@ namespace Oxide.Plugins
                 count++;
             }
 
-            container.Add(new CuiLabel 
-            { 
+            container.Add(new CuiLabel
+            {
                 Text = { Text = Msg("Page", player, page + 1, totalPages), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
                 RectTransform = { AnchorMin = "0.4 0", AnchorMax = "0.6 0.08" }
             }, mainPanel);
@@ -2051,32 +1992,31 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.90", AnchorMax = "1 1" } }, mainPanel);
             container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.899", AnchorMax = "1 0.901" } }, mainPanel);
 
-            container.Add(new CuiLabel { 
-                Text = { Text = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {Msg("AdminControl", player)}", FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, 
-                RectTransform = { AnchorMin = "0.03 0.90", AnchorMax = "0.6 1" } 
+            container.Add(new CuiLabel {
+                Text = { Text = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {Msg("AdminControl", player)}", FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.03 0.90", AnchorMax = "0.6 1" }
             }, mainPanel);
 
-            container.Add(new CuiButton { 
-                Button = { Color = c.ButtonPrimary, Command = "news.admin.create" }, 
-                Text = { Text = Msg("NewPost", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" }, 
-                RectTransform = { AnchorMin = "0.75 0.92", AnchorMax = "0.88 0.98" } 
+            container.Add(new CuiButton {
+                Button = { Color = c.ButtonPrimary, Command = "news.admin.create" },
+                Text = { Text = Msg("NewPost", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.75 0.92", AnchorMax = "0.88 0.98" }
             }, mainPanel);
 
-            container.Add(new CuiButton { 
-                Button = { Color = c.ButtonSecondary, Command = "news.admin.themes" }, 
-                Text = { Text = Msg("Themes", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" }, 
-                RectTransform = { AnchorMin = "0.61 0.92", AnchorMax = "0.74 0.98" } 
+            container.Add(new CuiButton {
+                Button = { Color = c.ButtonSecondary, Command = "news.admin.themes" },
+                Text = { Text = Msg("Themes", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.61 0.92", AnchorMax = "0.74 0.98" }
             }, mainPanel);
 
-            container.Add(new CuiButton { 
-                Button = { Color = "0.8 0.2 0.2 0", Command = "news.close" }, 
-                Text = { Text = "✕", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextMuted }, 
-                RectTransform = { AnchorMin = "0.94 0.90", AnchorMax = "0.99 1" } 
+            container.Add(new CuiButton {
+                Button = { Color = "0.8 0.2 0.2 0", Command = "news.close" },
+                Text = { Text = "✕", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
+                RectTransform = { AnchorMin = "0.94 0.90", AnchorMax = "0.99 1" }
             }, mainPanel);
 
             var displayList = GetDisplayOrder();
-            // Recompute totalPages against the display list (it's the same as announcements.Count today,
-            // but we keep this explicit for symmetry with ShowHistory).
+
             totalPages = Mathf.CeilToInt((float)displayList.Count / perPage);
             if (totalPages == 0) totalPages = 1;
             if (page < 0) page = 0;
@@ -2115,7 +2055,6 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = $"0.02 {bottom}", AnchorMax = $"0.98 {top}" }
                 }, mainPanel, itemPanel);
 
-                // Pinned: subtle gold tint over the whole row
                 if (ann.Pinned)
                 {
                     container.Add(new CuiPanel
@@ -2125,7 +2064,6 @@ namespace Oxide.Plugins
                     }, itemPanel);
                 }
 
-                // Selection checkbox
                 container.Add(new CuiButton
                 {
                     Button = { Color = selected ? c.ButtonPrimary : "0.2 0.2 0.2 0.9", Command = $"news.admin.toggleselect {ann.Id} {page}" },
@@ -2133,7 +2071,6 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0.005 0.2", AnchorMax = "0.04 0.8" }
                 }, itemPanel);
 
-                // Type-color stripe
                 container.Add(new CuiPanel {
                     Image = { Color = typeColor },
                     RectTransform = { AnchorMin = "0.045 0", AnchorMax = "0.05 1" }
@@ -2151,7 +2088,6 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0.06 0.1", AnchorMax = "0.62 0.4" }
                 }, itemPanel);
 
-                // Pin / Unpin — switches to gold when pinned so the whole row reads as a coherent unit
                 container.Add(new CuiButton
                 {
                     Button = { Color = ann.Pinned ? "0.95 0.70 0.20 1" : "0.35 0.35 0.4 0.9", Command = $"news.admin.togglepin {ann.Id} {page}" },
@@ -2176,7 +2112,6 @@ namespace Oxide.Plugins
                 count++;
             }
 
-            // Bulk-action toolbar — only visible when at least one item is selected.
             if (selection.Count > 0)
             {
                 string bulkPanel = mainPanel + ".Bulk";
@@ -2223,7 +2158,6 @@ namespace Oxide.Plugins
 
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.08" } }, mainPanel);
 
-            // Page-wide "select all visible" toggle, parked in the bottom-left of the footer.
             container.Add(new CuiButton
             {
                 Button = { Color = c.ButtonSecondary, Command = $"news.admin.selectpage {page}" },
@@ -2275,19 +2209,19 @@ namespace Oxide.Plugins
             bool editingExisting = activeEditorIds.TryGetValue(player.userID, out string editingId) && !string.IsNullOrEmpty(editingId);
             container.Add(new CuiLabel { Text = { Text = editingExisting ? Msg("EditAnnouncement", player) : Msg("CreateAnnouncement", player), FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.9", AnchorMax = "0.9 1" } }, editorPanel);
 
-            container.Add(new CuiButton { 
-                Button = { Color = "0 0 0 0", Command = "news.editor.cancel" }, 
-                Text = { Text = "✕", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = c.TextMuted }, 
-                RectTransform = { AnchorMin = "0.94 0.9", AnchorMax = "0.99 1" } 
+            container.Add(new CuiButton {
+                Button = { Color = "0 0 0 0", Command = "news.editor.cancel" },
+                Text = { Text = "✕", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
+                RectTransform = { AnchorMin = "0.94 0.9", AnchorMax = "0.99 1" }
             }, editorPanel);
 
             container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementTitle", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.81", AnchorMax = "0.95 0.88" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.05 0.75", AnchorMax = "0.95 0.81" } }, editorPanel);
-            container.Add(new CuiElement 
-            { 
+            container.Add(new CuiElement
+            {
                 Parent = editorPanel,
-                Components = 
-                { 
+                Components =
+                {
                     new CuiInputFieldComponent { Text = ann.Title, FontSize = 12, Align = TextAnchor.MiddleLeft, Command = "news.editor.input title", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
                     new CuiRectTransformComponent { AnchorMin = "0.06 0.75", AnchorMax = "0.94 0.81" }
                 }
@@ -2295,31 +2229,31 @@ namespace Oxide.Plugins
 
             container.Add(new CuiLabel { Text = { Text = Msg("ImageUrl", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.69", AnchorMax = "0.95 0.75" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.05 0.63", AnchorMax = "0.95 0.69" } }, editorPanel);
-            container.Add(new CuiElement 
-            { 
+            container.Add(new CuiElement
+            {
                 Parent = editorPanel,
-                Components = 
-                { 
+                Components =
+                {
                     new CuiInputFieldComponent { Text = ann.ImageUrl ?? "", FontSize = 12, Align = TextAnchor.MiddleLeft, Command = "news.editor.input image", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
                     new CuiRectTransformComponent { AnchorMin = "0.06 0.63", AnchorMax = "0.94 0.69" }
                 }
             });
 
             container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementType", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.57", AnchorMax = "0.95 0.63" } }, editorPanel);
-            container.Add(new CuiButton { 
-                Button = { Color = GetTypeColor(ann.Type), Command = "news.editor.type" }, 
-                Text = { Text = $"◀  {ann.Type.ToString().ToUpper()}  ▶", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" }, 
-                RectTransform = { AnchorMin = "0.05 0.51", AnchorMax = "0.45 0.57" } 
+            container.Add(new CuiButton {
+                Button = { Color = GetTypeColor(ann.Type), Command = "news.editor.type" },
+                Text = { Text = $"◀  {ann.Type.ToString().ToUpper()}  ▶", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.05 0.51", AnchorMax = "0.45 0.57" }
             }, editorPanel);
 
             container.Add(new CuiLabel { Text = { Text = Msg("ContentBody", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.45", AnchorMax = "0.95 0.51" } }, editorPanel);
             container.Add(new CuiLabel { Text = { Text = Msg("ContentBodyHint", player), FontSize = 9, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" }, RectTransform = { AnchorMin = "0.36 0.45", AnchorMax = "0.95 0.51" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.05 0.14", AnchorMax = "0.95 0.45" } }, editorPanel);
-            container.Add(new CuiElement 
-            { 
+            container.Add(new CuiElement
+            {
                 Parent = editorPanel,
-                Components = 
-                { 
+                Components =
+                {
                     new CuiInputFieldComponent { Text = ann.Text ?? "", FontSize = 12, Align = TextAnchor.UpperLeft, Command = "news.editor.input text", Color = "1 1 1 1", NeedsKeyboard = true, CharsLimit = MaxContentChars, LineType = UnityEngine.UI.InputField.LineType.MultiLineNewline },
                     new CuiRectTransformComponent { AnchorMin = "0.06 0.15", AnchorMax = "0.94 0.44" }
                 }
@@ -2367,7 +2301,6 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0.34 0.40", AnchorMax = "0.66 0.60" }
             }, ConfirmLayer, dialogPanel);
 
-            // Slim accent bar at top of the dialog instead of a heavy red header.
             container.Add(new CuiPanel
             {
                 Image = { Color = "0.85 0.32 0.32 0.95", FadeIn = 0.18f },
@@ -2512,8 +2445,7 @@ namespace Oxide.Plugins
                 config.SelectedTheme = matchedTheme;
                 SaveConfig();
 
-                // Force refresh of the UI
-                NextTick(() => 
+                NextTick(() =>
                 {
                     ShowThemeSelection(player);
                     SendReply(player, $"Theme set to: {matchedTheme} (Colors updated)");
@@ -2532,10 +2464,9 @@ namespace Oxide.Plugins
             playersWithUiOpen.Add(player.userID);
 
             var container = new CuiElementContainer();
-            // Use current theme colors for the UI itself
+
             var c = config.Colors;
 
-            // Overlay
             container.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0.85", FadeIn = 0.18f },
@@ -2543,7 +2474,6 @@ namespace Oxide.Plugins
                 CursorEnabled = true
             }, "Overlay", LayerName);
 
-            // Main Panel
             string mainPanel = LayerName + ".Themes";
             container.Add(new CuiPanel
             {
@@ -2551,19 +2481,16 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0.25 0.25", AnchorMax = "0.75 0.75" }
             }, LayerName, mainPanel);
 
-            // Header
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.9", AnchorMax = "1 1" } }, mainPanel);
             container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.899", AnchorMax = "1 0.901" } }, mainPanel);
             container.Add(new CuiLabel { Text = { Text = Msg("SelectTheme", player), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.9", AnchorMax = "1 1" } }, mainPanel);
 
-            // Close Button
-            container.Add(new CuiButton { 
-                Button = { Color = "0.8 0.2 0.2 0", Command = "news.admin" }, 
-                Text = { Text = "✕", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextMuted }, 
-                RectTransform = { AnchorMin = "0.92 0.9", AnchorMax = "0.99 1" } 
+            container.Add(new CuiButton {
+                Button = { Color = "0.8 0.2 0.2 0", Command = "news.admin" },
+                Text = { Text = "✕", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
+                RectTransform = { AnchorMin = "0.92 0.9", AnchorMax = "0.99 1" }
             }, mainPanel);
 
-            // Theme List
             int count = 0;
             float buttonHeight = 0.12f;
             float startY = 0.8f;
@@ -2639,7 +2566,7 @@ namespace Oxide.Plugins
             {
                 if (Economics != null && Economics.IsLoaded)
                 {
-                    // Most Economics implementations accept a string user id; pass that for compatibility.
+
                     Economics.Call("Deposit", player.UserIDString, bundle.Currency);
                     grantedNames.Add($"{bundle.Currency.ToString("0.##", CultureInfo.InvariantCulture)} {config.Rewards.CurrencyLabel}");
                 }
@@ -2669,15 +2596,11 @@ namespace Oxide.Plugins
             if (player == null || ann == null || string.IsNullOrEmpty(ann.Id)) return;
             if (ann.ReadByPlayers == null) ann.ReadByPlayers = new HashSet<ulong>();
 
-            // If a timer is already counting down for this same announcement, let it finish —
-            // re-renders (e.g. after liking) shouldn't reset the read countdown.
             if (readRewardTimers.TryGetValue(player.userID, out var existing)
                 && string.Equals(existing.AnnId, ann.Id, StringComparison.Ordinal)
                 && existing.Timer != null && !existing.Timer.Destroyed)
                 return;
 
-            // Skip the timer entirely once both the read hook AND the read reward have already fired
-            // for this player on this announcement — there's nothing left to do.
             bool alreadyRead = ann.ReadByPlayers.Contains(player.userID);
             bool rewardsActive = config.Rewards != null && config.Rewards.EnableReadReward;
             bool rewardAlreadyGranted = ann.ReadRewardedPlayers != null && ann.ReadRewardedPlayers.Contains(player.userID);
@@ -2718,13 +2641,13 @@ namespace Oxide.Plugins
         {
             if (!config.Discord.Enabled || string.IsNullOrEmpty(config.Discord.WebhookUrl)) return;
 
-            int embedColor = 3447003; 
-            switch(ann.Type) 
+            int embedColor = 3447003;
+            switch(ann.Type)
             {
-                case AnnouncementType.Alert: embedColor = 15158332; break; 
-                case AnnouncementType.Warning: embedColor = 15105570; break; 
-                case AnnouncementType.Update: embedColor = 3066993; break; 
-                case AnnouncementType.Event: embedColor = 10181046; break; 
+                case AnnouncementType.Alert: embedColor = 15158332; break;
+                case AnnouncementType.Warning: embedColor = 15105570; break;
+                case AnnouncementType.Update: embedColor = 3066993; break;
+                case AnnouncementType.Event: embedColor = 10181046; break;
             }
 
             string content = string.IsNullOrEmpty(config.Discord.RoleMention) ? "" : config.Discord.RoleMention;
@@ -2740,7 +2663,7 @@ namespace Oxide.Plugins
             {
                 username = config.Discord.BotName,
                 content = content,
-                // Restrict to role mentions only — body text and titles cannot trigger @everyone/@here pings.
+
                 allowed_mentions = new { parse = new[] { "roles" } },
                 embeds = new[]
                 {
@@ -2768,4 +2691,3 @@ namespace Oxide.Plugins
         #endregion
     }
 }
-  
