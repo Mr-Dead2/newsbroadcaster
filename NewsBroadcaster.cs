@@ -1873,6 +1873,12 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0.025 0.55", AnchorMax = "0.62 0.9" }
                 }, itemPanel);
 
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = ann.Category.ToString().ToUpper(), FontSize = 10, Align = TextAnchor.MiddleLeft, Color = categoryColor, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.025 0.40", AnchorMax = "0.30 0.56" }
+                }, itemPanel);
+
                 if (ann.Pinned)
                 {
                     container.Add(new CuiPanel
@@ -1898,7 +1904,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiLabel
                 {
                     Text = { Text = preview, FontSize = 11, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = "0.025 0.1", AnchorMax = "0.8 0.55" }
+                    RectTransform = { AnchorMin = "0.025 0.1", AnchorMax = "0.8 0.40" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
@@ -2098,7 +2104,13 @@ namespace Oxide.Plugins
                 container.Add(new CuiLabel
                 {
                     Text = { Text = ann.Date ?? "", FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted },
-                    RectTransform = { AnchorMin = "0.06 0.1", AnchorMax = "0.62 0.4" }
+                    RectTransform = { AnchorMin = "0.06 0.1", AnchorMax = "0.40 0.4" }
+                }, itemPanel);
+
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = ann.Category.ToString().ToUpper(), FontSize = 9, Align = TextAnchor.MiddleLeft, Color = categoryColor, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.41 0.1", AnchorMax = "0.62 0.4" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
