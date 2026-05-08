@@ -64,13 +64,28 @@ namespace Oxide.Plugins
             public string Text;
             public string Date;
             public string Author;
-            public AnnouncementType Type;
+            public AnnouncementCategory Category;
             public long Timestamp;
             public bool Pinned;
             public HashSet<ulong> LikedPlayers = new HashSet<ulong>();
             public HashSet<ulong> ReadByPlayers = new HashSet<ulong>();
             public HashSet<ulong> ReadRewardedPlayers = new HashSet<ulong>();
             public HashSet<ulong> LikeRewardedPlayers = new HashSet<ulong>();
+
+            [JsonProperty("Type")]
+            private string LegacyType
+            {
+                set
+                {
+                    if (string.IsNullOrEmpty(value)) return;
+                    switch (value.Trim().ToLowerInvariant())
+                    {
+                        case "update": Category = AnnouncementCategory.Changelog; break;
+                        case "event": Category = AnnouncementCategory.Event; break;
+                        default: Category = AnnouncementCategory.News; break;
+                    }
+                }
+            }
         }
 
         class ReadRewardState
@@ -79,7 +94,7 @@ namespace Oxide.Plugins
             public Timer Timer;
         }
 
-        enum AnnouncementType { Info, Warning, Alert, Event, Update }
+        enum AnnouncementCategory { Changelog, News, Event }
 
         class ConfigData
         {
@@ -211,7 +226,7 @@ namespace Oxide.Plugins
                 ["EditAnnouncement"] = "EDIT ANNOUNCEMENT",
                 ["AnnouncementTitle"] = "ANNOUNCEMENT TITLE",
                 ["ImageUrl"] = "IMAGE URL (leave empty for no image)",
-                ["AnnouncementType"] = "ANNOUNCEMENT TYPE (click to cycle)",
+                ["AnnouncementCategory"] = "ANNOUNCEMENT CATEGORY (click to cycle)",
                 ["ContentBody"] = "CONTENT BODY",
                 ["ContentBodyHint"] = "Supports \\n for line breaks. Long content is supported and displayed with paged scrolling.",
                 ["SaveBroadcast"] = "✔ SAVE & BROADCAST",
@@ -382,7 +397,7 @@ namespace Oxide.Plugins
                 ["id"] = ann.Id,
                 ["title"] = ann.Title,
                 ["author"] = ann.Author,
-                ["type"] = ann.Type.ToString(),
+                ["category"] = ann.Category.ToString(),
                 ["timestamp"] = ann.Timestamp,
                 ["date"] = ann.Date,
                 ["text"] = ann.Text,
@@ -763,7 +778,7 @@ namespace Oxide.Plugins
 
             if (values.Count < 3)
             {
-                SendReply(arg, $"Error: Invalid arguments. Parsed {values.Count}, expected at least 3.\nUsage: news.show \"Title\" \"ImageURL\" \"Text\" [Type]");
+                SendReply(arg, $"Error: Invalid arguments. Parsed {values.Count}, expected at least 3.\nUsage: news.show \"Title\" \"ImageURL\" \"Text\" [Category]");
                 return;
             }
 
@@ -772,12 +787,12 @@ namespace Oxide.Plugins
             if (img == "-") img = "";
 
             string text;
-            AnnouncementType type = AnnouncementType.Info;
+            AnnouncementCategory category = AnnouncementCategory.News;
 
             bool lastWasUnquoted = rawMatches.Count > 0 && !rawMatches[rawMatches.Count - 1].Value.StartsWith("\"");
-            if (values.Count > 3 && lastWasUnquoted && Enum.TryParse(values[values.Count - 1], true, out AnnouncementType parsedType))
+            if (values.Count > 3 && lastWasUnquoted && Enum.TryParse(values[values.Count - 1], true, out AnnouncementCategory parsedCategory))
             {
-                type = parsedType;
+                category = parsedCategory;
                 text = string.Join(" ", values.GetRange(2, values.Count - 3));
             }
             else
@@ -797,7 +812,7 @@ namespace Oxide.Plugins
                 Text = text,
                 Date = DateTime.Now.ToString(InvariantDateFormat, CultureInfo.InvariantCulture),
                 Author = authorName,
-                Type = type,
+                Category = category,
                 Timestamp = DateTime.UtcNow.Ticks
             };
 
@@ -909,7 +924,7 @@ namespace Oxide.Plugins
             for (int i = 0; i < announcements.Count; i++)
             {
                 var a = announcements[i];
-                sb.AppendLine($"[{i}] [{a.Type}] \"{a.Title}\" — {a.Date} by {a.Author}");
+                sb.AppendLine($"[{i}] [{a.Category}] \"{a.Title}\" — {a.Date} by {a.Author}");
             }
             SendReply(arg, sb.ToString().TrimEnd());
         }
@@ -1020,7 +1035,7 @@ namespace Oxide.Plugins
             {
                 Title = "New Announcement",
                 Text = "Enter text here...",
-                Type = AnnouncementType.Info,
+                Category = AnnouncementCategory.News,
                 Author = player.displayName,
                 Date = DateTime.Now.ToString(InvariantDateFormat, CultureInfo.InvariantCulture),
                 ImageUrl = ""
@@ -1047,7 +1062,7 @@ namespace Oxide.Plugins
                 Text = original.Text,
                 Date = original.Date,
                 Author = original.Author,
-                Type = original.Type,
+                Category = original.Category,
                 Timestamp = original.Timestamp,
                 LikedPlayers = new HashSet<ulong>(original.LikedPlayers)
             };
@@ -1257,8 +1272,8 @@ namespace Oxide.Plugins
             ShowEditor(player);
         }
 
-        [ConsoleCommand("news.editor.type")]
-        private void CmdEditorType(ConsoleSystem.Arg arg)
+        [ConsoleCommand("news.editor.category")]
+        private void CmdEditorCategory(ConsoleSystem.Arg arg)
         {
             var player = arg.Connection?.player as BasePlayer;
             if (player == null) return;
@@ -1266,9 +1281,9 @@ namespace Oxide.Plugins
             if (!activeEditors.ContainsKey(player.userID)) return;
 
             var ann = activeEditors[player.userID];
-            int current = (int)ann.Type;
-            int next = (current + 1) % Enum.GetValues(typeof(AnnouncementType)).Length;
-            ann.Type = (AnnouncementType)next;
+            int current = (int)ann.Category;
+            int next = (current + 1) % Enum.GetValues(typeof(AnnouncementCategory)).Length;
+            ann.Category = (AnnouncementCategory)next;
 
             ShowEditor(player);
         }
@@ -1420,7 +1435,7 @@ namespace Oxide.Plugins
 
             var container = new CuiElementContainer();
             var c = config.Colors;
-            string typeColor = GetTypeColor(ann.Type);
+            string categoryColor = GetCategoryColor(ann.Category);
 
             container.Add(new CuiButton
             {
@@ -1431,7 +1446,7 @@ namespace Oxide.Plugins
 
             container.Add(new CuiPanel
             {
-                Image = { Color = typeColor, FadeIn = 0.30f },
+                Image = { Color = categoryColor, FadeIn = 0.30f },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "0.018 1" }
             }, NotificationLayer);
 
@@ -1547,7 +1562,7 @@ namespace Oxide.Plugins
                 }, mainPanel);
             }
 
-            string headerText = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {ann.Type.ToString().ToUpper()}";
+            string headerText = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {ann.Category.ToString().ToUpper()}";
 
             container.Add(new CuiLabel
             {
@@ -1828,7 +1843,7 @@ namespace Oxide.Plugins
                 float bottom = top - rowHeight + (padding * 2);
 
                 string itemPanel = mainPanel + $".{i}";
-                string typeColor = GetTypeColor(ann.Type);
+                string categoryColor = GetCategoryColor(ann.Category);
 
                 float rowFade = 0.18f + count * 0.04f;
 
@@ -1848,7 +1863,7 @@ namespace Oxide.Plugins
                 }
 
                 container.Add(new CuiPanel {
-                    Image = { Color = typeColor },
+                    Image = { Color = categoryColor },
                     RectTransform = { AnchorMin = "0 0", AnchorMax = "0.005 1" }
                 }, itemPanel);
 
@@ -1925,14 +1940,12 @@ namespace Oxide.Plugins
             CuiHelper.AddUi(player, container);
         }
 
-        private string GetTypeColor(AnnouncementType type)
+        private string GetCategoryColor(AnnouncementCategory category)
         {
-            switch (type)
+            switch (category)
             {
-                case AnnouncementType.Alert: return "0.85 0.25 0.25 1";
-                case AnnouncementType.Warning: return "0.9 0.6 0.1 1";
-                case AnnouncementType.Update: return "0.2 0.7 0.9 1";
-                case AnnouncementType.Event: return "0.6 0.3 0.8 1";
+                case AnnouncementCategory.Changelog: return "0.2 0.7 0.9 1";
+                case AnnouncementCategory.Event: return "0.6 0.3 0.8 1";
                 default: return "0.4 0.6 0.8 1";
             }
         }
@@ -2045,7 +2058,7 @@ namespace Oxide.Plugins
                 float bottom = top - rowHeight + (padding * 2);
 
                 string itemPanel = mainPanel + $".{i}";
-                string typeColor = GetTypeColor(ann.Type);
+                string categoryColor = GetCategoryColor(ann.Category);
                 bool selected = selection.Contains(ann.Id);
 
                 float adminRowFade = 0.18f + count * 0.04f;
@@ -2072,7 +2085,7 @@ namespace Oxide.Plugins
                 }, itemPanel);
 
                 container.Add(new CuiPanel {
-                    Image = { Color = typeColor },
+                    Image = { Color = categoryColor },
                     RectTransform = { AnchorMin = "0.045 0", AnchorMax = "0.05 1" }
                 }, itemPanel);
 
@@ -2239,10 +2252,10 @@ namespace Oxide.Plugins
                 }
             });
 
-            container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementType", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.57", AnchorMax = "0.95 0.63" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementCategory", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.57", AnchorMax = "0.95 0.63" } }, editorPanel);
             container.Add(new CuiButton {
-                Button = { Color = GetTypeColor(ann.Type), Command = "news.editor.type" },
-                Text = { Text = $"◀  {ann.Type.ToString().ToUpper()}  ▶", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                Button = { Color = GetCategoryColor(ann.Category), Command = "news.editor.category" },
+                Text = { Text = $"◀  {ann.Category.ToString().ToUpper()}  ▶", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = "0.05 0.51", AnchorMax = "0.45 0.57" }
             }, editorPanel);
 
@@ -2642,12 +2655,10 @@ namespace Oxide.Plugins
             if (!config.Discord.Enabled || string.IsNullOrEmpty(config.Discord.WebhookUrl)) return;
 
             int embedColor = 3447003;
-            switch(ann.Type)
+            switch(ann.Category)
             {
-                case AnnouncementType.Alert: embedColor = 15158332; break;
-                case AnnouncementType.Warning: embedColor = 15105570; break;
-                case AnnouncementType.Update: embedColor = 3066993; break;
-                case AnnouncementType.Event: embedColor = 10181046; break;
+                case AnnouncementCategory.Changelog: embedColor = 3066993; break;
+                case AnnouncementCategory.Event: embedColor = 10181046; break;
             }
 
             string content = string.IsNullOrEmpty(config.Discord.RoleMention) ? "" : config.Discord.RoleMention;

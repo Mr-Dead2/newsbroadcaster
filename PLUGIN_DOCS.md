@@ -9,7 +9,7 @@
 
 ## Overview
 
-NewsBroadcaster is a Rust server plugin that lets admins post rich in-game news announcements with a modern CUI (Client UI). Announcements can include a title, image, body text, and a type badge. Players receive a pop-up notification when new news is posted and can browse the announcement archive at any time.
+NewsBroadcaster is a Rust server plugin that lets admins post rich in-game news announcements with a modern CUI (Client UI). Announcements can include a title, image, body text, and a category badge. Players receive a pop-up notification when new news is posted and can browse the announcement archive at any time.
 
 Optional integrations: **ImageLibrary** (for cached images), **Notify** (for third-party notification popups), and **Discord Webhooks**.
 
@@ -24,7 +24,7 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 - Auto-close timer for pop-ups
 - "Show on connect" — shows the latest unseen announcement to joining players
 - 4 built-in UI themes (Default, Dark, Ocean, Rust) — switchable in-game
-- Discord webhook integration with embed colours per announcement type
+- Discord webhook integration with embed colours per announcement category
 - Sound effect on notification
 - ImageLibrary support for image caching
 - Notify plugin integration (optional)
@@ -74,7 +74,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 
 | Command | Permission | Description |
 |---|---|---|
-| `news.show "Title" "ImageURL" "Body" [Type]` | Admin | Post a new announcement from console/RCON |
+| `news.show "Title" "ImageURL" "Body" [Category]` | Admin | Post a new announcement from console/RCON |
 | `news.trigger <SteamID/Name> [index]` | Admin | Force-show a popup to a specific player |
 | `news.delete <index>` | Admin | Delete an announcement by its list index (0 = newest) |
 | `news.admin` | Admin | Open the in-game admin management panel |
@@ -82,23 +82,21 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 ### `news.show` Usage
 
 ```
-news.show "Server Update" "https://example.com/img.png" "The server has been updated!" Update
-news.show "Alert!" "-" "PvP zone closing in 10 minutes." Alert
+news.show "Patch 1.2 Released" "https://example.com/img.png" "Server updated to 1.2." Changelog
+news.show "Double XP Weekend" "-" "Bonus XP all weekend long." Event
 ```
 
 - Use `"-"` as the image URL to post without an image.
-- Supported types: `Info`, `Warning`, `Alert`, `Event`, `Update` (case-insensitive, defaults to `Info`).
-- The `[Type]` argument is only treated as a type when passed unquoted at the end of the line. Words inside the quoted body that happen to match a type name (e.g. `"Status: Update"`) are preserved verbatim.
+- Supported categories: `Changelog`, `News`, `Event` (case-insensitive, defaults to `News`).
+- The `[Category]` argument is only treated as a category when passed unquoted at the end of the line. Words inside the quoted body that happen to match a category name (e.g. `"Status: Changelog"`) are preserved verbatim.
 
-### Announcement Types & Colours
+### Announcement Categories & Colours
 
-| Type | Colour |
+| Category | Colour |
 |---|---|
-| Info | Blue |
-| Warning | Orange |
-| Alert | Red |
+| Changelog | Cyan |
+| News | Blue |
 | Event | Purple |
-| Update | Cyan |
 
 ---
 
@@ -131,7 +129,7 @@ All UI-driven commands address announcements by their stable `Id` (a hex GUID as
 | `news.admin.themes` | Open the theme selector UI |
 | `news.admin.settheme "ThemeName"` | Apply a theme |
 | `news.editor.input <field> <value>` | Update a field in the editor (`title` / `image` / `text`) |
-| `news.editor.type` | Cycle the announcement type in the editor |
+| `news.editor.category` | Cycle the announcement category in the editor |
 | `news.editor.save` | Save and broadcast the edited/new announcement |
 | `news.editor.cancel` | Cancel editing and return to admin list |
 | `news.confirm.close` | Dismiss the delete-confirmation dialog |
@@ -355,7 +353,7 @@ Other plugins can react to NewsBroadcaster events by subscribing to these hooks.
 | Hook | Signature | When it fires |
 |---|---|---|
 | `OnNewsBroadcast` | `void OnNewsBroadcast(Dictionary<string, object> ann)` | A new announcement is published (RCON `news.show` or admin editor save with no existing id). |
-| `OnNewsEdited` | `void OnNewsEdited(Dictionary<string, object> ann)` | An existing announcement's body, type, or pinned-state is updated through the admin editor or `news.admin.togglepin` / bulk pin. |
+| `OnNewsEdited` | `void OnNewsEdited(Dictionary<string, object> ann)` | An existing announcement's body, category, or pinned-state is updated through the admin editor or `news.admin.togglepin` / bulk pin. |
 | `OnNewsDeleted` | `void OnNewsDeleted(Dictionary<string, object> ann)` | An announcement is removed (RCON `news.delete`, single delete, or any bulk delete — fires once per victim). |
 | `OnNewsRead` | `void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)` | A player has kept an announcement popup open for `Rewards.ReadDelaySeconds` (default 5s). Fires at most **once per player per announcement**, regardless of whether read rewards are enabled. |
 | `OnNewsLiked` | `void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)` | A player toggles the heart on an announcement. `added == true` for a like, `false` for an un-like. |
@@ -367,7 +365,7 @@ The announcement payload dictionary contains:
 | `id` | `string` | Stable hex Guid for the announcement |
 | `title` | `string` | |
 | `author` | `string` | |
-| `type` | `string` | One of `Info`, `Warning`, `Alert`, `Event`, `Update` |
+| `category` | `string` | One of `Changelog`, `News`, `Event` |
 | `timestamp` | `long` | `DateTime.UtcNow.Ticks` at creation |
 | `date` | `string` | `yyyy-MM-dd HH:mm` invariant-culture timestamp shown in the UI |
 | `text` | `string` | Body text (with `\n` line breaks) |
@@ -388,7 +386,7 @@ namespace Oxide.Plugins
     {
         void OnNewsBroadcast(Dictionary<string, object> ann)
         {
-            Puts($"[News] {ann["author"]} posted '{ann["title"]}' ({ann["type"]})");
+            Puts($"[News] {ann["author"]} posted '{ann["title"]}' ({ann["category"]})");
         }
 
         void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)
@@ -419,7 +417,7 @@ Stores all announcements and per-player last-seen timestamps. The plugin handles
 | `Text` | string | Body text (supports `\n` for line breaks) |
 | `Date` | string | Formatted post date (`MM/dd HH:mm`) |
 | `Author` | string | Poster's display name or server name |
-| `Type` | enum | `Info / Warning / Alert / Event / Update` |
+| `Category` | enum | `Changelog / News / Event` |
 | `Timestamp` | long | UTC ticks — used for ordering and last-seen |
 | `LikedPlayers` | HashSet\<ulong\> | Steam IDs of players who liked this post |
 
@@ -429,7 +427,7 @@ Stores all announcements and per-player last-seen timestamps. The plugin handles
 
 All UI strings are registered in Oxide's lang system and can be overridden per language in `oxide/lang/<lang>/NewsBroadcaster.json`.
 
-Default keys: `NoPermissionCommand`, `NoPermissionView`, `NoNewsHistory`, `NewsBroadcasted`, `ArchiveTitle`, `ReadMore`, `ViewArchive`, `PostedBy`, `NewAnnouncement`, `Close`, `Previous`, `Next`, `Page`, `AdminControl`, `NewPost`, `Themes`, `NoAnnouncementsYet`, `CreateAnnouncement`, `EditAnnouncement`, `AnnouncementTitle`, `ImageUrl`, `AnnouncementType`, `ContentBody`, `ContentBodyHint`, `SaveBroadcast`, `Cancel`, `SelectTheme`, `Active`, `Unknown`.
+Default keys: `NoPermissionCommand`, `NoPermissionView`, `NoNewsHistory`, `NewsBroadcasted`, `ArchiveTitle`, `ReadMore`, `ViewArchive`, `PostedBy`, `NewAnnouncement`, `Close`, `Previous`, `Next`, `Page`, `AdminControl`, `NewPost`, `Themes`, `NoAnnouncementsYet`, `CreateAnnouncement`, `EditAnnouncement`, `AnnouncementTitle`, `ImageUrl`, `AnnouncementCategory`, `ContentBody`, `ContentBodyHint`, `SaveBroadcast`, `Cancel`, `SelectTheme`, `Active`, `Unknown`.
 
 ---
 
