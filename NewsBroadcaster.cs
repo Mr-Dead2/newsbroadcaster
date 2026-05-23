@@ -29,6 +29,7 @@ namespace Oxide.Plugins
         private const string PermView = "newsbroadcaster.view";
 
         private static readonly Regex CommandSplitRegex = new Regex(@"[\""].+?[\""]|[^ ]+", RegexOptions.Compiled);
+        private static readonly Regex LinkRegex = new Regex(@"(https?://|www\.)\S+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private ConfigData config;
         private StoredData storedData;
         private List<Announcement> announcements = new List<Announcement>();
@@ -258,8 +259,13 @@ namespace Oxide.Plugins
                 return string.Empty;
 
             value = value.Replace("\r\n", "\n").Replace("\r", "\n");
-            value = value.Replace("\\n", "\n");
-            return value;
+            value = value.Replace("\\n", "\n").Replace("/n", "\n");
+            value = LinkRegex.Replace(value, string.Empty);
+
+            while (value.Contains("  "))
+                value = value.Replace("  ", " ");
+
+            return value.Trim();
         }
 
         private List<string> BuildBodyDisplayLines(string text)
@@ -1594,11 +1600,21 @@ namespace Oxide.Plugins
                 });
             }
 
+            string titleLabelName = mainPanel + ".TitleText";
             container.Add(new CuiLabel
             {
                 Text = { Text = (ann.Title ?? "").ToUpper(), FontSize = 26, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = $"{contentLeft} 0.74", AnchorMax = "0.98 0.84" }
-            }, mainPanel);
+            }, mainPanel, titleLabelName);
+
+            container.Add(new CuiElement
+            {
+                Parent = titleLabelName,
+                Components =
+                {
+                    new CuiOutlineComponent { Color = "0 0 0 1", Distance = "1 1" }
+                }
+            });
 
             container.Add(new CuiPanel
             {
@@ -1617,11 +1633,21 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = $"{contentLeft} 0.15", AnchorMax = "0.925 0.70" }
             }, mainPanel, mainPanel + ".TextViewport");
 
+            string bodyLabelName = mainPanel + ".BodyText";
             container.Add(new CuiLabel
             {
                 Text = { Text = GetVisibleBodySlice(ann.Text, currentOffset), FontSize = 14, Align = TextAnchor.UpperLeft, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
                 RectTransform = { AnchorMin = $"{contentLeft + 0.01f} 0.16", AnchorMax = "0.915 0.69" }
-            }, mainPanel);
+            }, mainPanel, bodyLabelName);
+
+            container.Add(new CuiElement
+            {
+                Parent = bodyLabelName,
+                Components =
+                {
+                    new CuiOutlineComponent { Color = "0 0 0 1", Distance = "0.5 0.5" }
+                }
+            });
 
             if (CanScrollBody(ann.Text))
             {
