@@ -45,8 +45,8 @@ namespace Oxide.Plugins
         private Dictionary<ulong, HashSet<string>> adminSelections = new Dictionary<ulong, HashSet<string>>();
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
-        private const int BodyVisibleLineCount = 14;
-        private const int BodyWrapCharacters = 52;
+        private const int BodyVisibleLineCount = 22;
+        private const int BodyWrapCharacters = 72;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
 
@@ -1516,19 +1516,19 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel
             {
                 Image = { Color = c.PanelBg, FadeIn = 0.20f },
-                RectTransform = { AnchorMin = "0.2 0.2", AnchorMax = "0.8 0.8" }
+                RectTransform = { AnchorMin = "0.1 0.1", AnchorMax = "0.9 0.9" }
             }, LayerName, mainPanel);
 
             container.Add(new CuiPanel
             {
                 Image = { Color = c.HeaderBg, FadeIn = 0.20f },
-                RectTransform = { AnchorMin = "0 0.88", AnchorMax = "1 1" }
+                RectTransform = { AnchorMin = "0 0.92", AnchorMax = "1 1" }
             }, mainPanel);
 
             container.Add(new CuiPanel
             {
                 Image = { Color = "1 1 1 0.06", FadeIn = 0.20f },
-                RectTransform = { AnchorMin = "0 0.879", AnchorMax = "1 0.881" }
+                RectTransform = { AnchorMin = "0 0.919", AnchorMax = "1 0.921" }
             }, mainPanel);
 
             if (ann.Pinned)
@@ -1558,14 +1558,14 @@ namespace Oxide.Plugins
             container.Add(new CuiLabel
             {
                 Text = { Text = headerText, FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                RectTransform = { AnchorMin = "0.03 0.88", AnchorMax = "0.8 1" }
+                RectTransform = { AnchorMin = "0.03 0.92", AnchorMax = "0.8 1" }
             }, mainPanel);
 
             container.Add(new CuiButton
             {
                 Button = { Color = "0 0 0 0", Command = "news.close" },
                 Text = { Text = "✕", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
-                RectTransform = { AnchorMin = "0.94 0.88", AnchorMax = "0.99 1" }
+                RectTransform = { AnchorMin = "0.94 0.92", AnchorMax = "0.99 1" }
             }, mainPanel);
 
             bool hasImage = !string.IsNullOrEmpty(ann.ImageUrl);
@@ -1579,7 +1579,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = "0 0 0 0.3" },
-                    RectTransform = { AnchorMin = "0.02 0.12", AnchorMax = "0.40 0.84" }
+                    RectTransform = { AnchorMin = "0.02 0.12", AnchorMax = "0.38 0.88" }
                 }, mainPanel, imgPanel);
 
                 var imgComp = new CuiRawImageComponent { Color = "1 1 1 1" };
@@ -1603,8 +1603,8 @@ namespace Oxide.Plugins
             string titleLabelName = mainPanel + ".TitleText";
             container.Add(new CuiLabel
             {
-                Text = { Text = (ann.Title ?? "").ToUpper(), FontSize = 26, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                RectTransform = { AnchorMin = $"{contentLeft} 0.74", AnchorMax = "0.98 0.84" }
+                Text = { Text = (ann.Title ?? "").ToUpper(), FontSize = 32, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = $"{contentLeft} 0.80", AnchorMax = "0.98 0.90" }
             }, mainPanel, titleLabelName);
 
             container.Add(new CuiElement
@@ -1619,7 +1619,7 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel
             {
                  Image = { Color = c.ButtonPrimary },
-                 RectTransform = { AnchorMin = $"{contentLeft} 0.73", AnchorMax = $"{contentLeft + 0.15f} 0.735" }
+                 RectTransform = { AnchorMin = $"{contentLeft} 0.79", AnchorMax = $"{contentLeft + 0.15f} 0.795" }
             }, mainPanel);
 
             int currentOffset = 0;
@@ -1630,14 +1630,14 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0.15" },
-                RectTransform = { AnchorMin = $"{contentLeft} 0.15", AnchorMax = "0.925 0.70" }
+                RectTransform = { AnchorMin = $"{contentLeft} 0.12", AnchorMax = "0.94 0.78" }
             }, mainPanel, mainPanel + ".TextViewport");
 
             string bodyLabelName = mainPanel + ".BodyText";
             container.Add(new CuiLabel
             {
-                Text = { Text = GetVisibleBodySlice(ann.Text, currentOffset), FontSize = 14, Align = TextAnchor.UpperLeft, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
-                RectTransform = { AnchorMin = $"{contentLeft + 0.01f} 0.16", AnchorMax = "0.915 0.69" }
+                Text = { Text = GetVisibleBodySlice(ann.Text, currentOffset), FontSize = 16, Align = TextAnchor.UpperLeft, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
+                RectTransform = { AnchorMin = $"{contentLeft + 0.01f} 0.13", AnchorMax = "0.93 0.77" }
             }, mainPanel, bodyLabelName);
 
             container.Add(new CuiElement
@@ -1657,10 +1657,10 @@ namespace Oxide.Plugins
                 int pageDown   = ClampBodyOffset(ann.Text, currentOffset + BodyVisibleLineCount);
                 string annId   = ann.Id;
 
-                const float trackLeft   = 0.948f;
-                const float trackRight  = 0.972f;
-                const float trackBottom = 0.165f;
-                const float trackTop    = 0.677f;
+                const float trackLeft   = 0.955f;
+                const float trackRight  = 0.975f;
+                const float trackBottom = 0.135f;
+                const float trackTop    = 0.765f;
 
                 container.Add(new CuiPanel
                 {
@@ -1704,8 +1704,8 @@ namespace Oxide.Plugins
                 bool canUp = currentOffset > 0;
                 bool canDown = currentOffset < maxOffset;
 
-                const float chevLeft  = 0.918f;
-                const float chevRight = 0.940f;
+                const float chevLeft  = 0.943f;
+                const float chevRight = 0.953f;
                 if (canUp)
                 {
                     container.Add(new CuiButton
