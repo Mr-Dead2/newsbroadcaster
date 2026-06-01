@@ -1516,7 +1516,7 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel
             {
                 Image = { Color = c.PanelBg, FadeIn = 0.20f },
-                RectTransform = { AnchorMin = "0.1 0.1", AnchorMax = "0.9 0.9" }
+                RectTransform = { AnchorMin = "0.175 0.175", AnchorMax = "0.825 0.825" }
             }, LayerName, mainPanel);
 
             container.Add(new CuiPanel
