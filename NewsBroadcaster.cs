@@ -112,6 +112,8 @@ namespace Oxide.Plugins
             public string ServerName { get; set; } = "SERVER NEWS";
             public int AnnouncementsPerPage { get; set; } = 5;
             public int MaxStoredAnnouncements { get; set; } = 50;
+            public bool ChatBroadcastEnabled { get; set; } = true;
+            public int ChatPreviewLength { get; set; } = 140;
         }
 
         class NotificationSettings
@@ -817,6 +819,7 @@ namespace Oxide.Plugins
 
             Interface.CallHook("OnNewsBroadcast", BuildHookData(ann));
             SendToDiscord(ann);
+            BroadcastNewsToChat(ann);
 
             foreach (var player in BasePlayer.activePlayerList)
             {
@@ -1326,6 +1329,8 @@ namespace Oxide.Plugins
 
             if (isNew)
             {
+                BroadcastNewsToChat(ann);
+
                 foreach (var p in BasePlayer.activePlayerList)
                 {
                     if (config.Notification.Enabled)
@@ -1949,6 +1954,51 @@ namespace Oxide.Plugins
             }
 
             CuiHelper.AddUi(player, container);
+        }
+
+        private string BuildChatPreview(string text)
+        {
+            text = NormalizeBodyText(text);
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+
+            text = text.Replace("\n", " ");
+            while (text.Contains("  "))
+                text = text.Replace("  ", " ");
+            text = text.Trim();
+
+            int max = config.General != null && config.General.ChatPreviewLength > 0 ? config.General.ChatPreviewLength : 140;
+            if (text.Length > max)
+                text = text.Substring(0, max).TrimEnd() + "…";
+
+            return text;
+        }
+
+        private void BroadcastNewsToChat(Announcement ann)
+        {
+            if (config.General == null || !config.General.ChatBroadcastEnabled) return;
+            if (ann == null) return;
+
+            var c = config.Colors;
+            string accent  = RgbaToHex(GetTypeColor(ann.Type));
+            string primary = RgbaToHex(c.ButtonPrimary);
+            string muted   = RgbaToHex(c.TextMuted);
+            string rule    = $"<color={accent}>──────────────────────────────</color>";
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine(rule);
+            sb.AppendLine($"<color={accent}>▎</color> <color={primary}><b>{(config.General.ServerName ?? "SERVER NEWS").ToUpper()}</b></color> <color={muted}>//</color> <color={accent}><b>{ann.Type.ToString().ToUpper()}</b></color>");
+            sb.AppendLine($"<size=14><b>{ann.Title}</b></size>");
+
+            string preview = BuildChatPreview(ann.Text);
+            if (!string.IsNullOrEmpty(preview))
+                sb.AppendLine($"<color={muted}>{preview}</color>");
+
+            sb.AppendLine($"<color={muted}>Type</color> <color={primary}>/news</color> <color={muted}>to read more.</color>");
+            sb.Append(rule);
+
+            string message = sb.ToString();
+            foreach (var player in BasePlayer.activePlayerList)
+                PrintToChat(player, message);
         }
 
         private string GetTypeColor(AnnouncementType type)
