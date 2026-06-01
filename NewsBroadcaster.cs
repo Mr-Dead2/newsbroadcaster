@@ -1418,9 +1418,11 @@ namespace Oxide.Plugins
 
         private void ShowNotification(BasePlayer player, Announcement ann)
         {
+            string safeTitle = ann.Title ?? string.Empty;
+
             if (config.Notification.UseNotifyPlugin && Notify != null && Notify.IsLoaded)
             {
-                Notify.Call("SendNotify", player.UserIDString, config.Notification.NotifyType, ann.Title);
+                Notify.Call("SendNotify", player.UserIDString, config.Notification.NotifyType, safeTitle);
                 return;
             }
 
@@ -1469,7 +1471,7 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0.06 0.65", AnchorMax = "0.9 0.9" }
             }, NotificationLayer);
 
-            string title = ann.Title.Length > 25 ? ann.Title.Substring(0, 22) + "..." : ann.Title;
+            string title = safeTitle.Length > 25 ? safeTitle.Substring(0, 22) + "..." : safeTitle;
             container.Add(new CuiLabel
             {
                 Text = { Text = title, FontSize = 12, Align = TextAnchor.UpperLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf", FadeIn = 0.30f },
