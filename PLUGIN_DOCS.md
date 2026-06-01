@@ -162,9 +162,7 @@ The handle height visually reflects the visible-window-to-content ratio.
     "ShowNewsOnConnect": true,
     "ServerName": "SERVER NEWS",
     "AnnouncementsPerPage": 5,
-    "MaxStoredAnnouncements": 50,
-    "ChatBroadcastEnabled": true,
-    "ChatPreviewLength": 140
+    "MaxStoredAnnouncements": 50
   },
   "Notification": {
     "Enabled": true,
@@ -218,8 +216,6 @@ The handle height visually reflects the visible-window-to-content ratio.
 | `ServerName` | `"SERVER NEWS"` | Label shown in the UI header |
 | `AnnouncementsPerPage` | `5` | Archive / admin list rows per page |
 | `MaxStoredAnnouncements` | `50` | Maximum announcements kept in the data file |
-| `ChatBroadcastEnabled` | `true` | Also post a formatted news summary to in-game chat when an announcement is broadcast |
-| `ChatPreviewLength` | `140` | Max characters of the body shown in the chat summary (truncated with `…`) |
 
 ### Notification Settings
 
