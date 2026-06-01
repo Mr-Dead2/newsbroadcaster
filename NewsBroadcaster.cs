@@ -46,7 +46,8 @@ namespace Oxide.Plugins
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 22;
-        private const int BodyWrapCharacters = 72;
+        private const int BodyWrapCharacters = 58;
+        private const int BodyWrapCharactersImage = 34;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
 
@@ -265,11 +266,26 @@ namespace Oxide.Plugins
             while (value.Contains("  "))
                 value = value.Replace("  ", " ");
 
+            // Collapse runs of 3+ blank lines down to a single blank line so
+            // paragraph spacing stays even instead of leaving large gaps.
+            while (value.Contains("\n\n\n"))
+                value = value.Replace("\n\n\n", "\n\n");
+
             return value.Trim();
         }
 
-        private List<string> BuildBodyDisplayLines(string text)
+        // Characters that fit per line depend on how wide the text column is.
+        // When an announcement has an image the body sits in a much narrower
+        // column, so it must wrap sooner to avoid running off the panel.
+        private int BodyWrapFor(Announcement ann)
         {
+            bool hasImage = ann != null && !string.IsNullOrEmpty(ann.ImageUrl);
+            return hasImage ? BodyWrapCharactersImage : BodyWrapCharacters;
+        }
+
+        private List<string> BuildBodyDisplayLines(string text, int wrapChars = BodyWrapCharacters)
+        {
+            if (wrapChars < 16) wrapChars = 16;
             text = NormalizeBodyText(text);
             var lines = new List<string>();
             if (string.IsNullOrEmpty(text))
@@ -288,10 +304,10 @@ namespace Oxide.Plugins
                 }
 
                 var working = rawLine;
-                while (working.Length > BodyWrapCharacters)
+                while (working.Length > wrapChars)
                 {
-                    int take = BodyWrapCharacters;
-                    int lastSpace = working.LastIndexOf(' ', Math.Min(BodyWrapCharacters - 1, working.Length - 1), Math.Min(BodyWrapCharacters, working.Length));
+                    int take = wrapChars;
+                    int lastSpace = working.LastIndexOf(' ', Math.Min(wrapChars - 1, working.Length - 1), Math.Min(wrapChars, working.Length));
                     if (lastSpace > 15)
                         take = lastSpace;
 
@@ -308,31 +324,31 @@ namespace Oxide.Plugins
             return lines;
         }
 
-        private string GetVisibleBodySlice(string text, int offset)
+        private string GetVisibleBodySlice(string text, int offset, int wrapChars = BodyWrapCharacters)
         {
-            var lines = BuildBodyDisplayLines(text);
-            offset = ClampBodyOffset(text, offset);
+            var lines = BuildBodyDisplayLines(text, wrapChars);
+            offset = ClampBodyOffset(text, offset, wrapChars);
             int take = Math.Min(BodyVisibleLineCount, Math.Max(0, lines.Count - offset));
             return string.Join("\n", lines.Skip(offset).Take(take).ToArray());
         }
 
-        private int GetBodyMaxOffset(string text)
+        private int GetBodyMaxOffset(string text, int wrapChars = BodyWrapCharacters)
         {
-            var lines = BuildBodyDisplayLines(text);
+            var lines = BuildBodyDisplayLines(text, wrapChars);
             return Math.Max(0, lines.Count - BodyVisibleLineCount);
         }
 
-        private int ClampBodyOffset(string text, int offset)
+        private int ClampBodyOffset(string text, int offset, int wrapChars = BodyWrapCharacters)
         {
-            int maxOffset = GetBodyMaxOffset(text);
+            int maxOffset = GetBodyMaxOffset(text, wrapChars);
             if (offset < 0) return 0;
             if (offset > maxOffset) return maxOffset;
             return offset;
         }
 
-        private bool CanScrollBody(string text)
+        private bool CanScrollBody(string text, int wrapChars = BodyWrapCharacters)
         {
-            return BuildBodyDisplayLines(text).Count > BodyVisibleLineCount;
+            return BuildBodyDisplayLines(text, wrapChars).Count > BodyVisibleLineCount;
         }
 
         private static string NewAnnouncementId() => Guid.NewGuid().ToString("N");
@@ -965,7 +981,7 @@ namespace Oxide.Plugins
             if (ann == null) return;
             int offset = arg.GetInt(1, 0);
 
-            historyContentScrollOffsets[player.userID] = ClampBodyOffset(ann.Text, offset);
+            historyContentScrollOffsets[player.userID] = ClampBodyOffset(ann.Text, offset, BodyWrapFor(ann));
             ShowPopup(player, ann, true);
         }
 
@@ -1516,7 +1532,7 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel
             {
                 Image = { Color = c.PanelBg, FadeIn = 0.20f },
-                RectTransform = { AnchorMin = "0.1 0.1", AnchorMax = "0.9 0.9" }
+                RectTransform = { AnchorMin = "0.175 0.175", AnchorMax = "0.825 0.825" }
             }, LayerName, mainPanel);
 
             container.Add(new CuiPanel
@@ -1622,9 +1638,11 @@ namespace Oxide.Plugins
                  RectTransform = { AnchorMin = $"{contentLeft} 0.79", AnchorMax = $"{contentLeft + 0.15f} 0.795" }
             }, mainPanel);
 
+            int bodyWrap = BodyWrapFor(ann);
+
             int currentOffset = 0;
             historyContentScrollOffsets.TryGetValue(player.userID, out currentOffset);
-            currentOffset = ClampBodyOffset(ann.Text, currentOffset);
+            currentOffset = ClampBodyOffset(ann.Text, currentOffset, bodyWrap);
             historyContentScrollOffsets[player.userID] = currentOffset;
 
             container.Add(new CuiPanel
@@ -1636,8 +1654,8 @@ namespace Oxide.Plugins
             string bodyLabelName = mainPanel + ".BodyText";
             container.Add(new CuiLabel
             {
-                Text = { Text = GetVisibleBodySlice(ann.Text, currentOffset), FontSize = 16, Align = TextAnchor.UpperLeft, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
-                RectTransform = { AnchorMin = $"{contentLeft + 0.01f} 0.13", AnchorMax = "0.93 0.77" }
+                Text = { Text = GetVisibleBodySlice(ann.Text, currentOffset, bodyWrap), FontSize = 16, Align = TextAnchor.UpperLeft, Color = c.TextNormal, Font = "robotocondensed-regular.ttf" },
+                RectTransform = { AnchorMin = $"{contentLeft + 0.02f} 0.13", AnchorMax = "0.925 0.77" }
             }, mainPanel, bodyLabelName);
 
             container.Add(new CuiElement
@@ -1645,16 +1663,16 @@ namespace Oxide.Plugins
                 Parent = bodyLabelName,
                 Components =
                 {
-                    new CuiOutlineComponent { Color = "0 0 0 1", Distance = "0.5 0.5" }
+                    new CuiOutlineComponent { Color = "0 0 0 0.95", Distance = "0.9 0.9", UseGraphicAlpha = true }
                 }
             });
 
-            if (CanScrollBody(ann.Text))
+            if (CanScrollBody(ann.Text, bodyWrap))
             {
 
-                int maxOffset = GetBodyMaxOffset(ann.Text);
-                int pageUp     = ClampBodyOffset(ann.Text, currentOffset - BodyVisibleLineCount);
-                int pageDown   = ClampBodyOffset(ann.Text, currentOffset + BodyVisibleLineCount);
+                int maxOffset = GetBodyMaxOffset(ann.Text, bodyWrap);
+                int pageUp     = ClampBodyOffset(ann.Text, currentOffset - BodyVisibleLineCount, bodyWrap);
+                int pageDown   = ClampBodyOffset(ann.Text, currentOffset + BodyVisibleLineCount, bodyWrap);
                 string annId   = ann.Id;
 
                 const float trackLeft   = 0.955f;
@@ -1676,7 +1694,7 @@ namespace Oxide.Plugins
                     {
                         float zMin = trackBottom + z * zoneH;
                         float zMax = zMin + zoneH;
-                        int targetOffset = ClampBodyOffset(ann.Text, Mathf.RoundToInt((float)(jumpZones - 1 - z) / (jumpZones - 1) * maxOffset));
+                        int targetOffset = ClampBodyOffset(ann.Text, Mathf.RoundToInt((float)(jumpZones - 1 - z) / (jumpZones - 1) * maxOffset), bodyWrap);
                         container.Add(new CuiButton
                         {
                             Button = { Color = "0 0 0 0", Command = $"news.scrollbody {annId} {targetOffset}" },
@@ -1686,7 +1704,7 @@ namespace Oxide.Plugins
                     }
                 }
 
-                var allLines = BuildBodyDisplayLines(ann.Text);
+                var allLines = BuildBodyDisplayLines(ann.Text, bodyWrap);
                 float windowRatio = allLines.Count <= 0 ? 1f : Mathf.Clamp((float)BodyVisibleLineCount / allLines.Count, 0.12f, 0.90f);
                 float trackH      = trackTop - trackBottom;
                 float handleH     = trackH * windowRatio;
