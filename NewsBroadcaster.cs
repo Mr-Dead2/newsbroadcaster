@@ -779,7 +779,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            string fullCommand = arg.FullString ?? string.Empty;
+            string fullCommand = arg.FullString.ToString() ?? string.Empty;
             var rawMatches = CommandSplitRegex.Matches(fullCommand).Cast<Match>().ToList();
             var values = rawMatches.Select(m => m.Value.Trim('"')).ToList();
 
@@ -1255,7 +1255,7 @@ namespace Oxide.Plugins
 
             string field = arg.Args[0].ToLowerInvariant();
 
-            string fullStr = arg.FullString ?? string.Empty;
+            string fullStr = arg.FullString.ToString() ?? string.Empty;
             string value;
             if (fullStr.StartsWith(field, StringComparison.OrdinalIgnoreCase))
             {
