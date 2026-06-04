@@ -1253,7 +1253,7 @@ namespace Oxide.Plugins
 
             if (arg.Args == null || arg.Args.Length < 1) return;
 
-            string field = arg.Args[0].ToLowerInvariant();
+            string field = arg.GetString(0).ToLowerInvariant();
 
             string fullStr = arg.FullString.ToString() ?? string.Empty;
             string value;
