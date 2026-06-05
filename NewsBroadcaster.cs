@@ -266,17 +266,12 @@ namespace Oxide.Plugins
             while (value.Contains("  "))
                 value = value.Replace("  ", " ");
 
-            // Collapse runs of 3+ blank lines down to a single blank line so
-            // paragraph spacing stays even instead of leaving large gaps.
             while (value.Contains("\n\n\n"))
                 value = value.Replace("\n\n\n", "\n\n");
 
             return value.Trim();
         }
 
-        // Characters that fit per line depend on how wide the text column is.
-        // When an announcement has an image the body sits in a much narrower
-        // column, so it must wrap sooner to avoid running off the panel.
         private int BodyWrapFor(Announcement ann)
         {
             bool hasImage = ann != null && !string.IsNullOrEmpty(ann.ImageUrl);
