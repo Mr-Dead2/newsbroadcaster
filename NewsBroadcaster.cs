@@ -1014,6 +1014,12 @@ namespace Oxide.Plugins
             var player = arg.Connection?.player as BasePlayer;
             if (player == null) return;
 
+            if (!permission.UserHasPermission(player.UserIDString, PermView))
+            {
+                SendReply(player, Msg("NoPermissionView", player));
+                return;
+            }
+
             int page = arg.GetInt(0, 0);
             ShowHistory(player, page);
         }
@@ -1328,6 +1334,10 @@ namespace Oxide.Plugins
                 value = string.Join(" ", arg.Args.Skip(1));
             }
 
+            // CharsLimit on the input field is client-side only; enforce it here too.
+            if (value.Length > MaxContentChars)
+                value = value.Substring(0, MaxContentChars);
+
             var ann = activeEditors[player.userID];
             switch (field)
             {
@@ -1386,6 +1396,7 @@ namespace Oxide.Plugins
                 return;
             }
 
+            ann.ImageUrl = ann.ImageUrl?.Trim();
             ann.Text = NormalizeBodyText(ann.Text);
             activeEditorIds.TryGetValue(player.userID, out string editingId);
             bool isNew = string.IsNullOrEmpty(editingId);
@@ -1404,9 +1415,14 @@ namespace Oxide.Plugins
                 int idx = FindIndexById(editingId);
                 if (idx >= 0)
                 {
-                    ann.Id = editingId;
-                    announcements[idx] = ann;
-                    Interface.CallHook("OnNewsEdited", BuildHookData(ann));
+                    // Apply edited content onto the stored announcement so Pinned and
+                    // the read/like reward tracking sets survive the edit.
+                    var target = announcements[idx];
+                    target.Title = ann.Title;
+                    target.ImageUrl = ann.ImageUrl;
+                    target.Text = ann.Text;
+                    target.Type = ann.Type;
+                    Interface.CallHook("OnNewsEdited", BuildHookData(target));
                 }
                 else
                 {
@@ -2718,24 +2734,36 @@ namespace Oxide.Plugins
             }, mainPanel);
 
             int count = 0;
-            float buttonHeight = 0.12f;
-            float startY = 0.8f;
+            const float buttonHeight = 0.11f;
+            const float buttonGap = 0.02f;
+            const float startY = 0.84f;
 
-            foreach (var themeName in config.Themes.Keys)
+            foreach (var themeEntry in config.Themes)
             {
+                string themeName = themeEntry.Key;
+                var theme = themeEntry.Value ?? new UIColors();
                 bool isSelected = config.SelectedTheme == themeName;
                 string buttonColor = isSelected ? c.ButtonPrimary : c.ButtonSecondary;
                 float themeFade = 0.20f + count * 0.04f;
 
-                float top = startY - (count * (buttonHeight + 0.02f));
+                float top = startY - (count * (buttonHeight + buttonGap));
                 float bottom = top - buttonHeight;
+                if (bottom < 0.02f) break;
 
                 container.Add(new CuiButton
                 {
                     Button = { Color = buttonColor, Command = $"news.admin.settheme \"{themeName}\"", FadeIn = themeFade },
                     Text = { Text = themeName.ToUpper() + (isSelected ? $"  {Msg("Active", player)}" : ""), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = isSelected ? "1 1 1 1" : c.TextNormal, Font = "robotocondensed-bold.ttf", FadeIn = themeFade },
-                    RectTransform = { AnchorMin = $"0.1 {bottom}", AnchorMax = $"0.9 {top}" }
+                    RectTransform = { AnchorMin = $"0.1 {bottom:F3}", AnchorMax = $"0.78 {top:F3}" }
                 }, mainPanel);
+
+                float swatchMid = bottom + buttonHeight / 2f;
+                float swatchHalf = buttonHeight * 0.30f;
+                string swatchMin = $"{swatchMid - swatchHalf:F3}";
+                string swatchMax = $"{swatchMid + swatchHalf:F3}";
+                container.Add(new CuiPanel { Image = { Color = theme.PanelBg, FadeIn = themeFade }, RectTransform = { AnchorMin = $"0.795 {swatchMin}", AnchorMax = $"0.825 {swatchMax}" } }, mainPanel);
+                container.Add(new CuiPanel { Image = { Color = theme.ButtonPrimary, FadeIn = themeFade }, RectTransform = { AnchorMin = $"0.835 {swatchMin}", AnchorMax = $"0.865 {swatchMax}" } }, mainPanel);
+                container.Add(new CuiPanel { Image = { Color = theme.ContentBg, FadeIn = themeFade }, RectTransform = { AnchorMin = $"0.875 {swatchMin}", AnchorMax = $"0.905 {swatchMax}" } }, mainPanel);
 
                 count++;
             }
