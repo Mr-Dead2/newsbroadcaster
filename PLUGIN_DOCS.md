@@ -17,7 +17,7 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 
 ## Features
 
-- Full-featured in-game announcement editor (create / edit / delete via UI)
+- Full-featured in-game announcement editor (create / edit / delete via UI) with a live preview pane and one-click type selection
 - Archive list with paged navigation
 - Per-announcement like/heart button for players
 - Scrollable long-form content body with page indicator
@@ -131,8 +131,9 @@ All UI-driven commands address announcements by their stable `Id` (a hex GUID as
 | `news.admin.themes` | Open the theme selector UI |
 | `news.admin.settheme "ThemeName"` | Apply a theme |
 | `news.editor.input <field> <value>` | Update a field in the editor (`title` / `image` / `text`) |
-| `news.editor.type` | Cycle the announcement type in the editor |
-| `news.editor.save` | Save and broadcast the edited/new announcement |
+| `news.editor.type` | Cycle the announcement type in the editor (legacy; the editor now uses direct type buttons) |
+| `news.editor.settype <0-4>` | Set the announcement type directly (used by the editor's type buttons) |
+| `news.editor.save` | Save and broadcast the edited/new announcement (requires a non-empty title) |
 | `news.editor.cancel` | Cancel editing and return to admin list |
 | `news.confirm.close` | Dismiss the delete-confirmation dialog |
 
