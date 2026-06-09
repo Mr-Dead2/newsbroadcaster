@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.1")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.5")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -43,6 +43,12 @@ namespace Oxide.Plugins
         private Dictionary<ulong, int> historyContentScrollOffsets = new Dictionary<ulong, int>();
         private Dictionary<ulong, ReadRewardState> readRewardTimers = new Dictionary<ulong, ReadRewardState>();
         private Dictionary<ulong, HashSet<string>> adminSelections = new Dictionary<ulong, HashSet<string>>();
+
+        private Timer pendingSaveTimer;
+        private readonly Dictionary<string, string> hexColorCache = new Dictionary<string, string>(StringComparer.Ordinal);
+        private string cachedWrapText;
+        private int cachedWrapWidth = -1;
+        private List<string> cachedWrapLines;
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 22;
@@ -263,13 +269,33 @@ namespace Oxide.Plugins
             value = value.Replace("\\n", "\n").Replace("/n", "\n");
             value = LinkRegex.Replace(value, string.Empty);
 
-            while (value.Contains("  "))
-                value = value.Replace("  ", " ");
+            var sb = new System.Text.StringBuilder(value.Length);
+            int newlineRun = 0;
+            bool lastWasSpace = false;
+            foreach (char ch in value)
+            {
+                if (ch == '\n')
+                {
+                    newlineRun++;
+                    lastWasSpace = false;
+                    if (newlineRun <= 2) sb.Append('\n');
+                    continue;
+                }
+                newlineRun = 0;
 
-            while (value.Contains("\n\n\n"))
-                value = value.Replace("\n\n\n", "\n\n");
+                if (ch == ' ')
+                {
+                    if (lastWasSpace) continue;
+                    lastWasSpace = true;
+                }
+                else
+                {
+                    lastWasSpace = false;
+                }
+                sb.Append(ch);
+            }
 
-            return value.Trim();
+            return sb.ToString().Trim();
         }
 
         private int BodyWrapFor(Announcement ann)
@@ -319,9 +345,20 @@ namespace Oxide.Plugins
             return lines;
         }
 
+        private List<string> GetBodyDisplayLines(string text, int wrapChars)
+        {
+            if (cachedWrapLines != null && cachedWrapWidth == wrapChars && string.Equals(cachedWrapText, text, StringComparison.Ordinal))
+                return cachedWrapLines;
+
+            cachedWrapLines = BuildBodyDisplayLines(text, wrapChars);
+            cachedWrapText = text;
+            cachedWrapWidth = wrapChars;
+            return cachedWrapLines;
+        }
+
         private string GetVisibleBodySlice(string text, int offset, int wrapChars = BodyWrapCharacters)
         {
-            var lines = BuildBodyDisplayLines(text, wrapChars);
+            var lines = GetBodyDisplayLines(text, wrapChars);
             offset = ClampBodyOffset(text, offset, wrapChars);
             int take = Math.Min(BodyVisibleLineCount, Math.Max(0, lines.Count - offset));
             return string.Join("\n", lines.Skip(offset).Take(take).ToArray());
@@ -329,7 +366,7 @@ namespace Oxide.Plugins
 
         private int GetBodyMaxOffset(string text, int wrapChars = BodyWrapCharacters)
         {
-            var lines = BuildBodyDisplayLines(text, wrapChars);
+            var lines = GetBodyDisplayLines(text, wrapChars);
             return Math.Max(0, lines.Count - BodyVisibleLineCount);
         }
 
@@ -343,7 +380,7 @@ namespace Oxide.Plugins
 
         private bool CanScrollBody(string text, int wrapChars = BodyWrapCharacters)
         {
-            return BuildBodyDisplayLines(text, wrapChars).Count > BodyVisibleLineCount;
+            return GetBodyDisplayLines(text, wrapChars).Count > BodyVisibleLineCount;
         }
 
         private static string NewAnnouncementId() => Guid.NewGuid().ToString("N");
@@ -610,8 +647,27 @@ namespace Oxide.Plugins
                 ImageLibrary.Call("ImportImageList", Title, imageUrls, 0UL, true);
         }
 
+        // Debounced save for per-player tracking churn (last-seen, likes, read marks);
+        // structural changes (post/edit/delete/pin) still call SaveAnnouncements directly.
+        private void QueueSave()
+        {
+            if (pendingSaveTimer != null && !pendingSaveTimer.Destroyed) return;
+            pendingSaveTimer = timer.Once(5f, SaveAnnouncements);
+        }
+
+        private void FlushPendingSave()
+        {
+            if (pendingSaveTimer != null && !pendingSaveTimer.Destroyed)
+                SaveAnnouncements();
+        }
+
+        void OnServerSave() => FlushPendingSave();
+
         private void SaveAnnouncements()
         {
+            pendingSaveTimer?.Destroy();
+            pendingSaveTimer = null;
+
             if (storedData.Announcements.Count > config.General.MaxStoredAnnouncements)
                 storedData.Announcements = storedData.Announcements.OrderByDescending(x => x.Timestamp).Take(config.General.MaxStoredAnnouncements).ToList();
 
@@ -715,12 +771,14 @@ namespace Oxide.Plugins
                 var current = announcements[0];
                 ShowPopup(player, current, false);
                 storedData.LastSeenNews[player.userID] = current.Timestamp;
-                SaveAnnouncements();
+                QueueSave();
             });
         }
 
         void Unload()
         {
+            FlushPendingSave();
+
             foreach (var player in BasePlayer.activePlayerList)
             {
                 DestroyUI(player);
@@ -1396,7 +1454,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            SaveAnnouncements();
+            QueueSave();
             Interface.CallHook("OnNewsLiked", player, BuildHookData(ann), addedLike);
             ShowPopup(player, ann, true, false);
         }
@@ -1701,7 +1759,7 @@ namespace Oxide.Plugins
                     }
                 }
 
-                var allLines = BuildBodyDisplayLines(ann.Text, bodyWrap);
+                var allLines = GetBodyDisplayLines(ann.Text, bodyWrap);
                 float windowRatio = allLines.Count <= 0 ? 1f : Mathf.Clamp((float)BodyVisibleLineCount / allLines.Count, 0.12f, 0.90f);
                 float trackH      = trackTop - trackBottom;
                 float handleH     = trackH * windowRatio;
@@ -1989,15 +2047,22 @@ namespace Oxide.Plugins
 
         private string RgbaToHex(string rgba)
         {
+            if (string.IsNullOrEmpty(rgba)) return "#FFFFFF";
+            if (hexColorCache.TryGetValue(rgba, out var cached)) return cached;
+
+            string hex;
             try
             {
                 var parts = rgba.Split(' ');
                 int r = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[0], CultureInfo.InvariantCulture) * 255), 0, 255);
                 int g = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[1], CultureInfo.InvariantCulture) * 255), 0, 255);
                 int b = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[2], CultureInfo.InvariantCulture) * 255), 0, 255);
-                return $"#{r:X2}{g:X2}{b:X2}";
+                hex = $"#{r:X2}{g:X2}{b:X2}";
             }
-            catch { return "#FFFFFF"; }
+            catch { hex = "#FFFFFF"; }
+
+            hexColorCache[rgba] = hex;
+            return hex;
         }
         #endregion
 
@@ -2668,7 +2733,7 @@ namespace Oxide.Plugins
                 bool grantReward = config.Rewards != null && config.Rewards.EnableReadReward
                                    && current.ReadRewardedPlayers.Add(userId);
 
-                if (firstRead || grantReward) SaveAnnouncements();
+                if (firstRead || grantReward) QueueSave();
                 if (firstRead) Interface.CallHook("OnNewsRead", player, BuildHookData(current));
                 if (grantReward) GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
             });
