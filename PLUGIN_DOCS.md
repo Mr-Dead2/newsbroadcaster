@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.1.5  
+**Version:** 1.2.0  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
