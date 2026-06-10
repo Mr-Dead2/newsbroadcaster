@@ -55,9 +55,9 @@ namespace Oxide.Plugins
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 22;
-        private const int BodyWrapCharacters = 58;
-        private const int BodyWrapCharactersImage = 34;
-        private const int EditorPreviewWrapCharacters = 44;
+        private const int BodyWrapCharacters = 70;
+        private const int BodyWrapCharactersImage = 46;
+        private const int EditorPreviewWrapCharacters = 48;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
 
@@ -225,7 +225,7 @@ namespace Oxide.Plugins
                 ["ImageUrl"] = "IMAGE URL (leave empty for no image)",
                 ["AnnouncementType"] = "ANNOUNCEMENT TYPE (click to cycle)",
                 ["ContentBody"] = "CONTENT BODY",
-                ["ContentBodyHint"] = "Supports \\n for line breaks. Long content is supported and displayed with paged scrolling.",
+                ["ContentBodyHint"] = "Use \\n for line breaks. Long content scrolls automatically.",
                 ["SaveBroadcast"] = "✔ SAVE & BROADCAST",
                 ["Cancel"] = "✕ CANCEL",
                 ["SelectTheme"] = "SELECT THEME",
@@ -2483,14 +2483,14 @@ namespace Oxide.Plugins
             AddBackdrop(container, LayerName);
 
             string editorPanel = LayerName + ".Editor";
-            container.Add(new CuiPanel { Image = { Color = c.PanelBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.16 0.16", AnchorMax = "0.84 0.84" } }, LayerName, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = c.PanelBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.11 0.10", AnchorMax = "0.89 0.90" } }, LayerName, editorPanel);
 
             bool editingExisting = activeEditorIds.TryGetValue(player.userID, out string editingId) && !string.IsNullOrEmpty(editingId);
             AddPanelChrome(container, editorPanel, c, editingExisting ? Msg("EditAnnouncement", player) : Msg("CreateAnnouncement", player), "news.editor.cancel");
 
             container.Add(new CuiPanel { Image = { Color = "1 1 1 0.04", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.535 0.135", AnchorMax = "0.537 0.89" } }, editorPanel);
 
-            container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementTitle", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = titleMissing ? warnColor : c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.845", AnchorMax = "0.52 0.89" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementTitle", player), FontSize = 11, Align = TextAnchor.LowerLeft, Color = titleMissing ? warnColor : c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.845", AnchorMax = "0.52 0.89" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = titleMissing ? "0.45 0.10 0.10 0.55" : "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.785", AnchorMax = "0.52 0.845" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = titleMissing ? warnColor : c.ButtonPrimary, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.781", AnchorMax = "0.52 0.785" } }, editorPanel);
             container.Add(new CuiElement
@@ -2498,12 +2498,12 @@ namespace Oxide.Plugins
                 Parent = editorPanel,
                 Components =
                 {
-                    new CuiInputFieldComponent { Text = ann.Title ?? "", FontSize = 12, Align = TextAnchor.MiddleLeft, Command = "news.editor.input title", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
+                    new CuiInputFieldComponent { Text = ann.Title ?? "", FontSize = 14, Align = TextAnchor.MiddleLeft, Command = "news.editor.input title", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
                     new CuiRectTransformComponent { AnchorMin = "0.04 0.785", AnchorMax = "0.51 0.845" }
                 }
             });
 
-            container.Add(new CuiLabel { Text = { Text = Msg("ImageUrl", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.715", AnchorMax = "0.52 0.76" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("ImageUrl", player), FontSize = 11, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.715", AnchorMax = "0.52 0.76" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.655", AnchorMax = "0.52 0.715" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.651", AnchorMax = "0.52 0.655" } }, editorPanel);
             container.Add(new CuiElement
@@ -2511,12 +2511,12 @@ namespace Oxide.Plugins
                 Parent = editorPanel,
                 Components =
                 {
-                    new CuiInputFieldComponent { Text = ann.ImageUrl ?? "", FontSize = 12, Align = TextAnchor.MiddleLeft, Command = "news.editor.input image", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
+                    new CuiInputFieldComponent { Text = ann.ImageUrl ?? "", FontSize = 14, Align = TextAnchor.MiddleLeft, Command = "news.editor.input image", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
                     new CuiRectTransformComponent { AnchorMin = "0.04 0.655", AnchorMax = "0.51 0.715" }
                 }
             });
 
-            container.Add(new CuiLabel { Text = { Text = Msg("TypeLabel", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.585", AnchorMax = "0.52 0.63" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("TypeLabel", player), FontSize = 11, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.585", AnchorMax = "0.52 0.63" } }, editorPanel);
 
             var typeValues = (AnnouncementType[])Enum.GetValues(typeof(AnnouncementType));
             float typeSlot = 0.49f / typeValues.Length;
@@ -2529,13 +2529,13 @@ namespace Oxide.Plugins
                 container.Add(new CuiButton
                 {
                     Button = { Color = isSelected ? GetTypeColor(t) : c.ButtonSecondary, Command = $"news.editor.settype {(int)t}" },
-                    Text = { Text = t.ToString().ToUpper(), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = isSelected ? "1 1 1 1" : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    Text = { Text = t.ToString().ToUpper(), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = isSelected ? "1 1 1 1" : c.TextMuted, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = $"{typeMin:F3} 0.525", AnchorMax = $"{typeMax:F3} 0.585" }
                 }, editorPanel);
             }
 
-            container.Add(new CuiLabel { Text = { Text = Msg("ContentBody", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.455", AnchorMax = "0.30 0.50" } }, editorPanel);
-            container.Add(new CuiLabel { Text = { Text = Msg("CharCount", player, (ann.Text ?? "").Length, MaxContentChars), FontSize = 9, Align = TextAnchor.LowerRight, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" }, RectTransform = { AnchorMin = "0.30 0.455", AnchorMax = "0.52 0.50" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("ContentBody", player), FontSize = 11, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.455", AnchorMax = "0.30 0.50" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("CharCount", player, (ann.Text ?? "").Length, MaxContentChars), FontSize = 10, Align = TextAnchor.LowerRight, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" }, RectTransform = { AnchorMin = "0.30 0.455", AnchorMax = "0.52 0.50" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.135", AnchorMax = "0.52 0.455" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.131", AnchorMax = "0.52 0.135" } }, editorPanel);
             container.Add(new CuiElement
@@ -2543,13 +2543,13 @@ namespace Oxide.Plugins
                 Parent = editorPanel,
                 Components =
                 {
-                    new CuiInputFieldComponent { Text = ann.Text ?? "", FontSize = 12, Align = TextAnchor.UpperLeft, Command = "news.editor.input text", Color = "1 1 1 1", NeedsKeyboard = true, CharsLimit = MaxContentChars, LineType = UnityEngine.UI.InputField.LineType.MultiLineNewline },
+                    new CuiInputFieldComponent { Text = ann.Text ?? "", FontSize = 14, Align = TextAnchor.UpperLeft, Command = "news.editor.input text", Color = "1 1 1 1", NeedsKeyboard = true, CharsLimit = MaxContentChars, LineType = UnityEngine.UI.InputField.LineType.MultiLineNewline },
                     new CuiRectTransformComponent { AnchorMin = "0.04 0.145", AnchorMax = "0.51 0.445" }
                 }
             });
-            container.Add(new CuiLabel { Text = { Text = Msg("ContentBodyHint", player), FontSize = 8, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" }, RectTransform = { AnchorMin = "0.03 0.103", AnchorMax = "0.52 0.133" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("ContentBodyHint", player), FontSize = 9, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" }, RectTransform = { AnchorMin = "0.03 0.098", AnchorMax = "0.52 0.131" } }, editorPanel);
 
-            container.Add(new CuiLabel { Text = { Text = Msg("LivePreview", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.55 0.845", AnchorMax = "0.97 0.89" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("LivePreview", player), FontSize = 11, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.55 0.845", AnchorMax = "0.97 0.89" } }, editorPanel);
 
             string previewPanel = editorPanel + ".Preview";
             container.Add(new CuiPanel { Image = { Color = c.ContentBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.55 0.135", AnchorMax = "0.97 0.845" } }, editorPanel, previewPanel);
@@ -2559,9 +2559,9 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel { Image = { Color = typeColor }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0.012 1" } }, previewPanel);
 
             container.Add(new CuiPanel { Image = { Color = typeColor }, RectTransform = { AnchorMin = "0.76 0.925", AnchorMax = "0.97 0.985" } }, previewPanel);
-            container.Add(new CuiLabel { Text = { Text = ann.Type.ToString().ToUpper(), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.76 0.925", AnchorMax = "0.97 0.985" } }, previewPanel);
+            container.Add(new CuiLabel { Text = { Text = ann.Type.ToString().ToUpper(), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.76 0.925", AnchorMax = "0.97 0.985" } }, previewPanel);
 
-            container.Add(new CuiLabel { Text = { Text = (ann.Title ?? "").ToUpper(), FontSize = 15, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.85", AnchorMax = "0.74 0.97" } }, previewPanel);
+            container.Add(new CuiLabel { Text = { Text = (ann.Title ?? "").ToUpper(), FontSize = 17, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.85", AnchorMax = "0.74 0.97" } }, previewPanel);
             container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0.04 0.835", AnchorMax = "0.30 0.843" } }, previewPanel);
 
             bool hasPreviewImage = !string.IsNullOrEmpty(ann.ImageUrl);
@@ -2603,19 +2603,19 @@ namespace Oxide.Plugins
             else
             {
                 var previewLines = BuildBodyDisplayLines(previewText, EditorPreviewWrapCharacters);
-                int previewMaxLines = hasPreviewImage ? 9 : 16;
+                int previewMaxLines = hasPreviewImage ? 12 : 20;
                 previewBody = string.Join("\n", previewLines.Take(previewMaxLines).ToArray());
                 if (previewLines.Count > previewMaxLines) previewBody += "\n…";
             }
             container.Add(new CuiLabel
             {
-                Text = { Text = previewBody, FontSize = 11, Align = TextAnchor.UpperLeft, Color = string.IsNullOrEmpty(previewText) ? c.TextMuted : c.TextNormal, Font = "robotocondensed-regular.ttf" },
+                Text = { Text = previewBody, FontSize = 12, Align = TextAnchor.UpperLeft, Color = string.IsNullOrEmpty(previewText) ? c.TextMuted : c.TextNormal, Font = "robotocondensed-regular.ttf" },
                 RectTransform = { AnchorMin = "0.04 0.10", AnchorMax = $"0.96 {previewBodyTop:F2}" }
             }, previewPanel);
 
             container.Add(new CuiLabel
             {
-                Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color> • {ann.Date}", FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color> • {ann.Date}", FontSize = 10, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
                 RectTransform = { AnchorMin = "0.04 0.02", AnchorMax = "0.96 0.085" }
             }, previewPanel);
 
@@ -2628,20 +2628,20 @@ namespace Oxide.Plugins
             {
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = Msg("TitleRequired", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = warnColor, Font = "robotocondensed-bold.ttf" },
+                    Text = { Text = Msg("TitleRequired", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = warnColor, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.30 0.15", AnchorMax = "0.56 0.85" }
                 }, footerPanel);
             }
 
             container.Add(new CuiButton {
                 Button = { Color = "0.30 0.78 0.45 0.95", Command = "news.editor.save", FadeIn = 0.20f },
-                Text = { Text = editingExisting ? Msg("SaveChanges", player) : Msg("SaveBroadcast", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf", FadeIn = 0.20f },
+                Text = { Text = editingExisting ? Msg("SaveChanges", player) : Msg("SaveBroadcast", player), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf", FadeIn = 0.20f },
                 RectTransform = { AnchorMin = "0.58 0.15", AnchorMax = "0.97 0.85" }
             }, footerPanel);
 
             container.Add(new CuiButton {
                 Button = { Color = "1 1 1 0.06", Command = "news.editor.cancel", FadeIn = 0.20f },
-                Text = { Text = Msg("Cancel", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = "robotocondensed-bold.ttf", FadeIn = 0.20f },
+                Text = { Text = Msg("Cancel", player), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = "robotocondensed-bold.ttf", FadeIn = 0.20f },
                 RectTransform = { AnchorMin = "0.03 0.15", AnchorMax = "0.28 0.85" }
             }, footerPanel);
 
