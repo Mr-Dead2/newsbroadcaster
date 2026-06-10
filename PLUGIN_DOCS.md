@@ -31,6 +31,7 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 - Optional item rewards for reading announcements and/or liking them (once per player per announcement)
 - **Pinned announcements** — flag posts so they always sit on top of the archive and admin list
 - **Bulk admin operations** — multi-select rows, then delete / pin / unpin in one click
+- **Admin dashboard** — totals bar (posts / pinned / likes / reads), per-post type badge and like/read counts, and a one-click VIEW preview of any post as players see it
 - **API hooks** — `OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked` for integrations with other plugins
 
 ---

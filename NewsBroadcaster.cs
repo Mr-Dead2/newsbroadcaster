@@ -257,7 +257,10 @@ namespace Oxide.Plugins
                 ["TitleRequired"] = "Title is required.",
                 ["TypeLabel"] = "ANNOUNCEMENT TYPE",
                 ["NoContent"] = "(no content yet)",
-                ["CharCount"] = "{0} / {1}"
+                ["CharCount"] = "{0} / {1}",
+                ["AdminStats"] = "{0} POSTS • {1} PINNED • {2} LIKES • {3} READS",
+                ["ViewButton"] = "VIEW",
+                ["BulkHint"] = "Select rows with the checkboxes to pin, unpin or delete in bulk."
             }, this);
         }
 
@@ -2121,10 +2124,6 @@ namespace Oxide.Plugins
             var c = config.Colors;
 
             int perPage = config.General.AnnouncementsPerPage;
-            int totalPages = Mathf.CeilToInt((float)announcements.Count / perPage);
-            if (totalPages == 0) totalPages = 1;
-            if (page < 0) page = 0;
-            if (page >= totalPages) page = totalPages - 1;
 
             container.Add(new CuiPanel
             {
@@ -2137,38 +2136,52 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel
             {
                 Image = { Color = c.PanelBg, FadeIn = 0.20f },
-                RectTransform = { AnchorMin = "0.15 0.15", AnchorMax = "0.85 0.85" }
+                RectTransform = { AnchorMin = "0.14 0.12", AnchorMax = "0.86 0.88" }
             }, LayerName, mainPanel);
 
-            container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.90", AnchorMax = "1 1" } }, mainPanel);
-            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.899", AnchorMax = "1 0.901" } }, mainPanel);
+            container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.92", AnchorMax = "1 1" } }, mainPanel);
+            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.919", AnchorMax = "1 0.921" } }, mainPanel);
 
             container.Add(new CuiLabel {
                 Text = { Text = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {Msg("AdminControl", player)}", FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                RectTransform = { AnchorMin = "0.03 0.90", AnchorMax = "0.6 1" }
+                RectTransform = { AnchorMin = "0.025 0.92", AnchorMax = "0.54 1" }
             }, mainPanel);
 
             container.Add(new CuiButton {
                 Button = { Color = c.ButtonPrimary, Command = "news.admin.create" },
                 Text = { Text = Msg("NewPost", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                RectTransform = { AnchorMin = "0.75 0.92", AnchorMax = "0.88 0.98" }
+                RectTransform = { AnchorMin = "0.71 0.928", AnchorMax = "0.845 0.992" }
             }, mainPanel);
 
             container.Add(new CuiButton {
                 Button = { Color = c.ButtonSecondary, Command = "news.admin.themes" },
                 Text = { Text = Msg("Themes", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                RectTransform = { AnchorMin = "0.61 0.92", AnchorMax = "0.74 0.98" }
+                RectTransform = { AnchorMin = "0.565 0.928", AnchorMax = "0.70 0.992" }
             }, mainPanel);
 
             container.Add(new CuiButton {
                 Button = { Color = "0.8 0.2 0.2 0", Command = "news.close" },
                 Text = { Text = "✕", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
-                RectTransform = { AnchorMin = "0.94 0.90", AnchorMax = "0.99 1" }
+                RectTransform = { AnchorMin = "0.94 0.92", AnchorMax = "0.99 1" }
             }, mainPanel);
 
-            var displayList = GetDisplayOrder();
+            int totalPinned = 0, totalLikes = 0, totalReads = 0;
+            for (int i = 0; i < announcements.Count; i++)
+            {
+                var a = announcements[i];
+                if (a.Pinned) totalPinned++;
+                totalLikes += a.LikedPlayers?.Count ?? 0;
+                totalReads += a.ReadByPlayers?.Count ?? 0;
+            }
+            container.Add(new CuiLabel
+            {
+                Text = { Text = Msg("AdminStats", player, announcements.Count, totalPinned, totalLikes, totalReads), FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                RectTransform = { AnchorMin = "0.025 0.875", AnchorMax = "0.7 0.915" }
+            }, mainPanel);
+            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.04", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.871", AnchorMax = "1 0.873" } }, mainPanel);
 
-            totalPages = Mathf.CeilToInt((float)displayList.Count / perPage);
+            var displayList = GetDisplayOrder();
+            int totalPages = Mathf.CeilToInt((float)displayList.Count / perPage);
             if (totalPages == 0) totalPages = 1;
             if (page < 0) page = 0;
             if (page >= totalPages) page = totalPages - 1;
@@ -2177,8 +2190,8 @@ namespace Oxide.Plugins
             var selection = GetAdminSelection(player.userID);
             int start = page * perPage;
             int count = 0;
-            float rowHeight = 0.82f / perPage;
-            float padding = 0.01f;
+            float rowHeight = 0.715f / perPage;
+            float padding = 0.008f;
 
             if (displayList.Count == 0)
             {
@@ -2192,7 +2205,7 @@ namespace Oxide.Plugins
             for (int i = start; i < displayList.Count && count < perPage; i++)
             {
                 var ann = displayList[i];
-                float top = 0.88f - (count * rowHeight) - padding;
+                float top = 0.865f - (count * rowHeight) - padding;
                 float bottom = top - rowHeight + (padding * 2);
 
                 string itemPanel = mainPanel + $".{i}";
@@ -2203,7 +2216,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = c.ContentBg, FadeIn = adminRowFade },
-                    RectTransform = { AnchorMin = $"0.02 {bottom}", AnchorMax = $"0.98 {top}" }
+                    RectTransform = { AnchorMin = $"0.02 {bottom:F4}", AnchorMax = $"0.98 {top:F4}" }
                 }, mainPanel, itemPanel);
 
                 if (ann.Pinned)
@@ -2219,116 +2232,153 @@ namespace Oxide.Plugins
                 {
                     Button = { Color = selected ? c.ButtonPrimary : "0.2 0.2 0.2 0.9", Command = $"news.admin.toggleselect {ann.Id} {page}" },
                     Text = { Text = selected ? "✓" : "", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.005 0.2", AnchorMax = "0.04 0.8" }
+                    RectTransform = { AnchorMin = "0.008 0.28", AnchorMax = "0.036 0.72" }
                 }, itemPanel);
 
                 container.Add(new CuiPanel {
                     Image = { Color = typeColor },
-                    RectTransform = { AnchorMin = "0.045 0", AnchorMax = "0.05 1" }
+                    RectTransform = { AnchorMin = "0.046 0", AnchorMax = "0.052 1" }
                 }, itemPanel);
 
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 12, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.06 0.4", AnchorMax = "0.62 0.9" }
+                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 13, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.062 0.46", AnchorMax = "0.50 0.95" }
                 }, itemPanel);
 
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = ann.Date ?? "", FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted },
-                    RectTransform = { AnchorMin = "0.06 0.1", AnchorMax = "0.62 0.4" }
+                    Text = { Text = $"{ann.Date} • {(ann.Author ?? Msg("Unknown", player))}", FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                    RectTransform = { AnchorMin = "0.062 0.06", AnchorMax = "0.50 0.44" }
+                }, itemPanel);
+
+                container.Add(new CuiPanel { Image = { Color = typeColor }, RectTransform = { AnchorMin = "0.51 0.56", AnchorMax = "0.578 0.86" } }, itemPanel);
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = ann.Type.ToString().ToUpper(), FontSize = 8, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.51 0.56", AnchorMax = "0.578 0.86" }
+                }, itemPanel);
+
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = $"❤ {ann.LikedPlayers?.Count ?? 0}", FontSize = 10, Align = TextAnchor.MiddleLeft, Color = "0.8 0.35 0.35 1", Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.592 0.50", AnchorMax = "0.665 0.92" }
+                }, itemPanel);
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = $"✓ {ann.ReadByPlayers?.Count ?? 0}", FontSize = 10, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.592 0.08", AnchorMax = "0.665 0.50" }
+                }, itemPanel);
+
+                container.Add(new CuiButton
+                {
+                    Button = { Color = c.ButtonSecondary, Command = $"news.view {ann.Id}" },
+                    Text = { Text = Msg("ViewButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = c.TextNormal },
+                    RectTransform = { AnchorMin = "0.675 0.2", AnchorMax = "0.745 0.8" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
                 {
                     Button = { Color = ann.Pinned ? "0.95 0.70 0.20 1" : "0.35 0.35 0.4 0.9", Command = $"news.admin.togglepin {ann.Id} {page}" },
                     Text = { Text = ann.Pinned ? Msg("UnpinButton", player) : Msg("PinButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = ann.Pinned ? "0.05 0.05 0.05 1" : "1 1 1 1" },
-                    RectTransform = { AnchorMin = "0.63 0.2", AnchorMax = "0.74 0.8" }
+                    RectTransform = { AnchorMin = "0.752 0.2", AnchorMax = "0.822 0.8" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
                 {
                     Button = { Color = "0.2 0.4 0.6 0.8", Command = $"news.admin.edit {ann.Id}" },
                     Text = { Text = Msg("EditButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
-                    RectTransform = { AnchorMin = "0.75 0.2", AnchorMax = "0.85 0.8" }
+                    RectTransform = { AnchorMin = "0.829 0.2", AnchorMax = "0.899 0.8" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
                 {
                     Button = { Color = "0.6 0.2 0.2 0.8", Command = $"news.admin.delconfirm {ann.Id}" },
                     Text = { Text = Msg("DelButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
-                    RectTransform = { AnchorMin = "0.86 0.2", AnchorMax = "0.96 0.8" }
+                    RectTransform = { AnchorMin = "0.906 0.2", AnchorMax = "0.976 0.8" }
                 }, itemPanel);
 
                 count++;
             }
 
-            if (selection.Count > 0)
+            // Fixed bulk-action zone between rows and footer so it never covers the last row.
+            if (displayList.Count > 0)
             {
                 string bulkPanel = mainPanel + ".Bulk";
                 container.Add(new CuiPanel
                 {
-                    Image = { Color = "0.10 0.10 0.12 0.95" },
-                    RectTransform = { AnchorMin = "0.02 0.085", AnchorMax = "0.98 0.155" }
+                    Image = { Color = selection.Count > 0 ? "0.10 0.10 0.12 0.95" : "0 0 0 0.25" },
+                    RectTransform = { AnchorMin = "0.02 0.078", AnchorMax = "0.98 0.142" }
                 }, mainPanel, bulkPanel);
 
-                container.Add(new CuiLabel
+                if (selection.Count > 0)
                 {
-                    Text = { Text = Msg("SelectedCount", player, selection.Count), FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.02 0", AnchorMax = "0.18 1" }
-                }, bulkPanel);
+                    container.Add(new CuiLabel
+                    {
+                        Text = { Text = Msg("SelectedCount", player, selection.Count), FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.02 0", AnchorMax = "0.15 1" }
+                    }, bulkPanel);
 
-                container.Add(new CuiButton
-                {
-                    Button = { Color = "0.65 0.12 0.12 1", Command = $"news.admin.bulkdelconfirm {page}" },
-                    Text = { Text = Msg("BulkDelete", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.19 0.15", AnchorMax = "0.32 0.85" }
-                }, bulkPanel);
+                    container.Add(new CuiButton
+                    {
+                        Button = { Color = "0.65 0.12 0.12 1", Command = $"news.admin.bulkdelconfirm {page}" },
+                        Text = { Text = Msg("BulkDelete", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.16 0.15", AnchorMax = "0.29 0.85" }
+                    }, bulkPanel);
 
-                container.Add(new CuiButton
-                {
-                    Button = { Color = c.ButtonPrimary, Command = $"news.admin.bulkpin 1 {page}" },
-                    Text = { Text = Msg("BulkPin", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.33 0.15", AnchorMax = "0.46 0.85" }
-                }, bulkPanel);
+                    container.Add(new CuiButton
+                    {
+                        Button = { Color = c.ButtonPrimary, Command = $"news.admin.bulkpin 1 {page}" },
+                        Text = { Text = Msg("BulkPin", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.30 0.15", AnchorMax = "0.43 0.85" }
+                    }, bulkPanel);
 
-                container.Add(new CuiButton
-                {
-                    Button = { Color = "0.35 0.35 0.4 0.9", Command = $"news.admin.bulkpin 0 {page}" },
-                    Text = { Text = Msg("BulkUnpin", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.47 0.15", AnchorMax = "0.60 0.85" }
-                }, bulkPanel);
+                    container.Add(new CuiButton
+                    {
+                        Button = { Color = "0.35 0.35 0.4 0.9", Command = $"news.admin.bulkpin 0 {page}" },
+                        Text = { Text = Msg("BulkUnpin", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.44 0.15", AnchorMax = "0.57 0.85" }
+                    }, bulkPanel);
 
-                container.Add(new CuiButton
+                    container.Add(new CuiButton
+                    {
+                        Button = { Color = c.ButtonSecondary, Command = $"news.admin.clearsel {page}" },
+                        Text = { Text = Msg("ClearSelection", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.58 0.15", AnchorMax = "0.71 0.85" }
+                    }, bulkPanel);
+                }
+                else
                 {
-                    Button = { Color = c.ButtonSecondary, Command = $"news.admin.clearsel {page}" },
-                    Text = { Text = Msg("ClearSelection", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.61 0.15", AnchorMax = "0.74 0.85" }
-                }, bulkPanel);
+                    container.Add(new CuiLabel
+                    {
+                        Text = { Text = Msg("BulkHint", player), FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                        RectTransform = { AnchorMin = "0.02 0", AnchorMax = "0.9 1" }
+                    }, bulkPanel);
+                }
             }
 
-            container.Add(new CuiPanel { Image = { Color = c.HeaderBg }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.08" } }, mainPanel);
+            container.Add(new CuiPanel { Image = { Color = c.HeaderBg }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.07" } }, mainPanel);
 
             container.Add(new CuiButton
             {
                 Button = { Color = c.ButtonSecondary, Command = $"news.admin.selectpage {page}" },
                 Text = { Text = Msg("SelectPageToggle", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = c.TextTitle },
-                RectTransform = { AnchorMin = "0.02 0.01", AnchorMax = "0.18 0.07" }
+                RectTransform = { AnchorMin = "0.02 0.008", AnchorMax = "0.18 0.062" }
             }, mainPanel);
 
             container.Add(new CuiLabel
             {
                 Text = { Text = Msg("Page", player, page + 1, totalPages), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                RectTransform = { AnchorMin = "0.4 0", AnchorMax = "0.6 0.08" }
+                RectTransform = { AnchorMin = "0.4 0", AnchorMax = "0.6 0.07" }
             }, mainPanel);
 
             if (page > 0)
             {
-                container.Add(new CuiButton { Button = { Color = c.ButtonSecondary, Command = $"news.admin.page {page - 1}" }, Text = { Text = "< PREV", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle }, RectTransform = { AnchorMin = "0.3 0.01", AnchorMax = "0.38 0.07" } }, mainPanel);
+                container.Add(new CuiButton { Button = { Color = c.ButtonSecondary, Command = $"news.admin.page {page - 1}" }, Text = { Text = "< PREV", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle }, RectTransform = { AnchorMin = "0.28 0.008", AnchorMax = "0.385 0.062" } }, mainPanel);
             }
             if (page < totalPages - 1)
             {
-                container.Add(new CuiButton { Button = { Color = c.ButtonSecondary, Command = $"news.admin.page {page + 1}" }, Text = { Text = "NEXT >", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle }, RectTransform = { AnchorMin = "0.62 0.01", AnchorMax = "0.7 0.07" } }, mainPanel);
+                container.Add(new CuiButton { Button = { Color = c.ButtonSecondary, Command = $"news.admin.page {page + 1}" }, Text = { Text = "NEXT >", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextTitle }, RectTransform = { AnchorMin = "0.615 0.008", AnchorMax = "0.72 0.062" } }, mainPanel);
             }
 
             CuiHelper.AddUi(player, container);
