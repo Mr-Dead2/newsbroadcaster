@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.1")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.5")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -43,11 +43,18 @@ namespace Oxide.Plugins
         private Dictionary<ulong, int> historyContentScrollOffsets = new Dictionary<ulong, int>();
         private Dictionary<ulong, ReadRewardState> readRewardTimers = new Dictionary<ulong, ReadRewardState>();
         private Dictionary<ulong, HashSet<string>> adminSelections = new Dictionary<ulong, HashSet<string>>();
+
+        private Timer pendingSaveTimer;
+        private readonly Dictionary<string, string> hexColorCache = new Dictionary<string, string>(StringComparer.Ordinal);
+        private string cachedWrapText;
+        private int cachedWrapWidth = -1;
+        private List<string> cachedWrapLines;
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 22;
         private const int BodyWrapCharacters = 58;
         private const int BodyWrapCharactersImage = 34;
+        private const int EditorPreviewWrapCharacters = 44;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
 
@@ -244,7 +251,13 @@ namespace Oxide.Plugins
                 ["BulkDeleteBody"] = "Delete {0} announcement(s)?\nThis cannot be undone.",
                 ["BulkDeleted"] = "Deleted {0} announcement(s).",
                 ["BulkPinned"] = "Pinned {0} announcement(s).",
-                ["BulkUnpinned"] = "Unpinned {0} announcement(s)."
+                ["BulkUnpinned"] = "Unpinned {0} announcement(s).",
+                ["LivePreview"] = "LIVE PREVIEW",
+                ["SaveChanges"] = "✔ SAVE CHANGES",
+                ["TitleRequired"] = "Title is required.",
+                ["TypeLabel"] = "ANNOUNCEMENT TYPE",
+                ["NoContent"] = "(no content yet)",
+                ["CharCount"] = "{0} / {1}"
             }, this);
         }
 
@@ -263,13 +276,33 @@ namespace Oxide.Plugins
             value = value.Replace("\\n", "\n").Replace("/n", "\n");
             value = LinkRegex.Replace(value, string.Empty);
 
-            while (value.Contains("  "))
-                value = value.Replace("  ", " ");
+            var sb = new System.Text.StringBuilder(value.Length);
+            int newlineRun = 0;
+            bool lastWasSpace = false;
+            foreach (char ch in value)
+            {
+                if (ch == '\n')
+                {
+                    newlineRun++;
+                    lastWasSpace = false;
+                    if (newlineRun <= 2) sb.Append('\n');
+                    continue;
+                }
+                newlineRun = 0;
 
-            while (value.Contains("\n\n\n"))
-                value = value.Replace("\n\n\n", "\n\n");
+                if (ch == ' ')
+                {
+                    if (lastWasSpace) continue;
+                    lastWasSpace = true;
+                }
+                else
+                {
+                    lastWasSpace = false;
+                }
+                sb.Append(ch);
+            }
 
-            return value.Trim();
+            return sb.ToString().Trim();
         }
 
         private int BodyWrapFor(Announcement ann)
@@ -319,9 +352,20 @@ namespace Oxide.Plugins
             return lines;
         }
 
+        private List<string> GetBodyDisplayLines(string text, int wrapChars)
+        {
+            if (cachedWrapLines != null && cachedWrapWidth == wrapChars && string.Equals(cachedWrapText, text, StringComparison.Ordinal))
+                return cachedWrapLines;
+
+            cachedWrapLines = BuildBodyDisplayLines(text, wrapChars);
+            cachedWrapText = text;
+            cachedWrapWidth = wrapChars;
+            return cachedWrapLines;
+        }
+
         private string GetVisibleBodySlice(string text, int offset, int wrapChars = BodyWrapCharacters)
         {
-            var lines = BuildBodyDisplayLines(text, wrapChars);
+            var lines = GetBodyDisplayLines(text, wrapChars);
             offset = ClampBodyOffset(text, offset, wrapChars);
             int take = Math.Min(BodyVisibleLineCount, Math.Max(0, lines.Count - offset));
             return string.Join("\n", lines.Skip(offset).Take(take).ToArray());
@@ -329,7 +373,7 @@ namespace Oxide.Plugins
 
         private int GetBodyMaxOffset(string text, int wrapChars = BodyWrapCharacters)
         {
-            var lines = BuildBodyDisplayLines(text, wrapChars);
+            var lines = GetBodyDisplayLines(text, wrapChars);
             return Math.Max(0, lines.Count - BodyVisibleLineCount);
         }
 
@@ -343,7 +387,7 @@ namespace Oxide.Plugins
 
         private bool CanScrollBody(string text, int wrapChars = BodyWrapCharacters)
         {
-            return BuildBodyDisplayLines(text, wrapChars).Count > BodyVisibleLineCount;
+            return GetBodyDisplayLines(text, wrapChars).Count > BodyVisibleLineCount;
         }
 
         private static string NewAnnouncementId() => Guid.NewGuid().ToString("N");
@@ -610,8 +654,27 @@ namespace Oxide.Plugins
                 ImageLibrary.Call("ImportImageList", Title, imageUrls, 0UL, true);
         }
 
+        // Debounced save for per-player tracking churn (last-seen, likes, read marks);
+        // structural changes (post/edit/delete/pin) still call SaveAnnouncements directly.
+        private void QueueSave()
+        {
+            if (pendingSaveTimer != null && !pendingSaveTimer.Destroyed) return;
+            pendingSaveTimer = timer.Once(5f, SaveAnnouncements);
+        }
+
+        private void FlushPendingSave()
+        {
+            if (pendingSaveTimer != null && !pendingSaveTimer.Destroyed)
+                SaveAnnouncements();
+        }
+
+        void OnServerSave() => FlushPendingSave();
+
         private void SaveAnnouncements()
         {
+            pendingSaveTimer?.Destroy();
+            pendingSaveTimer = null;
+
             if (storedData.Announcements.Count > config.General.MaxStoredAnnouncements)
                 storedData.Announcements = storedData.Announcements.OrderByDescending(x => x.Timestamp).Take(config.General.MaxStoredAnnouncements).ToList();
 
@@ -715,12 +778,14 @@ namespace Oxide.Plugins
                 var current = announcements[0];
                 ShowPopup(player, current, false);
                 storedData.LastSeenNews[player.userID] = current.Timestamp;
-                SaveAnnouncements();
+                QueueSave();
             });
         }
 
         void Unload()
         {
+            FlushPendingSave();
+
             foreach (var player in BasePlayer.activePlayerList)
             {
                 DestroyUI(player);
@@ -948,6 +1013,12 @@ namespace Oxide.Plugins
         {
             var player = arg.Connection?.player as BasePlayer;
             if (player == null) return;
+
+            if (!permission.UserHasPermission(player.UserIDString, PermView))
+            {
+                SendReply(player, Msg("NoPermissionView", player));
+                return;
+            }
 
             int page = arg.GetInt(0, 0);
             ShowHistory(player, page);
@@ -1263,6 +1334,10 @@ namespace Oxide.Plugins
                 value = string.Join(" ", arg.Args.Skip(1));
             }
 
+            // CharsLimit on the input field is client-side only; enforce it here too.
+            if (value.Length > MaxContentChars)
+                value = value.Substring(0, MaxContentChars);
+
             var ann = activeEditors[player.userID];
             switch (field)
             {
@@ -1290,6 +1365,21 @@ namespace Oxide.Plugins
             ShowEditor(player);
         }
 
+        [ConsoleCommand("news.editor.settype")]
+        private void CmdEditorSetType(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Connection?.player as BasePlayer;
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin)) return;
+            if (!activeEditors.TryGetValue(player.userID, out var ann)) return;
+
+            int value = arg.GetInt(0, -1);
+            if (value < 0 || value >= Enum.GetValues(typeof(AnnouncementType)).Length) return;
+
+            ann.Type = (AnnouncementType)value;
+            ShowEditor(player);
+        }
+
         [ConsoleCommand("news.editor.save")]
         private void CmdEditorSave(ConsoleSystem.Arg arg)
         {
@@ -1299,6 +1389,14 @@ namespace Oxide.Plugins
             if (!activeEditors.ContainsKey(player.userID)) return;
 
             var ann = activeEditors[player.userID];
+            ann.Title = ann.Title?.Trim();
+            if (string.IsNullOrEmpty(ann.Title))
+            {
+                ShowEditor(player, titleMissing: true);
+                return;
+            }
+
+            ann.ImageUrl = ann.ImageUrl?.Trim();
             ann.Text = NormalizeBodyText(ann.Text);
             activeEditorIds.TryGetValue(player.userID, out string editingId);
             bool isNew = string.IsNullOrEmpty(editingId);
@@ -1317,9 +1415,14 @@ namespace Oxide.Plugins
                 int idx = FindIndexById(editingId);
                 if (idx >= 0)
                 {
-                    ann.Id = editingId;
-                    announcements[idx] = ann;
-                    Interface.CallHook("OnNewsEdited", BuildHookData(ann));
+                    // Apply edited content onto the stored announcement so Pinned and
+                    // the read/like reward tracking sets survive the edit.
+                    var target = announcements[idx];
+                    target.Title = ann.Title;
+                    target.ImageUrl = ann.ImageUrl;
+                    target.Text = ann.Text;
+                    target.Type = ann.Type;
+                    Interface.CallHook("OnNewsEdited", BuildHookData(target));
                 }
                 else
                 {
@@ -1396,7 +1499,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            SaveAnnouncements();
+            QueueSave();
             Interface.CallHook("OnNewsLiked", player, BuildHookData(ann), addedLike);
             ShowPopup(player, ann, true, false);
         }
@@ -1701,7 +1804,7 @@ namespace Oxide.Plugins
                     }
                 }
 
-                var allLines = BuildBodyDisplayLines(ann.Text, bodyWrap);
+                var allLines = GetBodyDisplayLines(ann.Text, bodyWrap);
                 float windowRatio = allLines.Count <= 0 ? 1f : Mathf.Clamp((float)BodyVisibleLineCount / allLines.Count, 0.12f, 0.90f);
                 float trackH      = trackTop - trackBottom;
                 float handleH     = trackH * windowRatio;
@@ -1989,15 +2092,22 @@ namespace Oxide.Plugins
 
         private string RgbaToHex(string rgba)
         {
+            if (string.IsNullOrEmpty(rgba)) return "#FFFFFF";
+            if (hexColorCache.TryGetValue(rgba, out var cached)) return cached;
+
+            string hex;
             try
             {
                 var parts = rgba.Split(' ');
                 int r = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[0], CultureInfo.InvariantCulture) * 255), 0, 255);
                 int g = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[1], CultureInfo.InvariantCulture) * 255), 0, 255);
                 int b = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[2], CultureInfo.InvariantCulture) * 255), 0, 255);
-                return $"#{r:X2}{g:X2}{b:X2}";
+                hex = $"#{r:X2}{g:X2}{b:X2}";
             }
-            catch { return "#FFFFFF"; }
+            catch { hex = "#FFFFFF"; }
+
+            hexColorCache[rgba] = hex;
+            return hex;
         }
         #endregion
 
@@ -2224,7 +2334,7 @@ namespace Oxide.Plugins
             CuiHelper.AddUi(player, container);
         }
 
-        private void ShowEditor(BasePlayer player)
+        private void ShowEditor(BasePlayer player, bool titleMissing = false)
         {
             if (!activeEditors.ContainsKey(player.userID)) return;
             var ann = activeEditors[player.userID];
@@ -2234,6 +2344,7 @@ namespace Oxide.Plugins
 
             var container = new CuiElementContainer();
             var c = config.Colors;
+            const string warnColor = "0.95 0.45 0.40 1";
 
             container.Add(new CuiPanel
             {
@@ -2243,77 +2354,167 @@ namespace Oxide.Plugins
             }, "Overlay", LayerName);
 
             string editorPanel = LayerName + ".Editor";
-            container.Add(new CuiPanel { Image = { Color = c.PanelBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.2 0.2", AnchorMax = "0.8 0.8" } }, LayerName, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = c.PanelBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.16 0.16", AnchorMax = "0.84 0.84" } }, LayerName, editorPanel);
 
-            container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.9", AnchorMax = "1 1" } }, editorPanel);
-            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.899", AnchorMax = "1 0.901" } }, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.91", AnchorMax = "1 1" } }, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.909", AnchorMax = "1 0.911" } }, editorPanel);
             bool editingExisting = activeEditorIds.TryGetValue(player.userID, out string editingId) && !string.IsNullOrEmpty(editingId);
-            container.Add(new CuiLabel { Text = { Text = editingExisting ? Msg("EditAnnouncement", player) : Msg("CreateAnnouncement", player), FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.9", AnchorMax = "0.9 1" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = editingExisting ? Msg("EditAnnouncement", player) : Msg("CreateAnnouncement", player), FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.91", AnchorMax = "0.9 1" } }, editorPanel);
 
             container.Add(new CuiButton {
                 Button = { Color = "0 0 0 0", Command = "news.editor.cancel" },
                 Text = { Text = "✕", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
-                RectTransform = { AnchorMin = "0.94 0.9", AnchorMax = "0.99 1" }
+                RectTransform = { AnchorMin = "0.94 0.91", AnchorMax = "0.99 1" }
             }, editorPanel);
 
-            container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementTitle", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.81", AnchorMax = "0.95 0.88" } }, editorPanel);
-            container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.05 0.75", AnchorMax = "0.95 0.81" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementTitle", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = titleMissing ? warnColor : c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.845", AnchorMax = "0.52 0.89" } }, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = titleMissing ? "0.45 0.10 0.10 0.55" : "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.785", AnchorMax = "0.52 0.845" } }, editorPanel);
             container.Add(new CuiElement
             {
                 Parent = editorPanel,
                 Components =
                 {
-                    new CuiInputFieldComponent { Text = ann.Title, FontSize = 12, Align = TextAnchor.MiddleLeft, Command = "news.editor.input title", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
-                    new CuiRectTransformComponent { AnchorMin = "0.06 0.75", AnchorMax = "0.94 0.81" }
+                    new CuiInputFieldComponent { Text = ann.Title ?? "", FontSize = 12, Align = TextAnchor.MiddleLeft, Command = "news.editor.input title", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
+                    new CuiRectTransformComponent { AnchorMin = "0.04 0.785", AnchorMax = "0.51 0.845" }
                 }
             });
 
-            container.Add(new CuiLabel { Text = { Text = Msg("ImageUrl", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.69", AnchorMax = "0.95 0.75" } }, editorPanel);
-            container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.05 0.63", AnchorMax = "0.95 0.69" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("ImageUrl", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.715", AnchorMax = "0.52 0.76" } }, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.655", AnchorMax = "0.52 0.715" } }, editorPanel);
             container.Add(new CuiElement
             {
                 Parent = editorPanel,
                 Components =
                 {
                     new CuiInputFieldComponent { Text = ann.ImageUrl ?? "", FontSize = 12, Align = TextAnchor.MiddleLeft, Command = "news.editor.input image", Color = "1 1 1 1", NeedsKeyboard = true,  CharsLimit = MaxContentChars },
-                    new CuiRectTransformComponent { AnchorMin = "0.06 0.63", AnchorMax = "0.94 0.69" }
+                    new CuiRectTransformComponent { AnchorMin = "0.04 0.655", AnchorMax = "0.51 0.715" }
                 }
             });
 
-            container.Add(new CuiLabel { Text = { Text = Msg("AnnouncementType", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.57", AnchorMax = "0.95 0.63" } }, editorPanel);
-            container.Add(new CuiButton {
-                Button = { Color = GetTypeColor(ann.Type), Command = "news.editor.type" },
-                Text = { Text = $"◀  {ann.Type.ToString().ToUpper()}  ▶", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                RectTransform = { AnchorMin = "0.05 0.51", AnchorMax = "0.45 0.57" }
-            }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("TypeLabel", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.585", AnchorMax = "0.52 0.63" } }, editorPanel);
 
-            container.Add(new CuiLabel { Text = { Text = Msg("ContentBody", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.05 0.45", AnchorMax = "0.95 0.51" } }, editorPanel);
-            container.Add(new CuiLabel { Text = { Text = Msg("ContentBodyHint", player), FontSize = 9, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" }, RectTransform = { AnchorMin = "0.36 0.45", AnchorMax = "0.95 0.51" } }, editorPanel);
-            container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.05 0.14", AnchorMax = "0.95 0.45" } }, editorPanel);
+            var typeValues = (AnnouncementType[])Enum.GetValues(typeof(AnnouncementType));
+            float typeSlot = 0.49f / typeValues.Length;
+            for (int ti = 0; ti < typeValues.Length; ti++)
+            {
+                var t = typeValues[ti];
+                bool isSelected = ann.Type == t;
+                float typeMin = 0.03f + ti * typeSlot;
+                float typeMax = typeMin + typeSlot - 0.006f;
+                container.Add(new CuiButton
+                {
+                    Button = { Color = isSelected ? GetTypeColor(t) : c.ButtonSecondary, Command = $"news.editor.settype {(int)t}" },
+                    Text = { Text = t.ToString().ToUpper(), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = isSelected ? "1 1 1 1" : c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = $"{typeMin:F3} 0.525", AnchorMax = $"{typeMax:F3} 0.585" }
+                }, editorPanel);
+            }
+
+            container.Add(new CuiLabel { Text = { Text = Msg("ContentBody", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.03 0.455", AnchorMax = "0.30 0.50" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("CharCount", player, (ann.Text ?? "").Length, MaxContentChars), FontSize = 9, Align = TextAnchor.LowerRight, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" }, RectTransform = { AnchorMin = "0.30 0.455", AnchorMax = "0.52 0.50" } }, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = "0 0 0 0.45", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.03 0.135", AnchorMax = "0.52 0.455" } }, editorPanel);
             container.Add(new CuiElement
             {
                 Parent = editorPanel,
                 Components =
                 {
                     new CuiInputFieldComponent { Text = ann.Text ?? "", FontSize = 12, Align = TextAnchor.UpperLeft, Command = "news.editor.input text", Color = "1 1 1 1", NeedsKeyboard = true, CharsLimit = MaxContentChars, LineType = UnityEngine.UI.InputField.LineType.MultiLineNewline },
-                    new CuiRectTransformComponent { AnchorMin = "0.06 0.15", AnchorMax = "0.94 0.44" }
+                    new CuiRectTransformComponent { AnchorMin = "0.04 0.145", AnchorMax = "0.51 0.445" }
                 }
             });
+            container.Add(new CuiLabel { Text = { Text = Msg("ContentBodyHint", player), FontSize = 8, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" }, RectTransform = { AnchorMin = "0.03 0.103", AnchorMax = "0.52 0.133" } }, editorPanel);
+
+            container.Add(new CuiLabel { Text = { Text = Msg("LivePreview", player), FontSize = 10, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.55 0.845", AnchorMax = "0.97 0.89" } }, editorPanel);
+
+            string previewPanel = editorPanel + ".Preview";
+            container.Add(new CuiPanel { Image = { Color = c.ContentBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.55 0.135", AnchorMax = "0.97 0.845" } }, editorPanel, previewPanel);
+
+            string typeColor = GetTypeColor(ann.Type);
+            container.Add(new CuiPanel { Image = { Color = typeColor }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0.012 1" } }, previewPanel);
+
+            container.Add(new CuiPanel { Image = { Color = typeColor }, RectTransform = { AnchorMin = "0.76 0.925", AnchorMax = "0.97 0.985" } }, previewPanel);
+            container.Add(new CuiLabel { Text = { Text = ann.Type.ToString().ToUpper(), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.76 0.925", AnchorMax = "0.97 0.985" } }, previewPanel);
+
+            container.Add(new CuiLabel { Text = { Text = (ann.Title ?? "").ToUpper(), FontSize = 15, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.85", AnchorMax = "0.74 0.97" } }, previewPanel);
+            container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0.04 0.835", AnchorMax = "0.30 0.843" } }, previewPanel);
+
+            bool hasPreviewImage = !string.IsNullOrEmpty(ann.ImageUrl);
+            float previewBodyTop = 0.80f;
+            if (hasPreviewImage)
+            {
+                string previewImgPanel = previewPanel + ".Img";
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = "0 0 0 0.3" },
+                    RectTransform = { AnchorMin = "0.04 0.50", AnchorMax = "0.96 0.80" }
+                }, previewPanel, previewImgPanel);
+
+                var previewImgComp = new CuiRawImageComponent { Color = "1 1 1 1" };
+                string previewImgId = GetImage(ann.ImageUrl);
+                if (!string.IsNullOrEmpty(previewImgId))
+                    previewImgComp.Png = previewImgId;
+                else
+                    previewImgComp.Url = ann.ImageUrl;
+
+                container.Add(new CuiElement
+                {
+                    Parent = previewImgPanel,
+                    Components =
+                    {
+                        previewImgComp,
+                        new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" }
+                    }
+                });
+                previewBodyTop = 0.47f;
+            }
+
+            string previewText = NormalizeBodyText(ann.Text);
+            string previewBody;
+            if (string.IsNullOrEmpty(previewText))
+            {
+                previewBody = Msg("NoContent", player);
+            }
+            else
+            {
+                var previewLines = BuildBodyDisplayLines(previewText, EditorPreviewWrapCharacters);
+                int previewMaxLines = hasPreviewImage ? 9 : 16;
+                previewBody = string.Join("\n", previewLines.Take(previewMaxLines).ToArray());
+                if (previewLines.Count > previewMaxLines) previewBody += "\n…";
+            }
+            container.Add(new CuiLabel
+            {
+                Text = { Text = previewBody, FontSize = 11, Align = TextAnchor.UpperLeft, Color = string.IsNullOrEmpty(previewText) ? c.TextMuted : c.TextNormal, Font = "robotocondensed-regular.ttf" },
+                RectTransform = { AnchorMin = "0.04 0.10", AnchorMax = $"0.96 {previewBodyTop:F2}" }
+            }, previewPanel);
+
+            container.Add(new CuiLabel
+            {
+                Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color> • {ann.Date}", FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                RectTransform = { AnchorMin = "0.04 0.02", AnchorMax = "0.96 0.085" }
+            }, previewPanel);
 
             string footerPanel = editorPanel + ".Footer";
-            container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.12" } }, editorPanel, footerPanel);
-            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.119", AnchorMax = "1 0.121" } }, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.10" } }, editorPanel, footerPanel);
+            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.099", AnchorMax = "1 0.101" } }, editorPanel);
+
+            if (titleMissing)
+            {
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = Msg("TitleRequired", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = warnColor, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.30 0.15", AnchorMax = "0.56 0.85" }
+                }, footerPanel);
+            }
 
             container.Add(new CuiButton {
                 Button = { Color = "0.30 0.78 0.45 0.95", Command = "news.editor.save", FadeIn = 0.20f },
-                Text = { Text = Msg("SaveBroadcast", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf", FadeIn = 0.20f },
-                RectTransform = { AnchorMin = "0.55 0.15", AnchorMax = "0.95 0.85" }
+                Text = { Text = editingExisting ? Msg("SaveChanges", player) : Msg("SaveBroadcast", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf", FadeIn = 0.20f },
+                RectTransform = { AnchorMin = "0.58 0.15", AnchorMax = "0.97 0.85" }
             }, footerPanel);
 
             container.Add(new CuiButton {
                 Button = { Color = c.ButtonSecondary, Command = "news.editor.cancel", FadeIn = 0.20f },
                 Text = { Text = Msg("Cancel", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = "robotocondensed-bold.ttf", FadeIn = 0.20f },
-                RectTransform = { AnchorMin = "0.05 0.15", AnchorMax = "0.45 0.85" }
+                RectTransform = { AnchorMin = "0.03 0.15", AnchorMax = "0.28 0.85" }
             }, footerPanel);
 
             CuiHelper.AddUi(player, container);
@@ -2533,24 +2734,36 @@ namespace Oxide.Plugins
             }, mainPanel);
 
             int count = 0;
-            float buttonHeight = 0.12f;
-            float startY = 0.8f;
+            const float buttonHeight = 0.11f;
+            const float buttonGap = 0.02f;
+            const float startY = 0.84f;
 
-            foreach (var themeName in config.Themes.Keys)
+            foreach (var themeEntry in config.Themes)
             {
+                string themeName = themeEntry.Key;
+                var theme = themeEntry.Value ?? new UIColors();
                 bool isSelected = config.SelectedTheme == themeName;
                 string buttonColor = isSelected ? c.ButtonPrimary : c.ButtonSecondary;
                 float themeFade = 0.20f + count * 0.04f;
 
-                float top = startY - (count * (buttonHeight + 0.02f));
+                float top = startY - (count * (buttonHeight + buttonGap));
                 float bottom = top - buttonHeight;
+                if (bottom < 0.02f) break;
 
                 container.Add(new CuiButton
                 {
                     Button = { Color = buttonColor, Command = $"news.admin.settheme \"{themeName}\"", FadeIn = themeFade },
                     Text = { Text = themeName.ToUpper() + (isSelected ? $"  {Msg("Active", player)}" : ""), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = isSelected ? "1 1 1 1" : c.TextNormal, Font = "robotocondensed-bold.ttf", FadeIn = themeFade },
-                    RectTransform = { AnchorMin = $"0.1 {bottom}", AnchorMax = $"0.9 {top}" }
+                    RectTransform = { AnchorMin = $"0.1 {bottom:F3}", AnchorMax = $"0.78 {top:F3}" }
                 }, mainPanel);
+
+                float swatchMid = bottom + buttonHeight / 2f;
+                float swatchHalf = buttonHeight * 0.30f;
+                string swatchMin = $"{swatchMid - swatchHalf:F3}";
+                string swatchMax = $"{swatchMid + swatchHalf:F3}";
+                container.Add(new CuiPanel { Image = { Color = theme.PanelBg, FadeIn = themeFade }, RectTransform = { AnchorMin = $"0.795 {swatchMin}", AnchorMax = $"0.825 {swatchMax}" } }, mainPanel);
+                container.Add(new CuiPanel { Image = { Color = theme.ButtonPrimary, FadeIn = themeFade }, RectTransform = { AnchorMin = $"0.835 {swatchMin}", AnchorMax = $"0.865 {swatchMax}" } }, mainPanel);
+                container.Add(new CuiPanel { Image = { Color = theme.ContentBg, FadeIn = themeFade }, RectTransform = { AnchorMin = $"0.875 {swatchMin}", AnchorMax = $"0.905 {swatchMax}" } }, mainPanel);
 
                 count++;
             }
@@ -2668,7 +2881,7 @@ namespace Oxide.Plugins
                 bool grantReward = config.Rewards != null && config.Rewards.EnableReadReward
                                    && current.ReadRewardedPlayers.Add(userId);
 
-                if (firstRead || grantReward) SaveAnnouncements();
+                if (firstRead || grantReward) QueueSave();
                 if (firstRead) Interface.CallHook("OnNewsRead", player, BuildHookData(current));
                 if (grantReward) GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
             });

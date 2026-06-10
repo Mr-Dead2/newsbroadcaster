@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.1.4  
+**Version:** 1.1.5  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -17,13 +17,13 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 
 ## Features
 
-- Full-featured in-game announcement editor (create / edit / delete via UI)
+- Full-featured in-game announcement editor (create / edit / delete via UI) with a live preview pane and one-click type selection
 - Archive list with paged navigation
 - Per-announcement like/heart button for players
 - Scrollable long-form content body with page indicator
 - Auto-close timer for pop-ups
 - "Show on connect" — shows the latest unseen announcement to joining players
-- 4 built-in UI themes (Default, Dark, Ocean, Rust) — switchable in-game
+- 6 built-in UI themes (Default, Dark, Ocean, Rust, Midnight, Forest) — switchable in-game with per-theme color swatches
 - Discord webhook integration with embed colours per announcement type
 - Sound effect on notification
 - ImageLibrary support for image caching
@@ -131,22 +131,21 @@ All UI-driven commands address announcements by their stable `Id` (a hex GUID as
 | `news.admin.themes` | Open the theme selector UI |
 | `news.admin.settheme "ThemeName"` | Apply a theme |
 | `news.editor.input <field> <value>` | Update a field in the editor (`title` / `image` / `text`) |
-| `news.editor.type` | Cycle the announcement type in the editor |
-| `news.editor.save` | Save and broadcast the edited/new announcement |
+| `news.editor.type` | Cycle the announcement type in the editor (legacy; the editor now uses direct type buttons) |
+| `news.editor.settype <0-4>` | Set the announcement type directly (used by the editor's type buttons) |
+| `news.editor.save` | Save and broadcast the edited/new announcement (requires a non-empty title) |
 | `news.editor.cancel` | Cancel editing and return to admin list |
 | `news.confirm.close` | Dismiss the delete-confirmation dialog |
 
 ### Body scrollbar
 
-Long announcements use a paged scrollbar with four navigation buttons and a clickable track:
+Long announcements use a paged scrollbar with two navigation buttons and a clickable track:
 
 | Button | Action |
 |---|---|
-| `▲▲` | Page up (jumps a full visible page) |
-| `▲` | Line up (one line) |
-| Track click | Jumps to the clicked position (14 zones) |
-| `▼` | Line down (one line) |
-| `▼▼` | Page down (jumps a full visible page) |
+| `▲` | Page up (jumps a full visible page) |
+| Track click | Jumps to the clicked position (16 zones) |
+| `▼` | Page down (jumps a full visible page) |
 
 The handle height visually reflects the visible-window-to-content ratio.
 
@@ -429,183 +428,24 @@ Stores all announcements and per-player last-seen timestamps. The plugin handles
 
 All UI strings are registered in Oxide's lang system and can be overridden per language in `oxide/lang/<lang>/NewsBroadcaster.json`.
 
-Default keys: `NoPermissionCommand`, `NoPermissionView`, `NoNewsHistory`, `NewsBroadcasted`, `ArchiveTitle`, `ReadMore`, `ViewArchive`, `PostedBy`, `NewAnnouncement`, `Close`, `Previous`, `Next`, `Page`, `AdminControl`, `NewPost`, `Themes`, `NoAnnouncementsYet`, `CreateAnnouncement`, `EditAnnouncement`, `AnnouncementTitle`, `ImageUrl`, `AnnouncementType`, `ContentBody`, `ContentBodyHint`, `SaveBroadcast`, `Cancel`, `SelectTheme`, `Active`, `Unknown`.
+Default keys: `NoPermissionCommand`, `NoPermissionView`, `NoNewsHistory`, `NewsBroadcasted`, `ArchiveTitle`, `ReadMore`, `ViewArchive`, `PostedBy`, `NewAnnouncement`, `Close`, `Previous`, `Next`, `Page`, `AdminControl`, `NewPost`, `Themes`, `NoAnnouncementsYet`, `CreateAnnouncement`, `EditAnnouncement`, `AnnouncementTitle`, `ImageUrl`, `AnnouncementType`, `ContentBody`, `ContentBodyHint`, `SaveBroadcast`, `Cancel`, `SelectTheme`, `Active`, `Unknown`, `EditButton`, `DelButton`, `DeleteAnnouncement`, `DeleteConfirmBody`, `ConfirmDelete`, `EditTargetGone`, `AnnouncementSavedNew`, `AnnouncementUpdated`, `RewardRead`, `RewardLike`, `PinButton`, `UnpinButton`, `PinnedBadge`, `SelectedCount`, `BulkDelete`, `BulkPin`, `BulkUnpin`, `ClearSelection`, `SelectPageToggle`, `BulkDeleteTitle`, `BulkDeleteBody`, `BulkDeleted`, `BulkPinned`, `BulkUnpinned`, `LivePreview`, `SaveChanges`, `TitleRequired`, `TypeLabel`, `NoContent`, `CharCount`.
 
 ---
 
-## Code Review — Issues & Suggestions
+## Behavior Notes
 
-### Bugs
-
-#### 1. Notification toast always opens announcement index 0
-**File:** `NewsBroadcaster.cs:959`  
-The notification click button hardcodes `Command = "news.view 0"`, so clicking any toast always opens the first (newest) announcement — not the one that was actually broadcasted.
-
-**Fix:** Determine the index of `ann` before building the container and use `$"news.view {announcementIndex}"`.
+- **URLs are stripped from body text.** `NormalizeBodyText` removes `http(s)://` and `www.` links from announcement bodies on save — both for the console command (`news.show`) and the in-game editor. Links belong in the image URL field or in Discord, not in the CUI body.
+- **Editing never re-notifies players.** Only newly created announcements trigger the notification toast / popup broadcast. Edits also preserve the announcement's pinned state, likes, and read/like reward tracking.
+- **Dates are server-local; ordering is UTC.** `Date` (display) uses the server's local clock; `Timestamp` (sorting, last-seen tracking) uses UTC ticks.
+- **Per-player tracking writes are debounced.** Last-seen markers, likes, and read marks are flushed to the data file a few seconds after they change (and on plugin unload / server save). Structural changes (post, edit, delete, pin) are saved immediately.
 
 ---
 
-#### 2. `news.delete` references unimplemented `news.list`
-**File:** `NewsBroadcaster.cs:622`  
-The error message says `"Invalid index. Use 'news.list' (not implemented, check data file)..."` which is confusing.
+## Known Limitations & Ideas
 
-**Fix:** Implement `news.list` (see Missing Features below) or remove the reference.
-
----
-
-#### 3. Edit broadcast spams all players for edits
-**File:** `NewsBroadcaster.cs:869–875`  
-`CmdEditorSave` sends a notification/popup to every online player whether the post is new (`index == -1`) **or an edit** (`index >= 0`). Editing an old announcement should not re-notify all players.
-
-**Fix:** Only broadcast when `index == -1`.
-
-```csharp
-if (index == -1)
-{
-    foreach (var p in BasePlayer.activePlayerList)
-    {
-        if (config.Notification.Enabled)
-            ShowNotification(p, ann);
-        else
-            ShowPopup(p, ann, false, true);
-    }
-}
-```
-
----
-
-#### 4. `LikedPlayers` edited by reference on edit
-**File:** `NewsBroadcaster.cs:758`  
-`LikedPlayers = original.LikedPlayers` copies the reference. If `announcements[index]` is later replaced with the edited copy, both objects share the same `HashSet`. This is harmless today, but is a subtle bug waiting to surface.
-
-**Fix:** `LikedPlayers = new HashSet<ulong>(original.LikedPlayers)`
-
----
-
-#### 5. `ShowPopup` mutates the stored announcement object
-**File:** `NewsBroadcaster.cs:1018`  
-`ann.Text = NormalizeBodyText(ann.Text);` is called inside `ShowPopup` on whatever `ann` reference is passed in. For stored announcements this results in a harmless double-normalization, but it is a side effect that makes the method impure.
-
-**Fix:** Normalize text only on write (which already happens in `CmdEditorSave` / `CmdNewsShow`). Remove the mutation from `ShowPopup`.
-
----
-
-### Memory Leaks
-
-#### 6. Per-player dictionaries never cleaned up on disconnect
-**File:** `NewsBroadcaster.cs:39–40`  
-`historyContentScrollOffsets`, `activeEditors`, `activeEditorIndices`, `autoCloseTimers`, and `notificationTimers` are indexed by `ulong userID` but are never cleaned up when a player disconnects.
-
-**Fix:** Add an `OnPlayerDisconnected` hook:
-
-```csharp
-void OnPlayerDisconnected(BasePlayer player, string reason)
-{
-    historyContentScrollOffsets.Remove(player.userID);
-    activeEditors.Remove(player.userID);
-    activeEditorIndices.Remove(player.userID);
-    // autoCloseTimers and notificationTimers are already cleaned in DestroyUI/DestroyNotification
-}
-```
-
----
-
-### Security / Permission
-
-#### 7. `news.admin.page` silently ignores unauthorized access
-**File:** `NewsBroadcaster.cs:712–715`  
-Unlike other admin commands, `CmdNewsAdminPage` checks permission but does not send a reply when denied — it just returns silently. This is inconsistent.
-
-**Fix:** Add `SendReply(arg, Msg("NoPermissionCommand"));` before the return.
-
----
-
-#### 8. URL stripping in `news.show` body is undocumented and silent
-**File:** `NewsBroadcaster.cs:523`  
-`text = Regex.Replace(text, @"https?:\/\/[^\s]+", "").Trim();` strips all URLs from body text posted via the console command. This is not mentioned in any help text, so admins pasting content with links will silently lose those links.
-
-**Fix:** Either document this behavior in the usage reply, or remove the stripping and let admins post URLs freely (the UI editor does not strip URLs, so the behavior is already inconsistent).
-
----
-
-### Missing Features
-
-#### 9. `news.list` console command
-The admin `news.delete` error message references it, and it is a natural companion to the other console commands.
-
-**Suggested implementation:** Print a numbered list of all announcements with title and date to the console/RCON caller.
-
----
-
-#### 10. `OnPlayerDisconnected` cleanup (also listed as bug above)
-Required to prevent unbounded memory growth on high-population servers.
-
----
-
-#### 11. Delete confirmation in admin UI
-Currently clicking `DEL` in the admin panel deletes immediately with no confirmation dialog. A misclick destroys an announcement.
-
-**Suggestion:** Add a small confirmation panel (`"Are you sure? [YES] [NO]"`) before executing `news.admin.del`.
-
----
-
-#### 12. `news.list` / `news.reload` RCON commands
-Useful for server management without having to be in-game:
-- `news.list` — prints all stored announcements with their index.
-- `news.reload` — reloads the data file (useful after manual edits).
-
----
-
-#### 13. Notification position `"Center"` option
-Currently only `"Left"` and `"Right"` are supported. A top-center option would suit some server HUD layouts.
-
----
-
-#### 14. Theme preview in the theme selector
-The theme selector shows theme names but admins must apply the theme before seeing its colours. A small colour-swatch row per theme would greatly improve usability.
-
----
-
-#### 15. Auto-broadcast / scheduled announcements
-There is no way to schedule a recurring news post (e.g., post server rules every 30 minutes). A `Broadcast` timer list in config (similar to how other Rust plugins handle `AutoMessage`) would add significant value.
-
----
-
-### Code Quality
-
-#### 16. `LoadDefaultConfig` and `LoadConfig` migration block are duplicated
-The 4 theme definitions (`Default`, `Dark`, `Ocean`, `Rust`) are copy-pasted verbatim between `LoadDefaultConfig` (line 308) and the migration block inside `LoadConfig` (line 283). Extract them to a helper method `BuildDefaultThemes()`.
-
----
-
-#### 17. `DateTime.Now` vs `DateTime.UtcNow` mixed usage
-`ann.Date = DateTime.Now.ToString("MM/dd HH:mm")` uses local server time for display.  
-`ann.Timestamp = DateTime.UtcNow.Ticks` uses UTC for ordering.  
-This is fine, but a config option for timezone offset or a note in the docs would help server operators who host in different regions.
-
----
-
-#### 18. `RgbaToHex` ignores alpha channel
-Used only for rich-text colour tags (e.g., `<color=#RRGGBB>`) which do not support alpha — so the behaviour is intentionally correct, but the method name is slightly misleading. Rename to `RgbToHex` or add a comment.
-
----
-
-#### 19. Hardcoded body wrap at 52 chars
-`BodyWrapCharacters = 52` is a magic number tied to the current UI panel width and font size. If the panel is ever resized or font changed, text will wrap incorrectly. Consider deriving this from UI constants or making it configurable.
-
----
-
-## Quick-Fix Priority
-
-| Priority | Item |
-|---|---|
-| High | Bug #3 — edit broadcasts to all players |
-| High | Bug #6 — memory leak on disconnect |
-| High | Bug #1 — notification opens wrong announcement |
-| Medium | Bug #2 — misleading `news.list` reference |
-| Medium | Bug #4 — LikedPlayers reference copy |
-| Medium | Feature #12 — `news.list` console command |
-| Medium | Feature #11 — delete confirmation |
-| Low | Bug #8 — silent URL stripping |
-| Low | Quality #16 — deduplicate theme definitions |
-| Low | Feature #15 — scheduled announcements |
+- Notification toast position supports `"Left"` and `"Right"` only — no top-center option.
+- No scheduled / recurring announcements (e.g., re-post rules every 30 minutes).
+- No `news.reload` RCON command to re-read a hand-edited data file.
+- Body wrap widths (`BodyWrapCharacters = 58`, `34` with an image, `44` in the editor preview) are constants tied to the current popup dimensions and font sizes; resizing the panels requires retuning them.
+- The default theme definitions are duplicated between `LoadDefaultConfig` and the migration block in `LoadConfig`.
+- The theme selector lists as many themes as fit in the panel; with many custom themes, extra entries must be applied via `news.admin.settheme "Name"`.
