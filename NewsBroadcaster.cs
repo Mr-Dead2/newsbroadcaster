@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.2.0")]
+    [Info("NewsBroadcaster", "DEDA", "1.2.1")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -1592,13 +1592,13 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = "1 1 1 0.10" },
-                    RectTransform = { AnchorMin = "0.033 0.433", AnchorMax = "0.477 0.877" }
+                    RectTransform = { AnchorMin = "0.033 0.113", AnchorMax = "0.477 0.902" }
                 }, mainPanel);
 
                 container.Add(new CuiPanel
                 {
                     Image = { Color = "0 0 0 0.5" },
-                    RectTransform = { AnchorMin = "0.035 0.435", AnchorMax = "0.475 0.875" }
+                    RectTransform = { AnchorMin = "0.035 0.115", AnchorMax = "0.475 0.90" }
                 }, mainPanel, imgPanel);
 
                 var imgComp = new CuiRawImageComponent { Color = "1 1 1 1" };
@@ -1621,19 +1621,13 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = GetTypeColor(ann.Type) },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0.34 0.13" }
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0.30 0.06" }
                 }, imgPanel);
                 container.Add(new CuiLabel
                 {
                     Text = { Text = ann.Type.ToString().ToUpper(), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0.34 0.13" }
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0.30 0.06" }
                 }, imgPanel);
-
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color>   •   {ann.Date}", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = "0.035 0.36", AnchorMax = "0.49 0.41" }
-                }, mainPanel);
             }
 
             string titleLabelName = mainPanel + ".TitleText";
@@ -1701,14 +1695,11 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0 0.094", AnchorMax = "1 0.096" }
             }, mainPanel);
 
-            if (!hasImage)
+            container.Add(new CuiLabel
             {
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color>  •  {ann.Date}", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = "0.03 0", AnchorMax = "0.55 0.095" }
-                }, mainPanel);
-            }
+                Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color>  •  {ann.Date}", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                RectTransform = { AnchorMin = "0.03 0", AnchorMax = "0.55 0.095" }
+            }, mainPanel);
 
             if (!string.IsNullOrEmpty(ann.Id))
             {
