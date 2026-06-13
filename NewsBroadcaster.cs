@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.3")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.4")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -46,8 +46,8 @@ namespace Oxide.Plugins
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int BodyVisibleLineCount = 16;
-        private const int BodyWrapCharacters = 58;
-        private const int BodyWrapCharactersImage = 34;
+        private const int BodyWrapCharacters = 64;
+        private const int BodyWrapCharactersImage = 46;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
 
@@ -1591,8 +1591,14 @@ namespace Oxide.Plugins
 
                 container.Add(new CuiPanel
                 {
-                    Image = { Color = "0 0 0 0.3" },
-                    RectTransform = { AnchorMin = "0.02 0.32", AnchorMax = "0.38 0.68" }
+                    Image = { Color = "1 1 1 0.10" },
+                    RectTransform = { AnchorMin = "0.018 0.515", AnchorMax = "0.382 0.885" }
+                }, mainPanel);
+
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = "0 0 0 0.45" },
+                    RectTransform = { AnchorMin = "0.02 0.52", AnchorMax = "0.38 0.88" }
                 }, mainPanel, imgPanel);
 
                 var imgComp = new CuiRawImageComponent { Color = "1 1 1 1" };
@@ -1611,6 +1617,47 @@ namespace Oxide.Plugins
                         new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" }
                     }
                 });
+
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = GetTypeColor(ann.Type) },
+                    RectTransform = { AnchorMin = "0.02 0.445", AnchorMax = "0.20 0.505" }
+                }, mainPanel);
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = ann.Type.ToString().ToUpper(), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.02 0.445", AnchorMax = "0.20 0.505" }
+                }, mainPanel);
+
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = "1 1 1 0.08" },
+                    RectTransform = { AnchorMin = "0.02 0.423", AnchorMax = "0.38 0.426" }
+                }, mainPanel);
+
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = ann.Date, FontSize = 11, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                    RectTransform = { AnchorMin = "0.02 0.365", AnchorMax = "0.38 0.413" }
+                }, mainPanel);
+
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color>", FontSize = 11, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                    RectTransform = { AnchorMin = "0.02 0.305", AnchorMax = "0.38 0.355" }
+                }, mainPanel);
+
+                if (!string.IsNullOrEmpty(ann.Id))
+                {
+                    bool likedSide = ann.LikedPlayers.Contains(player.userID);
+                    string heartSide = likedSide ? "0.85 0.30 0.30 1" : "0.6 0.6 0.6 1";
+                    container.Add(new CuiButton
+                    {
+                        Button = { Color = "1 1 1 0.06", Command = $"news.like {ann.Id}" },
+                        Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = heartSide, Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.02 0.205", AnchorMax = "0.20 0.28" }
+                    }, mainPanel);
+                }
             }
 
             string titleLabelName = mainPanel + ".TitleText";
@@ -1754,12 +1801,40 @@ namespace Oxide.Plugins
                 Image = { Color = c.HeaderBg },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.10" }
             }, mainPanel);
-
-            container.Add(new CuiLabel
+            container.Add(new CuiPanel
             {
-                Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color> • {ann.Date}", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                RectTransform = { AnchorMin = "0.03 0", AnchorMax = "0.6 0.10" }
+                Image = { Color = "1 1 1 0.06" },
+                RectTransform = { AnchorMin = "0 0.099", AnchorMax = "1 0.101" }
             }, mainPanel);
+
+            if (hasImage)
+            {
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = $"<color={RgbaToHex(c.ButtonPrimary)}>{(config.General.ServerName ?? "SERVER").ToUpper()}</color>", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.03 0", AnchorMax = "0.7 0.10" }
+                }, mainPanel);
+            }
+            else
+            {
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = $"{Msg("PostedBy", player)} <color={RgbaToHex(c.ButtonPrimary)}>{(ann.Author ?? Msg("Unknown", player)).ToUpper()}</color> • {ann.Date}", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                    RectTransform = { AnchorMin = "0.03 0", AnchorMax = "0.6 0.10" }
+                }, mainPanel);
+
+                if (!string.IsNullOrEmpty(ann.Id))
+                {
+                    bool likedFoot = ann.LikedPlayers.Contains(player.userID);
+                    string heartFoot = likedFoot ? "0.8 0.25 0.25 1" : "0.6 0.6 0.6 1";
+                    container.Add(new CuiButton
+                    {
+                        Button = { Color = "0 0 0 0", Command = $"news.like {ann.Id}" },
+                        Text = { Text = $"❤ {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleRight, Color = heartFoot, Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.65 0.015", AnchorMax = "0.80 0.085" }
+                    }, mainPanel);
+                }
+            }
 
              container.Add(new CuiButton
             {
@@ -1767,20 +1842,6 @@ namespace Oxide.Plugins
                 Text = { Text = Msg("ViewArchive", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
                 RectTransform = { AnchorMin = "0.82 0.015", AnchorMax = "0.98 0.085" }
             }, mainPanel);
-
-            bool liked = ann.LikedPlayers.Contains(player.userID);
-            string heartColor = liked ? "0.8 0.25 0.25 1" : "0.6 0.6 0.6 1";
-            int likeCount = ann.LikedPlayers.Count;
-
-            if (!string.IsNullOrEmpty(ann.Id))
-            {
-                container.Add(new CuiButton
-                {
-                    Button = { Color = "0 0 0 0", Command = $"news.like {ann.Id}" },
-                    Text = { Text = $"❤ {likeCount}", FontSize = 12, Align = TextAnchor.MiddleRight, Color = heartColor, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.65 0.015", AnchorMax = "0.80 0.085" }
-                }, mainPanel);
-            }
 
             CuiHelper.AddUi(player, container);
 
