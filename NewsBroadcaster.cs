@@ -1592,7 +1592,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = "0 0 0 0.3" },
-                    RectTransform = { AnchorMin = "0.02 0.40", AnchorMax = "0.38 0.88" }
+                    RectTransform = { AnchorMin = "0.02 0.12", AnchorMax = "0.38 0.88" }
                 }, mainPanel, imgPanel);
 
                 var imgComp = new CuiRawImageComponent { Color = "1 1 1 1" };
