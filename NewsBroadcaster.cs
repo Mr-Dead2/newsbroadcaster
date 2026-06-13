@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.2")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.3")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -1592,7 +1592,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = "0 0 0 0.3" },
-                    RectTransform = { AnchorMin = "0.02 0.12", AnchorMax = "0.38 0.88" }
+                    RectTransform = { AnchorMin = "0.02 0.32", AnchorMax = "0.38 0.68" }
                 }, mainPanel, imgPanel);
 
                 var imgComp = new CuiRawImageComponent { Color = "1 1 1 1" };
