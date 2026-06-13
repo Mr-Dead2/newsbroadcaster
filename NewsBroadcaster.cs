@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.2.1")]
+    [Info("NewsBroadcaster", "DEDA", "1.2.2")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -1787,9 +1787,9 @@ namespace Oxide.Plugins
             }, mainPanel);
 
             container.Add(new CuiButton {
-                Button = { Color = "0.8 0.2 0.2 0", Command = "news.close" },
-                Text = { Text = Msg("Close", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
-                RectTransform = { AnchorMin = "0.92 0.92", AnchorMax = "1 1" }
+                Button = { Color = "0 0 0 0", Command = "news.close" },
+                Text = { Text = "✕", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
+                RectTransform = { AnchorMin = "0.94 0.92", AnchorMax = "0.99 1" }
             }, mainPanel);
 
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.08" } }, mainPanel);
@@ -1847,6 +1847,19 @@ namespace Oxide.Plugins
                     container.Add(new CuiLabel
                     {
                         Text = { Text = Msg("PinnedBadge", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1", Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.63 0.62", AnchorMax = "0.74 0.86" }
+                    }, itemPanel);
+                }
+                else
+                {
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = typeColor },
+                        RectTransform = { AnchorMin = "0.63 0.62", AnchorMax = "0.74 0.86" }
+                    }, itemPanel);
+                    container.Add(new CuiLabel
+                    {
+                        Text = { Text = ann.Type.ToString().ToUpper(), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
                         RectTransform = { AnchorMin = "0.63 0.62", AnchorMax = "0.74 0.86" }
                     }, itemPanel);
                 }
@@ -2076,15 +2089,15 @@ namespace Oxide.Plugins
 
                 container.Add(new CuiButton
                 {
-                    Button = { Color = "0.2 0.4 0.6 0.8", Command = $"news.admin.edit {ann.Id}" },
-                    Text = { Text = Msg("EditButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+                    Button = { Color = "0.25 0.52 0.80 0.95", Command = $"news.admin.edit {ann.Id}" },
+                    Text = { Text = Msg("EditButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.75 0.2", AnchorMax = "0.85 0.8" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
                 {
-                    Button = { Color = "0.6 0.2 0.2 0.8", Command = $"news.admin.delconfirm {ann.Id}" },
-                    Text = { Text = Msg("DelButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+                    Button = { Color = "0.78 0.26 0.26 0.95", Command = $"news.admin.delconfirm {ann.Id}" },
+                    Text = { Text = Msg("DelButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.86 0.2", AnchorMax = "0.96 0.8" }
                 }, itemPanel);
 
@@ -2186,7 +2199,7 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.9", AnchorMax = "1 1" } }, editorPanel);
             container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.899", AnchorMax = "1 0.901" } }, editorPanel);
             bool editingExisting = activeEditorIds.TryGetValue(player.userID, out string editingId) && !string.IsNullOrEmpty(editingId);
-            container.Add(new CuiLabel { Text = { Text = editingExisting ? Msg("EditAnnouncement", player) : Msg("CreateAnnouncement", player), FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.9", AnchorMax = "0.9 1" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {(editingExisting ? Msg("EditAnnouncement", player) : Msg("CreateAnnouncement", player))}", FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.04 0.9", AnchorMax = "0.9 1" } }, editorPanel);
 
             container.Add(new CuiButton {
                 Button = { Color = "0 0 0 0", Command = "news.editor.cancel" },
@@ -2462,7 +2475,7 @@ namespace Oxide.Plugins
 
             container.Add(new CuiPanel { Image = { Color = c.HeaderBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.9", AnchorMax = "1 1" } }, mainPanel);
             container.Add(new CuiPanel { Image = { Color = "1 1 1 0.06", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.899", AnchorMax = "1 0.901" } }, mainPanel);
-            container.Add(new CuiLabel { Text = { Text = Msg("SelectTheme", player), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = "robotocondensed-bold.ttf", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0 0.9", AnchorMax = "1 1" } }, mainPanel);
+            container.Add(new CuiLabel { Text = { Text = $"{config.General.ServerName} <color={RgbaToHex(c.ButtonPrimary)}>//</color> {Msg("SelectTheme", player)}", FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf", FadeIn = 0.20f }, RectTransform = { AnchorMin = "0.04 0.9", AnchorMax = "0.85 1" } }, mainPanel);
 
             container.Add(new CuiButton {
                 Button = { Color = "0.8 0.2 0.2 0", Command = "news.admin" },
@@ -2488,6 +2501,13 @@ namespace Oxide.Plugins
                     Button = { Color = buttonColor, Command = $"news.admin.settheme \"{themeName}\"", FadeIn = themeFade },
                     Text = { Text = themeName.ToUpper() + (isSelected ? $"  {Msg("Active", player)}" : ""), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = isSelected ? "1 1 1 1" : c.TextNormal, Font = "robotocondensed-bold.ttf", FadeIn = themeFade },
                     RectTransform = { AnchorMin = $"0.1 {bottom}", AnchorMax = $"0.9 {top}" }
+                }, mainPanel);
+
+                string swatch = config.Themes[themeName]?.ButtonPrimary ?? c.ButtonPrimary;
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = swatch, FadeIn = themeFade },
+                    RectTransform = { AnchorMin = $"0.12 {bottom + 0.025f}", AnchorMax = $"0.155 {top - 0.025f}" }
                 }, mainPanel);
 
                 count++;
