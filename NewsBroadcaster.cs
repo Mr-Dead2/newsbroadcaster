@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.1.1")]
+    [Info("NewsBroadcaster", "DEDA", "1.1.2")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -45,7 +45,7 @@ namespace Oxide.Plugins
         private Dictionary<ulong, HashSet<string>> adminSelections = new Dictionary<ulong, HashSet<string>>();
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
-        private const int BodyVisibleLineCount = 22;
+        private const int BodyVisibleLineCount = 16;
         private const int BodyWrapCharacters = 58;
         private const int BodyWrapCharactersImage = 34;
         private const int DiscordEmbedDescriptionLimit = 4000;
@@ -1592,7 +1592,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = "0 0 0 0.3" },
-                    RectTransform = { AnchorMin = "0.02 0.12", AnchorMax = "0.38 0.88" }
+                    RectTransform = { AnchorMin = "0.02 0.40", AnchorMax = "0.38 0.88" }
                 }, mainPanel, imgPanel);
 
                 var imgComp = new CuiRawImageComponent { Color = "1 1 1 1" };
