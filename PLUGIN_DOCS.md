@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.3.0  
+**Version:** 1.4.0  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -31,7 +31,9 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 - Optional item rewards for reading announcements and/or liking them (once per player per announcement)
 - **Pinned announcements** — flag posts so they always sit on top of the archive and admin list
 - **Bulk admin operations** — multi-select rows, then delete / pin / unpin in one click
-- **Sidebar hub admin menu** — `/news` (admin) opens a left-nav layout: brand header, navigation (Announcements / New Post / Themes / Close), a content-area action bar, and the paginated post list
+- **Sidebar hub admin menu** — `/news` (admin) opens a left-nav layout: brand header, navigation (Announcements / New Post / Themes / Close), a content-area action bar, and the paginated post list. The editor and theme picker share the same shell for a consistent, full-size experience
+- **Live-preview theme picker** — themes are shown as a grid of cards rendered in each theme's own colours, with the active theme framed and badged
+- **Refreshed player archive** — larger layout with type/pinned badges, post date, preview text, like counts, and a Read button
 - **Admin dashboard** — totals bar (posts / pinned / likes / reads), per-post type badge and like/read counts, and a one-click VIEW preview of any post as players see it
 - **API hooks** — `OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked` for integrations with other plugins
 
