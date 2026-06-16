@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.4.0")]
+    [Info("NewsBroadcaster", "DEDA", "1.5.0")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -131,6 +131,7 @@ namespace Oxide.Plugins
             public string WebhookUrl { get; set; } = "";
             public string BotName { get; set; } = "Server News";
             public string RoleMention { get; set; } = "";
+            public bool UseComponentsV2 { get; set; } = false;
         }
 
         class RewardItem
@@ -437,6 +438,8 @@ namespace Oxide.Plugins
                 if (raw != null && MigrateLegacyRewardArrays(raw)) needsSave = true;
 
                 if (raw != null && raw["Rewards"] == null) needsSave = true;
+
+                if (raw != null && (raw["Discord"] == null || raw["Discord"]["UseComponentsV2"] == null)) needsSave = true;
 
                 config = raw != null ? raw.ToObject<ConfigData>() : Config.ReadObject<ConfigData>();
                 if (config == null) throw new Exception();
@@ -2765,24 +2768,32 @@ namespace Oxide.Plugins
                 discordBody = discordBody.Substring(0, Math.Min(keepLength, discordBody.Length)).TrimEnd() + truncatedSuffix;
             }
 
-            var payload = new
+            object payload;
+            if (config.Discord.UseComponentsV2)
             {
-                username = config.Discord.BotName,
-                content = content,
-
-                allowed_mentions = new { parse = new[] { "roles" } },
-                embeds = new[]
+                payload = BuildDiscordComponentsV2(ann, embedColor, discordBody);
+            }
+            else
+            {
+                payload = new
                 {
-                    new
+                    username = config.Discord.BotName,
+                    content = content,
+
+                    allowed_mentions = new { parse = new[] { "roles" } },
+                    embeds = new[]
                     {
-                        title = ann.Title,
-                        description = discordBody,
-                        color = embedColor,
-                        footer = new { text = $"Posted by {ann.Author} • {ann.Date}" },
-                        image = string.IsNullOrEmpty(ann.ImageUrl) ? null : new { url = ann.ImageUrl }
+                        new
+                        {
+                            title = ann.Title,
+                            description = discordBody,
+                            color = embedColor,
+                            footer = new { text = $"Posted by {ann.Author} • {ann.Date}" },
+                            image = string.IsNullOrEmpty(ann.ImageUrl) ? null : new { url = ann.ImageUrl }
+                        }
                     }
-                }
-            };
+                };
+            }
 
             string json = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
 
@@ -2793,6 +2804,49 @@ namespace Oxide.Plugins
                     PrintError($"Discord Webhook failed! Code: {code} - Response: {response}");
                 }
             }, this, RequestMethod.POST, new Dictionary<string, string> { { "Content-Type", "application/json" } });
+        }
+
+        // Builds a Discord "Components V2" webhook payload (message flag 1<<15).
+        // With that flag set the message must NOT use content/embeds; the whole
+        // message is layout components: Container(17) wrapping Text Display(10),
+        // Media Gallery(12) and Separator(14). All non-interactive, so a plain
+        // incoming webhook can send it.
+        private object BuildDiscordComponentsV2(Announcement ann, int accentColor, string discordBody)
+        {
+            var inner = new List<object>();
+
+            if (!string.IsNullOrEmpty(ann.Title))
+                inner.Add(new { type = 10, content = $"## {ann.Title}" });
+
+            inner.Add(new { type = 10, content = $"-# {ann.Type.ToString().ToUpper()}" });
+
+            if (!string.IsNullOrEmpty(ann.ImageUrl))
+                inner.Add(new { type = 12, items = new[] { new { media = new { url = ann.ImageUrl } } } });
+
+            if (!string.IsNullOrEmpty(discordBody))
+                inner.Add(new { type = 10, content = discordBody });
+
+            inner.Add(new { type = 14 });
+            inner.Add(new { type = 10, content = $"-# Posted by {ann.Author} • {ann.Date}" });
+
+            var topLevel = new List<object>();
+            if (!string.IsNullOrEmpty(config.Discord.RoleMention))
+                topLevel.Add(new { type = 10, content = config.Discord.RoleMention });
+
+            topLevel.Add(new
+            {
+                type = 17,
+                accent_color = accentColor,
+                components = inner
+            });
+
+            return new
+            {
+                username = config.Discord.BotName,
+                flags = 1 << 15,
+                allowed_mentions = new { parse = new[] { "roles" } },
+                components = topLevel
+            };
         }
         #endregion
     }

@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.4.0  
+**Version:** 1.5.0  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -179,7 +179,8 @@ The handle height visually reflects the visible-window-to-content ratio.
     "Enabled": false,
     "WebhookUrl": "",
     "BotName": "Server News",
-    "RoleMention": ""
+    "RoleMention": "",
+    "UseComponentsV2": false
   },
   "Rewards": {
     "EnableReadReward": false,
@@ -239,8 +240,11 @@ The handle height visually reflects the visible-window-to-content ratio.
 | `WebhookUrl` | `""` | Discord channel webhook URL |
 | `BotName` | `"Server News"` | Webhook display name |
 | `RoleMention` | `""` | Role mention string (e.g. `<@&123456>`) |
+| `UseComponentsV2` | `false` | Send the post as a Discord **Components V2** message (flag `1<<15`) — a coloured Container with title, image gallery, body, separator and footer — instead of a classic embed |
 
 Note: the webhook payload sets `allowed_mentions: { parse: ["roles"] }`, so body text and titles cannot trigger `@everyone` or `@here` even if a user types those literally.
+
+When `UseComponentsV2` is enabled the message uses layout components (Container / Text Display / Media Gallery / Separator) and therefore sends no `content` or `embeds` — the role mention moves into a Text Display so it still pings. Total text across the message is capped at ~4000 characters by Discord.
 
 ### Reward Settings
 
