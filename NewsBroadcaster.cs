@@ -250,7 +250,13 @@ namespace Oxide.Plugins
                 ["BrandBottom"] = "BROADCASTER",
                 ["ThemeHint"] = "Pick a theme — it applies instantly to every menu.",
                 ["ArchiveEmpty"] = "No announcements have been posted yet.",
-                ["LikesReads"] = "{0} likes  •  {1} reads"
+                ["LikesReads"] = "<color=#e0556b>❤</color> {0}    {1} reads",
+                ["ByAuthor"] = "by {0}",
+                ["ByAuthorDate"] = "by {0}  ·  {1}",
+                ["StatPosts"] = "POSTS",
+                ["StatPinned"] = "PINNED",
+                ["StatLikes"] = "LIKES",
+                ["StatReads"] = "READS"
             }, this);
         }
 
@@ -1842,8 +1848,17 @@ namespace Oxide.Plugins
                 container.Add(new CuiLabel
                 {
                     Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.03 0.54", AnchorMax = "0.60 0.92" }
+                    RectTransform = { AnchorMin = "0.03 0.55", AnchorMax = "0.585 0.92" }
                 }, itemPanel);
+
+                if (!string.IsNullOrEmpty(ann.Author))
+                {
+                    container.Add(new CuiLabel
+                    {
+                        Text = { Text = Msg("ByAuthor", player, ann.Author), FontSize = 10, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                        RectTransform = { AnchorMin = "0.03 0.40", AnchorMax = "0.585 0.53" }
+                    }, itemPanel);
+                }
 
                 if (ann.Pinned)
                 {
@@ -1883,15 +1898,16 @@ namespace Oxide.Plugins
                 container.Add(new CuiLabel
                 {
                     Text = { Text = preview, FontSize = 12, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = "0.03 0.1", AnchorMax = "0.73 0.5" }
+                    RectTransform = { AnchorMin = "0.03 0.1", AnchorMax = "0.71 0.36" }
                 }, itemPanel);
 
-                if (likeCount > 0)
+                int readCount = ann.ReadByPlayers?.Count ?? 0;
+                if (likeCount > 0 || readCount > 0)
                 {
                     container.Add(new CuiLabel
                     {
-                        Text = { Text = $"<color=#e0556b>❤</color>  {likeCount}", FontSize = 12, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
-                        RectTransform = { AnchorMin = "0.74 0.12", AnchorMax = "0.86 0.46" }
+                        Text = { Text = Msg("LikesReads", player, likeCount, readCount), FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.74 0.12", AnchorMax = "0.865 0.46" }
                     }, itemPanel);
                 }
 
@@ -2045,6 +2061,19 @@ namespace Oxide.Plugins
             return mainPanel;
         }
 
+        // One cell of the Announcements stats bar (index 0-3 across the content width).
+        private void AddStatCell(CuiElementContainer container, string parent, UIColors c, int index, string label, string value)
+        {
+            const float left = 0.285f, total = 0.69f;
+            float stride = total / 4f;
+            float xMin = left + index * stride + 0.004f;
+            float xMax = left + (index + 1) * stride - 0.004f;
+
+            container.Add(new CuiPanel { Image = { Color = c.ContentBg, FadeIn = 0.20f }, RectTransform = { AnchorMin = $"{xMin} 0.85", AnchorMax = $"{xMax} 0.90" } }, parent);
+            container.Add(new CuiLabel { Text = { Text = value, FontSize = 18, Align = TextAnchor.MiddleCenter, Color = c.ButtonPrimary, Font = "robotocondensed-bold.ttf", FadeIn = 0.20f }, RectTransform = { AnchorMin = $"{xMin} 0.871", AnchorMax = $"{xMax} 0.899" } }, parent);
+            container.Add(new CuiLabel { Text = { Text = label, FontSize = 9, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = "robotocondensed-bold.ttf", FadeIn = 0.20f }, RectTransform = { AnchorMin = $"{xMin} 0.852", AnchorMax = $"{xMax} 0.872" } }, parent);
+        }
+
         private void ShowAdminList(BasePlayer player, int page)
         {
             DestroyUI(player);
@@ -2072,9 +2101,18 @@ namespace Oxide.Plugins
             var selection = GetAdminSelection(player.userID);
             int start = page * perPage;
             int count = 0;
-            float listTop = 0.80f;
-            float rowHeight = 0.69f / perPage;
+            float listTop = 0.77f;
+            float rowHeight = 0.66f / perPage;
             float padding = 0.008f;
+
+            // ----- Stats bar -----
+            int totalPinned = announcements.Count(a => a.Pinned);
+            int totalLikes = announcements.Sum(a => a.LikedPlayers?.Count ?? 0);
+            int totalReads = announcements.Sum(a => a.ReadByPlayers?.Count ?? 0);
+            AddStatCell(container, mainPanel, c, 0, Msg("StatPosts", player), announcements.Count.ToString());
+            AddStatCell(container, mainPanel, c, 1, Msg("StatPinned", player), totalPinned.ToString());
+            AddStatCell(container, mainPanel, c, 2, Msg("StatLikes", player), totalLikes.ToString());
+            AddStatCell(container, mainPanel, c, 3, Msg("StatReads", player), totalReads.ToString());
 
             if (displayList.Count == 0)
             {
@@ -2126,13 +2164,25 @@ namespace Oxide.Plugins
                 container.Add(new CuiLabel
                 {
                     Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 12, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.06 0.4", AnchorMax = "0.62 0.9" }
+                    RectTransform = { AnchorMin = "0.06 0.52", AnchorMax = "0.46 0.9" }
                 }, itemPanel);
+
+                string adminMeta = string.IsNullOrEmpty(ann.Author)
+                    ? (ann.Date ?? "")
+                    : Msg("ByAuthorDate", player, ann.Author, ann.Date ?? "");
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = adminMeta, FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                    RectTransform = { AnchorMin = "0.06 0.12", AnchorMax = "0.46 0.48" }
+                }, itemPanel);
+
+                container.Add(new CuiPanel { Image = { Color = typeColor }, RectTransform = { AnchorMin = "0.47 0.55", AnchorMax = "0.58 0.85" } }, itemPanel);
+                container.Add(new CuiLabel { Text = { Text = ann.Type.ToString().ToUpper(), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" }, RectTransform = { AnchorMin = "0.47 0.55", AnchorMax = "0.58 0.85" } }, itemPanel);
 
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = ann.Date ?? "", FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted },
-                    RectTransform = { AnchorMin = "0.06 0.1", AnchorMax = "0.62 0.4" }
+                    Text = { Text = Msg("LikesReads", player, ann.LikedPlayers?.Count ?? 0, ann.ReadByPlayers?.Count ?? 0), FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = "0.47 0.15", AnchorMax = "0.62 0.48" }
                 }, itemPanel);
 
                 container.Add(new CuiButton
@@ -2159,8 +2209,8 @@ namespace Oxide.Plugins
                 count++;
             }
 
-            // ----- Action grid (top of content) -----
-            const float agTop = 0.885f, agBottom = 0.825f;
+            // ----- Action grid (between stats bar and list) -----
+            const float agTop = 0.838f, agBottom = 0.788f;
 
             container.Add(new CuiButton
             {
