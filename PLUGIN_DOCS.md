@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.5.1  
+**Version:** 1.5.2  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -245,6 +245,8 @@ The handle height visually reflects the visible-window-to-content ratio.
 Note: the webhook payload sets `allowed_mentions: { parse: ["roles"] }`, so body text and titles cannot trigger `@everyone` or `@here` even if a user types those literally.
 
 When `UseComponentsV2` is enabled the message uses layout components (Container / Text Display / Media Gallery / Separator) and therefore sends no `content` or `embeds` — the role mention moves into a Text Display so it still pings. Total text across the message is capped at ~4000 characters by Discord.
+
+**Webhook requirement:** Discord only lets **application-owned webhooks** send components. A plain channel webhook (Server Settings → Integrations → Webhooks) is rejected with `50006 Cannot send an empty message`. When that happens the plugin logs a warning and **automatically resends the post as a standard embed**, so news is never lost. To actually use V2, point `WebhookUrl` at a webhook created/owned by a Discord application (bot).
 
 ### Reward Settings
 

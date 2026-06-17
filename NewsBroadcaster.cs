@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.5.1")]
+    [Info("NewsBroadcaster", "DEDA", "1.5.2")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -2759,17 +2759,44 @@ namespace Oxide.Plugins
         private void SendToDiscord(Announcement ann)
         {
             if (!config.Discord.Enabled || string.IsNullOrEmpty(config.Discord.WebhookUrl)) return;
+            PostToDiscord(ann, config.Discord.UseComponentsV2);
+        }
 
-            int embedColor = 3447003;
-            switch(ann.Type)
+        private void PostToDiscord(Announcement ann, bool useComponentsV2)
+        {
+            object payload = useComponentsV2 ? BuildDiscordComponentsV2(ann) : BuildDiscordEmbed(ann);
+            string json = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+
+            webrequest.Enqueue(config.Discord.WebhookUrl, json, (code, response) =>
             {
-                case AnnouncementType.Alert: embedColor = 15158332; break;
-                case AnnouncementType.Warning: embedColor = 15105570; break;
-                case AnnouncementType.Update: embedColor = 3066993; break;
-                case AnnouncementType.Event: embedColor = 10181046; break;
-            }
+                if (code >= 200 && code <= 299) return;
 
-            string content = string.IsNullOrEmpty(config.Discord.RoleMention) ? "" : config.Discord.RoleMention;
+                if (useComponentsV2)
+                {
+                    PrintWarning($"Discord rejected the Components V2 message (Code {code}: {response}). Falling back to a standard embed. Sending components usually requires an application-owned webhook, not a plain channel webhook.");
+                    PostToDiscord(ann, false);
+                }
+                else
+                {
+                    PrintError($"Discord Webhook failed! Code: {code} - Response: {response}");
+                }
+            }, this, RequestMethod.POST, new Dictionary<string, string> { { "Content-Type", "application/json" } });
+        }
+
+        private int DiscordEmbedColor(Announcement ann)
+        {
+            switch (ann.Type)
+            {
+                case AnnouncementType.Alert: return 15158332;
+                case AnnouncementType.Warning: return 15105570;
+                case AnnouncementType.Update: return 3066993;
+                case AnnouncementType.Event: return 10181046;
+                default: return 3447003;
+            }
+        }
+
+        private string BuildDiscordBody(Announcement ann)
+        {
             string discordBody = NormalizeBodyText(ann.Text);
             if (!string.IsNullOrEmpty(discordBody) && discordBody.Length > DiscordEmbedDescriptionLimit)
             {
@@ -2777,53 +2804,47 @@ namespace Oxide.Plugins
                 int keepLength = Math.Max(0, DiscordEmbedDescriptionLimit - truncatedSuffix.Length);
                 discordBody = discordBody.Substring(0, Math.Min(keepLength, discordBody.Length)).TrimEnd() + truncatedSuffix;
             }
+            return discordBody;
+        }
 
-            object payload;
-            if (config.Discord.UseComponentsV2)
+        private object BuildDiscordEmbed(Announcement ann)
+        {
+            string content = string.IsNullOrEmpty(config.Discord.RoleMention) ? "" : config.Discord.RoleMention;
+            return new
             {
-                payload = BuildDiscordComponentsV2(ann, embedColor, discordBody);
-            }
-            else
-            {
-                payload = new
+                username = config.Discord.BotName,
+                content = content,
+
+                allowed_mentions = new { parse = new[] { "roles" } },
+                embeds = new[]
                 {
-                    username = config.Discord.BotName,
-                    content = content,
-
-                    allowed_mentions = new { parse = new[] { "roles" } },
-                    embeds = new[]
+                    new
                     {
-                        new
-                        {
-                            title = ann.Title,
-                            description = discordBody,
-                            color = embedColor,
-                            footer = new { text = $"Posted by {ann.Author} • {ann.Date}" },
-                            image = string.IsNullOrEmpty(ann.ImageUrl) ? null : new { url = ann.ImageUrl }
-                        }
+                        title = ann.Title,
+                        description = BuildDiscordBody(ann),
+                        color = DiscordEmbedColor(ann),
+                        footer = new { text = $"Posted by {ann.Author} • {ann.Date}" },
+                        image = string.IsNullOrEmpty(ann.ImageUrl) ? null : new { url = ann.ImageUrl }
                     }
-                };
-            }
-
-            string json = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
-
-            webrequest.Enqueue(config.Discord.WebhookUrl, json, (code, response) =>
-            {
-                if (code < 200 || code > 299)
-                {
-                    PrintError($"Discord Webhook failed! Code: {code} - Response: {response}");
                 }
-            }, this, RequestMethod.POST, new Dictionary<string, string> { { "Content-Type", "application/json" } });
+            };
         }
 
         // Builds a Discord "Components V2" webhook payload (message flag 1<<15).
         // With that flag set the message must NOT use content/embeds; the whole
         // message is layout components: Container(17) wrapping Text Display(10),
-        // Media Gallery(12) and Separator(14). All non-interactive, so a plain
-        // incoming webhook can send it.
-        private object BuildDiscordComponentsV2(Announcement ann, int accentColor, string discordBody)
+        // Media Gallery(12) and Separator(14). NOTE: Discord generally only lets
+        // application-owned webhooks send components; a plain channel webhook is
+        // rejected with code 50006 — PostToDiscord then falls back to an embed.
+        private object BuildDiscordComponentsV2(Announcement ann)
         {
+            int accentColor = DiscordEmbedColor(ann);
+            string discordBody = BuildDiscordBody(ann);
+
             var inner = new List<object>();
+
+            if (!string.IsNullOrEmpty(config.Discord.RoleMention))
+                inner.Add(new { type = 10, content = config.Discord.RoleMention });
 
             if (!string.IsNullOrEmpty(ann.Title))
                 inner.Add(new { type = 10, content = $"## {ann.Title}" });
@@ -2839,23 +2860,19 @@ namespace Oxide.Plugins
             inner.Add(new { type = 14 });
             inner.Add(new { type = 10, content = $"-# Posted by {ann.Author} • {ann.Date}" });
 
-            var topLevel = new List<object>();
-            if (!string.IsNullOrEmpty(config.Discord.RoleMention))
-                topLevel.Add(new { type = 10, content = config.Discord.RoleMention });
-
-            topLevel.Add(new
+            var container = new
             {
                 type = 17,
                 accent_color = accentColor,
                 components = inner
-            });
+            };
 
             return new
             {
                 username = config.Discord.BotName,
                 flags = 1 << 15,
                 allowed_mentions = new { parse = new[] { "roles" } },
-                components = topLevel
+                components = new List<object> { container }
             };
         }
         #endregion
