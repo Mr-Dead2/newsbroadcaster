@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.5.2")]
+    [Info("NewsBroadcaster", "DEDA", "1.6.0")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -131,7 +131,6 @@ namespace Oxide.Plugins
             public string WebhookUrl { get; set; } = "";
             public string BotName { get; set; } = "Server News";
             public string RoleMention { get; set; } = "";
-            public bool UseComponentsV2 { get; set; } = false;
         }
 
         class RewardItem
@@ -257,7 +256,8 @@ namespace Oxide.Plugins
                 ["StatPosts"] = "POSTS",
                 ["StatPinned"] = "PINNED",
                 ["StatLikes"] = "LIKES",
-                ["StatReads"] = "READS"
+                ["StatReads"] = "READS",
+                ["NewBadge"] = "NEW"
             }, this);
         }
 
@@ -438,8 +438,6 @@ namespace Oxide.Plugins
                 if (raw != null && MigrateLegacyRewardArrays(raw)) needsSave = true;
 
                 if (raw != null && raw["Rewards"] == null) needsSave = true;
-
-                if (raw != null && (raw["Discord"] == null || raw["Discord"]["UseComponentsV2"] == null)) needsSave = true;
 
                 config = raw != null ? raw.ToObject<ConfigData>() : Config.ReadObject<ConfigData>();
                 if (config == null) throw new Exception();
@@ -1836,11 +1834,17 @@ namespace Oxide.Plugins
 
                 if (unread)
                 {
+                    // Tinted accent wash across the whole card
                     container.Add(new CuiPanel
                     {
-                        Image = { Color = WithAlpha(c.ButtonPrimary, 0.10f) },
+                        Image = { Color = WithAlpha(c.ButtonPrimary, 0.20f) },
                         RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
                     }, itemPanel);
+
+                    // Accent border around the card (top / bottom / right; left handled by stripe below)
+                    container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0 0.97",  AnchorMax = "1 1"      } }, itemPanel);
+                    container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0 0",     AnchorMax = "1 0.03"   } }, itemPanel);
+                    container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0.995 0", AnchorMax = "1 1"      } }, itemPanel);
                 }
 
                 if (ann.Pinned)
@@ -1852,18 +1856,40 @@ namespace Oxide.Plugins
                     }, itemPanel);
                 }
 
+                // Type stripe on the very left, plus a brighter accent stripe next to it when unread
                 container.Add(new CuiPanel {
                     Image = { Color = typeColor },
                     RectTransform = { AnchorMin = "0 0", AnchorMax = "0.008 1" }
                 }, itemPanel);
+                if (unread)
+                {
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = c.ButtonPrimary },
+                        RectTransform = { AnchorMin = "0.008 0", AnchorMax = "0.020 1" }
+                    }, itemPanel);
+                }
 
-                string archiveTitle = (ann.Title ?? "(no title)").ToUpper();
-                if (unread) archiveTitle = $"<color={RgbaToHex(c.ButtonPrimary)}>NEW</color>  {archiveTitle}";
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = archiveTitle, FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.03 0.55", AnchorMax = "0.585 0.92" }
                 }, itemPanel);
+
+                if (unread)
+                {
+                    // Bright NEW pill in the top-right corner of the card
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = c.ButtonPrimary },
+                        RectTransform = { AnchorMin = "0.875 0.74", AnchorMax = "0.965 0.93" }
+                    }, itemPanel);
+                    container.Add(new CuiLabel
+                    {
+                        Text = { Text = $"<b>● {Msg("NewBadge", player)}</b>", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.875 0.74", AnchorMax = "0.965 0.93" }
+                    }, itemPanel);
+                }
 
                 if (!string.IsNullOrEmpty(ann.Author))
                 {
@@ -2759,27 +2785,14 @@ namespace Oxide.Plugins
         private void SendToDiscord(Announcement ann)
         {
             if (!config.Discord.Enabled || string.IsNullOrEmpty(config.Discord.WebhookUrl)) return;
-            PostToDiscord(ann, config.Discord.UseComponentsV2);
-        }
 
-        private void PostToDiscord(Announcement ann, bool useComponentsV2)
-        {
-            object payload = useComponentsV2 ? BuildDiscordComponentsV2(ann) : BuildDiscordEmbed(ann);
+            object payload = BuildDiscordEmbed(ann);
             string json = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
 
             webrequest.Enqueue(config.Discord.WebhookUrl, json, (code, response) =>
             {
-                if (code >= 200 && code <= 299) return;
-
-                if (useComponentsV2)
-                {
-                    PrintWarning($"Discord rejected the Components V2 message (Code {code}: {response}). Falling back to a standard embed. Sending components usually requires an application-owned webhook, not a plain channel webhook.");
-                    PostToDiscord(ann, false);
-                }
-                else
-                {
+                if (code < 200 || code > 299)
                     PrintError($"Discord Webhook failed! Code: {code} - Response: {response}");
-                }
             }, this, RequestMethod.POST, new Dictionary<string, string> { { "Content-Type", "application/json" } });
         }
 
@@ -2792,6 +2805,18 @@ namespace Oxide.Plugins
                 case AnnouncementType.Update: return 3066993;
                 case AnnouncementType.Event: return 10181046;
                 default: return 3447003;
+            }
+        }
+
+        private string DiscordTypeEmoji(AnnouncementType type)
+        {
+            switch (type)
+            {
+                case AnnouncementType.Alert: return "🚨";
+                case AnnouncementType.Warning: return "⚠️";
+                case AnnouncementType.Update: return "🛠️";
+                case AnnouncementType.Event: return "🎉";
+                default: return "📰";
             }
         }
 
@@ -2810,69 +2835,44 @@ namespace Oxide.Plugins
         private object BuildDiscordEmbed(Announcement ann)
         {
             string content = string.IsNullOrEmpty(config.Discord.RoleMention) ? "" : config.Discord.RoleMention;
+            string typeName = ann.Type.ToString().ToUpper();
+            string typeEmoji = DiscordTypeEmoji(ann.Type);
+            int likes = ann.LikedPlayers?.Count ?? 0;
+            int reads = ann.ReadByPlayers?.Count ?? 0;
+
+            var fields = new List<object>();
+            fields.Add(new { name = "Type", value = $"{typeEmoji} {typeName}", inline = true });
+            if (ann.Pinned)
+                fields.Add(new { name = "Status", value = "📌 Pinned", inline = true });
+            if (likes > 0 || reads > 0)
+                fields.Add(new { name = "Engagement", value = $"❤ {likes}   👁 {reads}", inline = true });
+
+            string isoTimestamp = null;
+            if (ann.Timestamp > 0)
+            {
+                try { isoTimestamp = new DateTime(ann.Timestamp, DateTimeKind.Utc).ToString("o", CultureInfo.InvariantCulture); }
+                catch { isoTimestamp = null; }
+            }
+
             return new
             {
                 username = config.Discord.BotName,
                 content = content,
-
                 allowed_mentions = new { parse = new[] { "roles" } },
                 embeds = new[]
                 {
                     new
                     {
-                        title = ann.Title,
+                        author = string.IsNullOrEmpty(ann.Author) ? null : new { name = $"Posted by {ann.Author}" },
+                        title = $"{typeEmoji} {ann.Title}",
                         description = BuildDiscordBody(ann),
                         color = DiscordEmbedColor(ann),
-                        footer = new { text = $"Posted by {ann.Author} • {ann.Date}" },
-                        image = string.IsNullOrEmpty(ann.ImageUrl) ? null : new { url = ann.ImageUrl }
+                        fields = fields.Count > 0 ? fields.ToArray() : null,
+                        image = string.IsNullOrEmpty(ann.ImageUrl) ? null : new { url = ann.ImageUrl },
+                        footer = new { text = config.General.ServerName },
+                        timestamp = isoTimestamp
                     }
                 }
-            };
-        }
-
-        // Builds a Discord "Components V2" webhook payload (message flag 1<<15).
-        // With that flag set the message must NOT use content/embeds; the whole
-        // message is layout components: Container(17) wrapping Text Display(10),
-        // Media Gallery(12) and Separator(14). NOTE: Discord generally only lets
-        // application-owned webhooks send components; a plain channel webhook is
-        // rejected with code 50006 — PostToDiscord then falls back to an embed.
-        private object BuildDiscordComponentsV2(Announcement ann)
-        {
-            int accentColor = DiscordEmbedColor(ann);
-            string discordBody = BuildDiscordBody(ann);
-
-            var inner = new List<object>();
-
-            if (!string.IsNullOrEmpty(config.Discord.RoleMention))
-                inner.Add(new { type = 10, content = config.Discord.RoleMention });
-
-            if (!string.IsNullOrEmpty(ann.Title))
-                inner.Add(new { type = 10, content = $"## {ann.Title}" });
-
-            inner.Add(new { type = 10, content = $"-# {ann.Type.ToString().ToUpper()}" });
-
-            if (!string.IsNullOrEmpty(ann.ImageUrl))
-                inner.Add(new { type = 12, items = new[] { new { media = new { url = ann.ImageUrl } } } });
-
-            if (!string.IsNullOrEmpty(discordBody))
-                inner.Add(new { type = 10, content = discordBody });
-
-            inner.Add(new { type = 14 });
-            inner.Add(new { type = 10, content = $"-# Posted by {ann.Author} • {ann.Date}" });
-
-            var container = new
-            {
-                type = 17,
-                accent_color = accentColor,
-                components = inner
-            };
-
-            return new
-            {
-                username = config.Discord.BotName,
-                flags = 1 << 15,
-                allowed_mentions = new { parse = new[] { "roles" } },
-                components = new List<object> { container }
             };
         }
         #endregion
