@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.4.0")]
+    [Info("NewsBroadcaster", "DEDA", "1.5.1")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -131,6 +131,7 @@ namespace Oxide.Plugins
             public string WebhookUrl { get; set; } = "";
             public string BotName { get; set; } = "Server News";
             public string RoleMention { get; set; } = "";
+            public bool UseComponentsV2 { get; set; } = false;
         }
 
         class RewardItem
@@ -437,6 +438,8 @@ namespace Oxide.Plugins
                 if (raw != null && MigrateLegacyRewardArrays(raw)) needsSave = true;
 
                 if (raw != null && raw["Rewards"] == null) needsSave = true;
+
+                if (raw != null && (raw["Discord"] == null || raw["Discord"]["UseComponentsV2"] == null)) needsSave = true;
 
                 config = raw != null ? raw.ToObject<ConfigData>() : Config.ReadObject<ConfigData>();
                 if (config == null) throw new Exception();
@@ -1821,7 +1824,7 @@ namespace Oxide.Plugins
 
                 string itemPanel = mainPanel + $".{i}";
                 string typeColor = GetTypeColor(ann.Type);
-                int likeCount = ann.LikedPlayers?.Count ?? 0;
+                bool unread = !(ann.ReadByPlayers?.Contains(player.userID) ?? false);
 
                 float rowFade = 0.18f + count * 0.04f;
 
@@ -1830,6 +1833,15 @@ namespace Oxide.Plugins
                     Image = { Color = c.ContentBg, FadeIn = rowFade },
                     RectTransform = { AnchorMin = $"0.025 {bottom}", AnchorMax = $"0.975 {top}" }
                 }, mainPanel, itemPanel);
+
+                if (unread)
+                {
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = WithAlpha(c.ButtonPrimary, 0.10f) },
+                        RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+                    }, itemPanel);
+                }
 
                 if (ann.Pinned)
                 {
@@ -1845,9 +1857,11 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0 0", AnchorMax = "0.008 1" }
                 }, itemPanel);
 
+                string archiveTitle = (ann.Title ?? "(no title)").ToUpper();
+                if (unread) archiveTitle = $"<color={RgbaToHex(c.ButtonPrimary)}>NEW</color>  {archiveTitle}";
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    Text = { Text = archiveTitle, FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.03 0.55", AnchorMax = "0.585 0.92" }
                 }, itemPanel);
 
@@ -1898,18 +1912,8 @@ namespace Oxide.Plugins
                 container.Add(new CuiLabel
                 {
                     Text = { Text = preview, FontSize = 12, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = "0.03 0.1", AnchorMax = "0.71 0.36" }
+                    RectTransform = { AnchorMin = "0.03 0.1", AnchorMax = "0.84 0.37" }
                 }, itemPanel);
-
-                int readCount = ann.ReadByPlayers?.Count ?? 0;
-                if (likeCount > 0 || readCount > 0)
-                {
-                    container.Add(new CuiLabel
-                    {
-                        Text = { Text = Msg("LikesReads", player, likeCount, readCount), FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
-                        RectTransform = { AnchorMin = "0.74 0.12", AnchorMax = "0.865 0.46" }
-                    }, itemPanel);
-                }
 
                 container.Add(new CuiButton
                 {
@@ -1948,6 +1952,15 @@ namespace Oxide.Plugins
             }
 
             CuiHelper.AddUi(player, container);
+        }
+
+        // Returns the same RGBA color string with its alpha replaced.
+        private string WithAlpha(string rgba, float alpha)
+        {
+            if (string.IsNullOrEmpty(rgba)) return rgba;
+            var p = rgba.Split(' ');
+            if (p.Length < 3) return rgba;
+            return $"{p[0]} {p[1]} {p[2]} {alpha.ToString("0.###", CultureInfo.InvariantCulture)}";
         }
 
         private string GetTypeColor(AnnouncementType type)
@@ -2765,24 +2778,32 @@ namespace Oxide.Plugins
                 discordBody = discordBody.Substring(0, Math.Min(keepLength, discordBody.Length)).TrimEnd() + truncatedSuffix;
             }
 
-            var payload = new
+            object payload;
+            if (config.Discord.UseComponentsV2)
             {
-                username = config.Discord.BotName,
-                content = content,
-
-                allowed_mentions = new { parse = new[] { "roles" } },
-                embeds = new[]
+                payload = BuildDiscordComponentsV2(ann, embedColor, discordBody);
+            }
+            else
+            {
+                payload = new
                 {
-                    new
+                    username = config.Discord.BotName,
+                    content = content,
+
+                    allowed_mentions = new { parse = new[] { "roles" } },
+                    embeds = new[]
                     {
-                        title = ann.Title,
-                        description = discordBody,
-                        color = embedColor,
-                        footer = new { text = $"Posted by {ann.Author} • {ann.Date}" },
-                        image = string.IsNullOrEmpty(ann.ImageUrl) ? null : new { url = ann.ImageUrl }
+                        new
+                        {
+                            title = ann.Title,
+                            description = discordBody,
+                            color = embedColor,
+                            footer = new { text = $"Posted by {ann.Author} • {ann.Date}" },
+                            image = string.IsNullOrEmpty(ann.ImageUrl) ? null : new { url = ann.ImageUrl }
+                        }
                     }
-                }
-            };
+                };
+            }
 
             string json = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
 
@@ -2793,6 +2814,49 @@ namespace Oxide.Plugins
                     PrintError($"Discord Webhook failed! Code: {code} - Response: {response}");
                 }
             }, this, RequestMethod.POST, new Dictionary<string, string> { { "Content-Type", "application/json" } });
+        }
+
+        // Builds a Discord "Components V2" webhook payload (message flag 1<<15).
+        // With that flag set the message must NOT use content/embeds; the whole
+        // message is layout components: Container(17) wrapping Text Display(10),
+        // Media Gallery(12) and Separator(14). All non-interactive, so a plain
+        // incoming webhook can send it.
+        private object BuildDiscordComponentsV2(Announcement ann, int accentColor, string discordBody)
+        {
+            var inner = new List<object>();
+
+            if (!string.IsNullOrEmpty(ann.Title))
+                inner.Add(new { type = 10, content = $"## {ann.Title}" });
+
+            inner.Add(new { type = 10, content = $"-# {ann.Type.ToString().ToUpper()}" });
+
+            if (!string.IsNullOrEmpty(ann.ImageUrl))
+                inner.Add(new { type = 12, items = new[] { new { media = new { url = ann.ImageUrl } } } });
+
+            if (!string.IsNullOrEmpty(discordBody))
+                inner.Add(new { type = 10, content = discordBody });
+
+            inner.Add(new { type = 14 });
+            inner.Add(new { type = 10, content = $"-# Posted by {ann.Author} • {ann.Date}" });
+
+            var topLevel = new List<object>();
+            if (!string.IsNullOrEmpty(config.Discord.RoleMention))
+                topLevel.Add(new { type = 10, content = config.Discord.RoleMention });
+
+            topLevel.Add(new
+            {
+                type = 17,
+                accent_color = accentColor,
+                components = inner
+            });
+
+            return new
+            {
+                username = config.Discord.BotName,
+                flags = 1 << 15,
+                allowed_mentions = new { parse = new[] { "roles" } },
+                components = topLevel
+            };
         }
         #endregion
     }

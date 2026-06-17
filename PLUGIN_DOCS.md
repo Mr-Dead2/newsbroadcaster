@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.4.0  
+**Version:** 1.5.1  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -33,7 +33,7 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 - **Bulk admin operations** — multi-select rows, then delete / pin / unpin in one click
 - **Sidebar hub admin menu** — `/news` (admin) opens a left-nav layout: brand header, navigation (Announcements / New Post / Themes / Close), a content-area action bar, and the paginated post list. The editor and theme picker share the same shell for a consistent, full-size experience
 - **Live-preview theme picker** — themes are shown as a grid of cards rendered in each theme's own colours, with the active theme framed and badged
-- **Refreshed player archive** — larger layout with type/pinned badges, post date, preview text, like counts, and a Read button
+- **Refreshed player archive** — larger layout with type/pinned badges, post date, preview text, and a Read button; **unread posts stand out** with an accent wash and a `NEW` tag (like/read counts are admin-only)
 - **Admin dashboard** — totals bar (posts / pinned / likes / reads), per-post type badge and like/read counts, and a one-click VIEW preview of any post as players see it
 - **API hooks** — `OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked` for integrations with other plugins
 
@@ -179,7 +179,8 @@ The handle height visually reflects the visible-window-to-content ratio.
     "Enabled": false,
     "WebhookUrl": "",
     "BotName": "Server News",
-    "RoleMention": ""
+    "RoleMention": "",
+    "UseComponentsV2": false
   },
   "Rewards": {
     "EnableReadReward": false,
@@ -239,8 +240,11 @@ The handle height visually reflects the visible-window-to-content ratio.
 | `WebhookUrl` | `""` | Discord channel webhook URL |
 | `BotName` | `"Server News"` | Webhook display name |
 | `RoleMention` | `""` | Role mention string (e.g. `<@&123456>`) |
+| `UseComponentsV2` | `false` | Send the post as a Discord **Components V2** message (flag `1<<15`) — a coloured Container with title, image gallery, body, separator and footer — instead of a classic embed |
 
 Note: the webhook payload sets `allowed_mentions: { parse: ["roles"] }`, so body text and titles cannot trigger `@everyone` or `@here` even if a user types those literally.
+
+When `UseComponentsV2` is enabled the message uses layout components (Container / Text Display / Media Gallery / Separator) and therefore sends no `content` or `embeds` — the role mention moves into a Text Display so it still pings. Total text across the message is capped at ~4000 characters by Discord.
 
 ### Reward Settings
 
