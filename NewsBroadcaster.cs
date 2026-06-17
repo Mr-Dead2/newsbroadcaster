@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "1.5.0")]
+    [Info("NewsBroadcaster", "DEDA", "1.5.1")]
     [Description("Clean, modern news broadcaster with notifications")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -1824,7 +1824,7 @@ namespace Oxide.Plugins
 
                 string itemPanel = mainPanel + $".{i}";
                 string typeColor = GetTypeColor(ann.Type);
-                int likeCount = ann.LikedPlayers?.Count ?? 0;
+                bool unread = !(ann.ReadByPlayers?.Contains(player.userID) ?? false);
 
                 float rowFade = 0.18f + count * 0.04f;
 
@@ -1833,6 +1833,15 @@ namespace Oxide.Plugins
                     Image = { Color = c.ContentBg, FadeIn = rowFade },
                     RectTransform = { AnchorMin = $"0.025 {bottom}", AnchorMax = $"0.975 {top}" }
                 }, mainPanel, itemPanel);
+
+                if (unread)
+                {
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = WithAlpha(c.ButtonPrimary, 0.10f) },
+                        RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+                    }, itemPanel);
+                }
 
                 if (ann.Pinned)
                 {
@@ -1848,9 +1857,11 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0 0", AnchorMax = "0.008 1" }
                 }, itemPanel);
 
+                string archiveTitle = (ann.Title ?? "(no title)").ToUpper();
+                if (unread) archiveTitle = $"<color={RgbaToHex(c.ButtonPrimary)}>NEW</color>  {archiveTitle}";
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    Text = { Text = archiveTitle, FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
                     RectTransform = { AnchorMin = "0.03 0.55", AnchorMax = "0.585 0.92" }
                 }, itemPanel);
 
@@ -1901,18 +1912,8 @@ namespace Oxide.Plugins
                 container.Add(new CuiLabel
                 {
                     Text = { Text = preview, FontSize = 12, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = "0.03 0.1", AnchorMax = "0.71 0.36" }
+                    RectTransform = { AnchorMin = "0.03 0.1", AnchorMax = "0.84 0.37" }
                 }, itemPanel);
-
-                int readCount = ann.ReadByPlayers?.Count ?? 0;
-                if (likeCount > 0 || readCount > 0)
-                {
-                    container.Add(new CuiLabel
-                    {
-                        Text = { Text = Msg("LikesReads", player, likeCount, readCount), FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-bold.ttf" },
-                        RectTransform = { AnchorMin = "0.74 0.12", AnchorMax = "0.865 0.46" }
-                    }, itemPanel);
-                }
 
                 container.Add(new CuiButton
                 {
@@ -1951,6 +1952,15 @@ namespace Oxide.Plugins
             }
 
             CuiHelper.AddUi(player, container);
+        }
+
+        // Returns the same RGBA color string with its alpha replaced.
+        private string WithAlpha(string rgba, float alpha)
+        {
+            if (string.IsNullOrEmpty(rgba)) return rgba;
+            var p = rgba.Split(' ');
+            if (p.Length < 3) return rgba;
+            return $"{p[0]} {p[1]} {p[2]} {alpha.ToString("0.###", CultureInfo.InvariantCulture)}";
         }
 
         private string GetTypeColor(AnnouncementType type)
