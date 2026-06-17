@@ -118,7 +118,6 @@ All UI-driven commands address announcements by their stable `Id` (a hex GUID as
 | `news.view <id>` | Open a specific announcement popup |
 | `news.close` | Close the main UI |
 | `news.close.notif` | Dismiss the notification toast |
-| `news.scrollbody <id> <offset>` | Scroll the announcement body to a line offset |
 | `news.like <id>` | Toggle like on an announcement |
 | `news.admin.page <page>` | Navigate admin list pages |
 | `news.admin.create` | Open the new-announcement editor |
@@ -135,23 +134,14 @@ All UI-driven commands address announcements by their stable `Id` (a hex GUID as
 | `news.admin.themes` | Open the theme selector UI |
 | `news.admin.settheme "ThemeName"` | Apply a theme |
 | `news.editor.input <field> <value>` | Update a field in the editor (`title` / `image` / `text`) |
-| `news.editor.type` | Cycle the announcement type in the editor (legacy; the editor now uses direct type buttons) |
-| `news.editor.settype <0-4>` | Set the announcement type directly (used by the editor's type buttons) |
+| `news.editor.type` | Cycle the announcement type in the editor (the `◀ TYPE ▶` button) |
 | `news.editor.save` | Save and broadcast the edited/new announcement (requires a non-empty title) |
 | `news.editor.cancel` | Cancel editing and return to admin list |
 | `news.confirm.close` | Dismiss the delete-confirmation dialog |
 
-### Body scrollbar
+### Body scrolling
 
-Long announcements use a paged scrollbar with two navigation buttons and a clickable track:
-
-| Button | Action |
-|---|---|
-| `▲` | Page up (jumps a full visible page) |
-| Track click | Jumps to the clicked position (16 zones) |
-| `▼` | Page down (jumps a full visible page) |
-
-The handle height visually reflects the visible-window-to-content ratio.
+Long announcements scroll inside a native CUI scroll view — players drag the auto-hiding scrollbar or use the mouse wheel inside the body panel. No extra commands are involved.
 
 ---
 
@@ -434,14 +424,15 @@ Stores all announcements and per-player last-seen timestamps. The plugin handles
 
 All UI strings are registered in Oxide's lang system and can be overridden per language in `oxide/lang/<lang>/NewsBroadcaster.json`.
 
-Default keys: `NoPermissionCommand`, `NoPermissionView`, `NoNewsHistory`, `NewsBroadcasted`, `ArchiveTitle`, `ReadMore`, `ViewArchive`, `PostedBy`, `NewAnnouncement`, `Close`, `Previous`, `Next`, `Page`, `AdminControl`, `NewPost`, `Themes`, `NoAnnouncementsYet`, `CreateAnnouncement`, `EditAnnouncement`, `AnnouncementTitle`, `ImageUrl`, `AnnouncementType`, `ContentBody`, `ContentBodyHint`, `SaveBroadcast`, `Cancel`, `SelectTheme`, `Active`, `Unknown`, `EditButton`, `DelButton`, `DeleteAnnouncement`, `DeleteConfirmBody`, `ConfirmDelete`, `EditTargetGone`, `AnnouncementSavedNew`, `AnnouncementUpdated`, `RewardRead`, `RewardLike`, `PinButton`, `UnpinButton`, `PinnedBadge`, `SelectedCount`, `BulkDelete`, `BulkPin`, `BulkUnpin`, `ClearSelection`, `SelectPageToggle`, `BulkDeleteTitle`, `BulkDeleteBody`, `BulkDeleted`, `BulkPinned`, `BulkUnpinned`, `LivePreview`, `SaveChanges`, `TitleRequired`, `TypeLabel`, `NoContent`, `CharCount`.
+Default keys: `NoPermissionCommand`, `NoPermissionView`, `NoNewsHistory`, `NewsBroadcasted`, `ArchiveTitle`, `ReadMore`, `ViewArchive`, `PostedBy`, `NewAnnouncement`, `Close`, `Previous`, `Next`, `Page`, `AdminControl`, `NewPost`, `Themes`, `NoAnnouncementsYet`, `CreateAnnouncement`, `EditAnnouncement`, `AnnouncementTitle`, `ImageUrl`, `AnnouncementType`, `ContentBody`, `ContentBodyHint`, `SaveBroadcast`, `Cancel`, `SelectTheme`, `Active`, `Unknown`, `EditButton`, `DelButton`, `DeleteAnnouncement`, `DeleteConfirmBody`, `ConfirmDelete`, `EditTargetGone`, `AnnouncementSavedNew`, `AnnouncementUpdated`, `TitleRequired`, `RewardRead`, `RewardLike`, `PinButton`, `UnpinButton`, `PinnedBadge`, `SelectedCount`, `BulkDelete`, `BulkPin`, `BulkUnpin`, `ClearSelection`, `SelectPageToggle`, `BulkDeleteTitle`, `BulkDeleteBody`, `BulkDeleted`, `BulkPinned`, `BulkUnpinned`, `NavAnnouncements`, `BrandTop`, `BrandBottom`, `ThemeHint`, `ArchiveEmpty`, `LikesReads`, `ByAuthor`, `ByAuthorDate`, `StatPosts`, `StatPinned`, `StatLikes`, `StatReads`.
 
 ---
 
 ## Behavior Notes
 
 - **URLs are stripped from body text.** `NormalizeBodyText` removes `http(s)://` and `www.` links from announcement bodies on save — both for the console command (`news.show`) and the in-game editor. Links belong in the image URL field or in Discord, not in the CUI body.
-- **Editing never re-notifies players.** Only newly created announcements trigger the notification toast / popup broadcast. Edits also preserve the announcement's pinned state, likes, and read/like reward tracking.
+- **Editing never re-notifies players.** Only newly created announcements trigger the notification toast / popup broadcast. Edits only change the title, image, body and type — the announcement's pinned state, likes, read marks and read/like reward tracking are preserved.
+- **A title is required to save.** Saving (new or edit) is rejected with a chat message if the title is empty or whitespace; the title is trimmed before storage.
 - **Dates are server-local; ordering is UTC.** `Date` (display) uses the server's local clock; `Timestamp` (sorting, last-seen tracking) uses UTC ticks.
 - **Per-player tracking writes are debounced.** Last-seen markers, likes, and read marks are flushed to the data file a few seconds after they change (and on plugin unload / server save). Structural changes (post, edit, delete, pin) are saved immediately.
 
@@ -452,6 +443,6 @@ Default keys: `NoPermissionCommand`, `NoPermissionView`, `NoNewsHistory`, `NewsB
 - Notification toast position supports `"Left"` and `"Right"` only — no top-center option.
 - No scheduled / recurring announcements (e.g., re-post rules every 30 minutes).
 - No `news.reload` RCON command to re-read a hand-edited data file.
-- Body wrap widths (`BodyWrapCharacters = 58`, `34` with an image, `44` in the editor preview) are constants tied to the current popup dimensions and font sizes; resizing the panels requires retuning them.
+- The announcement body renders in a native CUI scroll view; `BodyWrapCharacters = 64` is only used to estimate the scroll-content height, so very different font sizes may need it retuned.
 - The default theme definitions are duplicated between `LoadDefaultConfig` and the migration block in `LoadConfig`.
 - The theme selector lists as many themes as fit in the panel; with many custom themes, extra entries must be applied via `news.admin.settheme "Name"`.

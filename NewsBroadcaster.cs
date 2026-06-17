@@ -40,14 +40,11 @@ namespace Oxide.Plugins
 
         private Dictionary<ulong, Announcement> activeEditors = new Dictionary<ulong, Announcement>();
         private Dictionary<ulong, string> activeEditorIds = new Dictionary<ulong, string>();
-        private Dictionary<ulong, int> historyContentScrollOffsets = new Dictionary<ulong, int>();
         private Dictionary<ulong, ReadRewardState> readRewardTimers = new Dictionary<ulong, ReadRewardState>();
         private Dictionary<ulong, HashSet<string>> adminSelections = new Dictionary<ulong, HashSet<string>>();
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
-        private const int BodyVisibleLineCount = 16;
         private const int BodyWrapCharacters = 64;
-        private const int BodyWrapCharactersImage = 46;
         private const int DiscordEmbedDescriptionLimit = 4000;
         #endregion
 
@@ -229,6 +226,7 @@ namespace Oxide.Plugins
                 ["EditTargetGone"] = "The announcement you were editing was removed before you could save.",
                 ["AnnouncementSavedNew"] = "Announcement saved and broadcasted to all players!",
                 ["AnnouncementUpdated"] = "Announcement updated.",
+                ["TitleRequired"] = "Announcement title cannot be empty.",
                 ["RewardRead"] = "Thanks for reading the news! Reward: {0}",
                 ["RewardLike"] = "Thanks for the like! Reward: {0}",
                 ["PinButton"] = "PIN",
@@ -285,12 +283,6 @@ namespace Oxide.Plugins
             return value.Trim();
         }
 
-        private int BodyWrapFor(Announcement ann)
-        {
-            bool hasImage = ann != null && !string.IsNullOrEmpty(ann.ImageUrl);
-            return hasImage ? BodyWrapCharactersImage : BodyWrapCharacters;
-        }
-
         private List<string> BuildBodyDisplayLines(string text, int wrapChars = BodyWrapCharacters)
         {
             if (wrapChars < 16) wrapChars = 16;
@@ -330,33 +322,6 @@ namespace Oxide.Plugins
                 lines.Add(string.Empty);
 
             return lines;
-        }
-
-        private string GetVisibleBodySlice(string text, int offset, int wrapChars = BodyWrapCharacters)
-        {
-            var lines = BuildBodyDisplayLines(text, wrapChars);
-            offset = ClampBodyOffset(text, offset, wrapChars);
-            int take = Math.Min(BodyVisibleLineCount, Math.Max(0, lines.Count - offset));
-            return string.Join("\n", lines.Skip(offset).Take(take).ToArray());
-        }
-
-        private int GetBodyMaxOffset(string text, int wrapChars = BodyWrapCharacters)
-        {
-            var lines = BuildBodyDisplayLines(text, wrapChars);
-            return Math.Max(0, lines.Count - BodyVisibleLineCount);
-        }
-
-        private int ClampBodyOffset(string text, int offset, int wrapChars = BodyWrapCharacters)
-        {
-            int maxOffset = GetBodyMaxOffset(text, wrapChars);
-            if (offset < 0) return 0;
-            if (offset > maxOffset) return maxOffset;
-            return offset;
-        }
-
-        private bool CanScrollBody(string text, int wrapChars = BodyWrapCharacters)
-        {
-            return BuildBodyDisplayLines(text, wrapChars).Count > BodyVisibleLineCount;
         }
 
         private static string NewAnnouncementId() => Guid.NewGuid().ToString("N");
@@ -748,7 +713,6 @@ namespace Oxide.Plugins
             notificationTimers.Clear();
             readRewardTimers.Clear();
             playersWithUiOpen.Clear();
-            historyContentScrollOffsets.Clear();
             activeEditors.Clear();
             activeEditorIds.Clear();
             adminSelections.Clear();
@@ -757,7 +721,6 @@ namespace Oxide.Plugins
         void OnPlayerDisconnected(BasePlayer player, string reason)
         {
             ulong id = player.userID;
-            historyContentScrollOffsets.Remove(id);
             activeEditors.Remove(id);
             activeEditorIds.Remove(id);
             playersWithUiOpen.Remove(id);
@@ -975,21 +938,6 @@ namespace Oxide.Plugins
             var ann = FindById(arg.GetString(0));
             if (ann == null) return;
 
-            historyContentScrollOffsets[player.userID] = 0;
-            ShowPopup(player, ann, true);
-        }
-
-        [ConsoleCommand("news.scrollbody")]
-        private void CmdScrollBody(ConsoleSystem.Arg arg)
-        {
-            var player = arg.Connection?.player as BasePlayer;
-            if (player == null) return;
-
-            var ann = FindById(arg.GetString(0));
-            if (ann == null) return;
-            int offset = arg.GetInt(1, 0);
-
-            historyContentScrollOffsets[player.userID] = ClampBodyOffset(ann.Text, offset, BodyWrapFor(ann));
             ShowPopup(player, ann, true);
         }
 
@@ -997,11 +945,7 @@ namespace Oxide.Plugins
         private void CmdConsoleClose(ConsoleSystem.Arg arg)
         {
             var player = arg.Connection?.player as BasePlayer;
-            if (player != null)
-            {
-                historyContentScrollOffsets.Remove(player.userID);
-                DestroyUI(player);
-            }
+            if (player != null) DestroyUI(player);
         }
 
         [ConsoleCommand("news.close.notif")]
@@ -1313,6 +1257,14 @@ namespace Oxide.Plugins
 
             var ann = activeEditors[player.userID];
             ann.Text = NormalizeBodyText(ann.Text);
+            ann.Title = ann.Title?.Trim();
+
+            if (string.IsNullOrEmpty(ann.Title))
+            {
+                SendReply(player, Msg("TitleRequired", player));
+                return;
+            }
+
             activeEditorIds.TryGetValue(player.userID, out string editingId);
             bool isNew = string.IsNullOrEmpty(editingId);
 
@@ -1327,14 +1279,8 @@ namespace Oxide.Plugins
             }
             else
             {
-                int idx = FindIndexById(editingId);
-                if (idx >= 0)
-                {
-                    ann.Id = editingId;
-                    announcements[idx] = ann;
-                    Interface.CallHook("OnNewsEdited", BuildHookData(ann));
-                }
-                else
+                var target = FindById(editingId);
+                if (target == null)
                 {
                     SendReply(player, Msg("EditTargetGone", player));
                     activeEditors.Remove(player.userID);
@@ -1342,6 +1288,15 @@ namespace Oxide.Plugins
                     ShowAdminList(player, 0);
                     return;
                 }
+
+                // Apply only the editable fields onto the live announcement so the
+                // pinned state, likes, read marks and reward tracking are preserved.
+                target.Title = ann.Title;
+                target.ImageUrl = ann.ImageUrl;
+                target.Text = ann.Text;
+                target.Type = ann.Type;
+                ann = target;
+                Interface.CallHook("OnNewsEdited", BuildHookData(target));
             }
 
             SaveAnnouncements();
