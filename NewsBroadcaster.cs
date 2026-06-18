@@ -255,7 +255,7 @@ namespace Oxide.Plugins
                 ["StatPinned"] = "PINNED",
                 ["StatLikes"] = "LIKES",
                 ["StatReads"] = "READS",
-                ["NewBadge"] = "NEW"
+                ["UnreadBadge"] = "UNREAD"
             }, this);
         }
 
@@ -1789,10 +1789,10 @@ namespace Oxide.Plugins
 
                 if (unread)
                 {
-                    // Tinted accent wash across the whole card
+                    // Soft accent wash across the whole card
                     container.Add(new CuiPanel
                     {
-                        Image = { Color = WithAlpha(c.ButtonPrimary, 0.20f) },
+                        Image = { Color = WithAlpha(c.ButtonPrimary, 0.12f) },
                         RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
                     }, itemPanel);
 
@@ -1825,26 +1825,26 @@ namespace Oxide.Plugins
                     }, itemPanel);
                 }
 
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
-                    RectTransform = { AnchorMin = "0.03 0.55", AnchorMax = "0.585 0.92" }
-                }, itemPanel);
-
                 if (unread)
                 {
-                    // Bright NEW pill in the top-right corner of the card
+                    // Bright UNREAD pill sitting just before the title
                     container.Add(new CuiPanel
                     {
                         Image = { Color = c.ButtonPrimary },
-                        RectTransform = { AnchorMin = "0.875 0.74", AnchorMax = "0.965 0.93" }
+                        RectTransform = { AnchorMin = "0.03 0.60", AnchorMax = "0.145 0.87" }
                     }, itemPanel);
                     container.Add(new CuiLabel
                     {
-                        Text = { Text = $"<b>● {Msg("NewBadge", player)}</b>", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
-                        RectTransform = { AnchorMin = "0.875 0.74", AnchorMax = "0.965 0.93" }
+                        Text = { Text = $"<b>● {Msg("UnreadBadge", player)}</b>", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = "robotocondensed-bold.ttf" },
+                        RectTransform = { AnchorMin = "0.03 0.60", AnchorMax = "0.145 0.87" }
                     }, itemPanel);
                 }
+
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = (ann.Title ?? "(no title)").ToUpper(), FontSize = 15, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = "robotocondensed-bold.ttf" },
+                    RectTransform = { AnchorMin = unread ? "0.16 0.55" : "0.03 0.55", AnchorMax = "0.585 0.92" }
+                }, itemPanel);
 
                 if (!string.IsNullOrEmpty(ann.Author))
                 {
