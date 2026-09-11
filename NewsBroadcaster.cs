@@ -61,6 +61,9 @@ namespace Oxide.Plugins
         private Timer scheduleTimer;
 
         private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
+
+        // 2000-01-01 UTC in ticks. Anything below this is not a real post date.
+        private static readonly long MinPlausibleTicks = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc).Ticks;
         private const int MaxContentChars = 32768;
         private const int MaxTitleChars = 120;
         private const int MaxUrlChars = 512;
@@ -604,10 +607,11 @@ namespace Oxide.Plugins
             return list;
         }
 
-        private int CountUnread(BasePlayer player)
+        private int CountUnread(BasePlayer player) => CountUnread(player, GetVisibleFor(player));
+
+        private static int CountUnread(BasePlayer player, List<Announcement> visible)
         {
             int unread = 0;
-            var visible = GetVisibleFor(player);
             for (int i = 0; i < visible.Count; i++)
                 if (!(visible[i].ReadByPlayers?.Contains(player.userID) ?? false)) unread++;
             return unread;
@@ -634,17 +638,27 @@ namespace Oxide.Plugins
                 if (!int.TryParse(rel.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out amount) || amount <= 0)
                     return false;
 
-                TimeSpan span;
-                switch (rel.Groups[2].Value.ToLowerInvariant())
+                // Both the TimeSpan construction and the addition can overflow,
+                // so the whole conversion has to be guarded, not just the add.
+                try
                 {
-                    case "m": span = TimeSpan.FromMinutes(amount); break;
-                    case "h": span = TimeSpan.FromHours(amount); break;
-                    case "d": span = TimeSpan.FromDays(amount); break;
-                    default: span = TimeSpan.FromDays(amount * 7d); break;
+                    TimeSpan span;
+                    switch (rel.Groups[2].Value.ToLowerInvariant())
+                    {
+                        case "m": span = TimeSpan.FromMinutes(amount); break;
+                        case "h": span = TimeSpan.FromHours(amount); break;
+                        case "d": span = TimeSpan.FromDays(amount); break;
+                        default: span = TimeSpan.FromDays(amount * 7d); break;
+                    }
+
+                    ticks = DateTime.UtcNow.Add(span).Ticks;
+                }
+                catch
+                {
+                    ticks = 0;
+                    return false;
                 }
 
-                try { ticks = DateTime.UtcNow.Add(span).Ticks; }
-                catch { return false; }
                 return true;
             }
 
@@ -672,8 +686,16 @@ namespace Oxide.Plugins
         private static string DisplayDate(Announcement ann)
         {
             if (ann == null) return string.Empty;
-            string formatted = FormatWhen(ann.Timestamp);
-            return string.IsNullOrEmpty(formatted) ? (ann.Date ?? string.Empty) : formatted;
+
+            // Guard against a legacy row whose Timestamp holds something other
+            // than UTC ticks (e.g. unix seconds), which would render as year 1.
+            if (ann.Timestamp >= MinPlausibleTicks)
+            {
+                string formatted = FormatWhen(ann.Timestamp);
+                if (!string.IsNullOrEmpty(formatted)) return formatted;
+            }
+
+            return ann.Date ?? string.Empty;
         }
 
         private ArchiveFilter GetArchiveFilter(ulong userId)
@@ -922,7 +944,6 @@ namespace Oxide.Plugins
         private void OnServerInitialized()
         {
             RegisterAllImages();
-            RegisterAudiencePermissions();
 
             // Publishes anything whose scheduled time has arrived and retires
             // anything that has expired while the server was down.
@@ -931,9 +952,12 @@ namespace Oxide.Plugins
         }
 
         // ImageLibrary may load after this plugin; re-import when it appears.
+        // Deferred a tick because the [PluginReference] field is not guaranteed
+        // to be patched yet at the moment this hook fires.
         private void OnPluginLoaded(Plugin plugin)
         {
-            if (plugin != null && plugin.Name == "ImageLibrary") RegisterAllImages();
+            if (plugin == null || plugin.Name != "ImageLibrary") return;
+            NextTick(RegisterAllImages);
         }
 
         private void RegisterAudiencePermissions()
@@ -1111,10 +1135,15 @@ namespace Oxide.Plugins
             if (storedData.Announcements == null) storedData.Announcements = new List<Announcement>();
             if (storedData.LastSeenNews == null) storedData.LastSeenNews = new Dictionary<ulong, long>();
 
+            // A hand-edited data file can contain null entries; every loop below
+            // would throw on them.
+            int nulls = storedData.Announcements.RemoveAll(a => a == null);
+            if (nulls > 0) PrintWarning($"Dropped {nulls} empty announcement row(s) from the data file.");
+
             announcements = storedData.Announcements;
 
             long baseTime = DateTime.UtcNow.Ticks;
-            bool changed = false;
+            bool changed = nulls > 0;
             var seenIds = new HashSet<string>(StringComparer.Ordinal);
             for (int i = 0; i < announcements.Count; i++)
             {
@@ -1183,6 +1212,7 @@ namespace Oxide.Plugins
             permission.RegisterPermission(PermAdmin, this);
             permission.RegisterPermission(PermView, this);
             LoadAnnouncements();
+            RegisterAudiencePermissions();
         }
 
         // Newest announcement this player may read, ignoring pin order.
@@ -1330,7 +1360,7 @@ namespace Oxide.Plugins
             var ann = new Announcement
             {
                 Id = NewAnnouncementId(),
-                Title = title,
+                Title = Truncate(title, MaxTitleChars),
                 ImageUrl = img,
                 Text = text,
                 Date = DateTime.Now.ToString(InvariantDateFormat, CultureInfo.InvariantCulture),
@@ -1661,6 +1691,14 @@ namespace Oxide.Plugins
             if (string.IsNullOrEmpty(file))
             {
                 SendReply(arg, Msg("UsageImport"));
+                return;
+            }
+
+            // ReadObject would create an empty file for a name that does not
+            // exist, leaving junk in oxide/data and reporting a useless "empty".
+            if (!Interface.Oxide.DataFileSystem.ExistsDatafile(file))
+            {
+                SendReply(arg, Msg("ImportEmpty", null, file));
                 return;
             }
 
@@ -2277,7 +2315,11 @@ namespace Oxide.Plugins
             string prefab = config.Notification.NotificationSound;
             if (string.IsNullOrEmpty(prefab)) return;
 
-            Effect.server.Run(prefab, player.transform.position, Vector3.zero, player.net?.connection, false);
+            var connection = player.net?.connection;
+            if (connection == null) return;
+
+            var effect = new Effect(prefab, player.transform.position, Vector3.zero);
+            EffectNetwork.Send(effect, connection);
         }
 
         private void DestroyNotification(BasePlayer player)
@@ -2742,6 +2784,18 @@ namespace Oxide.Plugins
                 Image = { Color = "0 0 0 0.45" },
                 RectTransform = { AnchorMin = A(0.675f, fbBottom), AnchorMax = A(0.895f, fbTop) }
             }, mainPanel);
+            // Placeholder is added BEFORE the input field: CUI draws in insertion
+            // order and a Text graphic is a raycast target, so a label stacked on
+            // top of the field would swallow the click that focuses it.
+            if (string.IsNullOrEmpty(filter.Search))
+            {
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = Msg("SearchPlaceholder", player), FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
+                    RectTransform = { AnchorMin = A(0.686f, fbBottom), AnchorMax = A(0.89f, fbTop) }
+                }, mainPanel);
+            }
+
             container.Add(new CuiElement
             {
                 Parent = mainPanel,
@@ -2760,14 +2814,6 @@ namespace Oxide.Plugins
                     new CuiRectTransformComponent { AnchorMin = A(0.683f, fbBottom), AnchorMax = A(0.89f, fbTop) }
                 }
             });
-            if (string.IsNullOrEmpty(filter.Search))
-            {
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = Msg("SearchPlaceholder", player), FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = "robotocondensed-regular.ttf" },
-                    RectTransform = { AnchorMin = A(0.686f, fbBottom), AnchorMax = A(0.89f, fbTop) }
-                }, mainPanel);
-            }
 
             AddFilterChip(container, mainPanel, c, Msg("ClearFilters", player), "news.filter.clear",
                 false, 0.905f, 0.975f, fbBottom, fbTop);
@@ -2931,7 +2977,7 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0.42 0", AnchorMax = "0.58 0.075" }
             }, mainPanel);
 
-            if (CountUnread(player) > 0)
+            if (CountUnread(player, allVisible) > 0)
             {
                 container.Add(new CuiButton
                 {
