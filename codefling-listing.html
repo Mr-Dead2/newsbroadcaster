@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NewsBroadcaster Store Copy</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600&family=Barlow:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#F8F7F5; --surface:#FFFFFF; --ink:#1C1917; --muted:#726963;
+    --line:#E4DFD9; --accent:#D9541F; --accent-soft:rgba(217,84,31,.10);
+    --code-bg:#F1EEEA; --bar:#1C1917; --bar-ink:#F6F1ED;
+    --info:#4B7FB5; --warn:#C97E10; --alert:#C03636; --event:#7D43AD; --update:#2091C4;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#15120F; --surface:#1D1916; --ink:#F2EAE4; --muted:#9E8F84;
+      --line:#312A24; --accent:#F26630; --accent-soft:rgba(242,102,48,.14);
+      --code-bg:#221D19; --bar:#0D0B09; --bar-ink:#F2EAE4;
+      --info:#6699CC; --warn:#E69919; --alert:#D94040; --event:#994DCC; --update:#33B3E6;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#15120F; --surface:#1D1916; --ink:#F2EAE4; --muted:#9E8F84;
+    --line:#312A24; --accent:#F26630; --accent-soft:rgba(242,102,48,.14);
+    --code-bg:#221D19; --bar:#0D0B09; --bar-ink:#F2EAE4;
+    --info:#6699CC; --warn:#E69919; --alert:#D94040; --event:#994DCC; --update:#33B3E6;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--ground); color:var(--ink);
+    font-family:Barlow,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:16px; line-height:1.62; margin:0;
+  }
+
+  /* ---- Toolbar: deliberately OUTSIDE the copyable article ---- */
+  .bar{
+    position:sticky; top:0; z-index:20; background:var(--bar); color:var(--bar-ink);
+    border-bottom:2px solid var(--accent);
+  }
+  .bar-in{
+    max-width:60rem; margin:0 auto; padding-block:14px; padding-left:20px; padding-right:20px;
+    display:flex; flex-wrap:wrap; gap:12px; align-items:center;
+  }
+  .bar h1{
+    font-family:Oswald,"Arial Narrow",sans-serif; font-weight:600; font-size:15px;
+    letter-spacing:.14em; text-transform:uppercase; margin:0; flex:1 1 auto; min-width:min(100%,14rem);
+  }
+  .bar h1 span{color:var(--accent)}
+  button{
+    font-family:Oswald,"Arial Narrow",sans-serif; font-size:13px; letter-spacing:.1em;
+    text-transform:uppercase; border:1px solid rgba(255,255,255,.22); background:transparent;
+    color:var(--bar-ink); padding:9px 16px; border-radius:2px; cursor:pointer;
+    transition:background .15s,border-color .15s;
+  }
+  button:hover{background:rgba(255,255,255,.09)}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:500}
+  button.primary:hover{background:#c4491a}
+  button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  .said{font-size:13px; color:#9E8F84; min-width:7rem}
+
+  .hint{
+    max-width:60rem; margin:0 auto; padding-left:20px; padding-right:20px; padding-block:18px 4px;
+    font-size:13.5px; color:var(--muted);
+  }
+  .hint b{color:var(--ink); font-weight:600}
+
+  /* ---- The listing itself ---- */
+  article{
+    max-width:60rem; margin:0 auto; padding-left:20px; padding-right:20px; padding-block:8px 80px;
+  }
+  article h2{
+    font-family:Oswald,"Arial Narrow",sans-serif; font-weight:600; font-size:13px;
+    letter-spacing:.2em; text-transform:uppercase; color:var(--accent);
+    margin:56px 0 0; padding-bottom:8px; border-bottom:1px solid var(--line);
+  }
+  article h2:first-of-type{margin-top:34px}
+  article h3{
+    font-family:Oswald,"Arial Narrow",sans-serif; font-weight:500; font-size:19px;
+    letter-spacing:.03em; margin:30px 0 6px; text-wrap:balance;
+  }
+  article h4{
+    font-family:Oswald,"Arial Narrow",sans-serif; font-weight:500; font-size:13px;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:28px 0 8px;
+  }
+  article p{margin:0 0 14px; max-width:66ch}
+  article ul{margin:0 0 16px; padding-left:22px; max-width:66ch}
+  article li{margin-bottom:7px}
+  strong{font-weight:600}
+  .lede{font-size:18.5px; line-height:1.55; color:var(--ink); max-width:60ch}
+  .muted{color:var(--muted)}
+
+  pre{
+    background:var(--code-bg); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:2px; padding:14px 16px; overflow-x:auto; margin:0 0 18px;
+    font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+    font-size:13px; line-height:1.65;
+  }
+  code{font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace; font-size:.9em}
+  p code,li code{background:var(--accent-soft); padding:1px 5px; border-radius:2px; color:var(--accent)}
+
+  .note{
+    background:var(--accent-soft); border-left:3px solid var(--accent);
+    padding:14px 16px; margin:0 0 18px; border-radius:2px; max-width:66ch;
+  }
+  .note p{margin:0}
+
+  /* The five announcement types, in the exact colours the plugin renders */
+  .types{display:flex; flex-wrap:wrap; gap:8px; margin:0 0 22px; padding:0; list-style:none}
+  .types li{margin:0}
+  .chip{
+    display:inline-block; font-family:Oswald,"Arial Narrow",sans-serif; font-size:11.5px;
+    letter-spacing:.14em; text-transform:uppercase; color:#fff; padding:4px 11px; border-radius:2px;
+  }
+  .t-info{background:var(--info)} .t-warn{background:var(--warn)} .t-alert{background:var(--alert)}
+  .t-event{background:var(--event)} .t-update{background:var(--update)}
+
+  .cmd{margin:0 0 20px; max-width:66ch}
+  .cmd dt{
+    font-family:"JetBrains Mono",ui-monospace,monospace; font-size:13.5px;
+    color:var(--accent); margin-bottom:3px;
+  }
+  .cmd dd{margin:0 0 14px; color:var(--ink)}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  @media (max-width:560px){
+    .lede{font-size:17px}
+    article h3{font-size:17.5px}
+  }
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="bar-in">
+    <h1>NewsBroadcaster <span>&rarr;</span> Codefling</h1>
+    <button class="primary" id="copyRich" type="button">Copy formatted</button>
+    <button id="copyPlain" type="button">Copy plain text</button>
+    <span class="said" id="said" role="status" aria-live="polite"></span>
+  </div>
+</div>
+
+<p class="hint">
+  <b>Copy formatted</b> puts the listing on your clipboard with headings, bold and bullets intact &mdash; paste straight into
+  the Codefling description box. If it pastes oddly, use <b>Copy plain text</b> instead and bold the headings with the
+  editor toolbar. This toolbar is not part of the copied text.
+</p>
+
+<article id="listing">
+
+<h2>About News Broadcaster</h2>
+
+<p class="lede">The ultimate, modern, and highly-customizable announcement system for your Rust server.</p>
+
+<p>Keep your players informed with sleek, intuitive UI popups and real-time Discord webhooks. Whether it's a server wipe, an upcoming event, a rule change, or a massive update, NewsBroadcaster delivers your message with style &mdash; <strong>now with full scheduling, so you can write it today and let it post itself on Friday.</strong></p>
+
+<p>Forget editing clunky JSON files and wrestling with config reloads. NewsBroadcaster features a fully functional in-game Admin Editor UI, allowing you to create, schedule, edit, theme, and broadcast announcements directly from your Rust server!</p>
+
+<ul class="types">
+  <li><span class="chip t-info">Info</span></li>
+  <li><span class="chip t-warn">Warning</span></li>
+  <li><span class="chip t-alert">Alert</span></li>
+  <li><span class="chip t-event">Event</span></li>
+  <li><span class="chip t-update">Update</span></li>
+</ul>
+
+<h2>New in 1.7.0</h2>
+
+<h3>Scheduled Announcements</h3>
+<p>Set a publish time and the post stays hidden until it's due, then broadcasts itself: in-game popup, Discord webhook and API hook, all fired automatically. It survives server restarts and never double-posts. Write your whole wipe-week schedule in one sitting.</p>
+
+<h3>Expiring Announcements</h3>
+<p>Give an event post an end date and it drops out of the player archive on its own. No more stale "Double XP Weekend" sitting at the top three weeks later. Admins still see it.</p>
+
+<h3>Drafts</h3>
+<p>Save a post without publishing it. Work on the wipe announcement across several sessions, then flip one toggle when you're ready to go live.</p>
+
+<h3>Targeted Announcements</h3>
+<p>Restrict any post to a permission group with a single field. Type <code>vip</code> into the Audience box and only holders of <code>newsbroadcaster.vip</code> ever see it. The permission is registered automatically &mdash; no config editing. Perfect for VIP-only news, staff notices, or early event reveals.</p>
+
+<h3>Filterable Player Archive</h3>
+<p>Players can filter by type, toggle unread-only, or search titles and bodies with a live search box. One click marks everything read.</p>
+
+<h3>Export / Import</h3>
+<p>Move your announcements between servers or back them up with two console commands. Ideal for server networks that share news.</p>
+
+<h3>Quiet Connect Mode</h3>
+<p>Prefer not to hijack a player's screen on spawn? Switch to a simple "You have 3 unread announcements" chat line instead.</p>
+
+<h2>Key Features</h2>
+
+<h3>Modern UI</h3>
+<p>Smooth UI components and a premium, non-intrusive aesthetic.</p>
+
+<h3>In-Game Admin Editor</h3>
+<p>Create, edit, schedule and delete announcements seamlessly without ever leaving the game or touching a configuration file.</p>
+
+<h3>Admin Dashboard</h3>
+<p>A totals bar (posts / pinned / likes / reads), per-post like and read counts, and lifecycle badges showing at a glance what's LIVE, DRAFT, SCHEDULED or EXPIRED.</p>
+
+<h3>Bulk Admin Operations</h3>
+<p>Multi-select rows with checkboxes, then delete, pin or unpin everything in one click.</p>
+
+<h3>Instant Discord Webhooks</h3>
+<p>Automatically broadcast your in-game announcements straight to your Discord server with beautifully formatted rich embeds. Supports custom role mentions (<code>@everyone</code>, <code>&lt;@&amp;RoleID&gt;</code>). Scheduled posts fire their webhook the moment they go live.</p>
+
+<h3>Dynamic Theme Engine</h3>
+<p>Switch between six gorgeous pre-made colour schemes (Default, Dark, Ocean, Rust, Midnight, Forest) instantly via the in-game Admin menu, or create your own custom themes in the configuration. The theme picker renders every card in its own colours so you can see exactly what you're choosing.</p>
+
+<h3>Smart Notifications</h3>
+<p>Send smaller toast-style notifications (with sound!) or full-screen popups depending on the urgency. Supports native UI or the popular Notify plugin. Notification sounds are sent privately to each player, so a group sharing a base doesn't hear the same chime five times over.</p>
+
+<h3>Player Archive &amp; History</h3>
+<p>Players browse past announcements they missed in a clean, paginated archive. Unread posts stand out with an accent wash, an accent frame and an UNREAD badge, so nothing important gets lost.</p>
+
+<h3>Engagement Tracking</h3>
+<p>Players can "Like" (&#10084;) announcements, letting you gauge community interest in events or updates!</p>
+
+<h3>Image Support</h3>
+<p>Full integration with ImageLibrary to showcase banners or screenshots alongside your text to make your news pop.</p>
+
+<h3>Read &amp; Like Rewards</h3>
+<p>Pay players in items, RP (ServerRewards) and/or currency (Economics) for actually reading and liking your news. Once per announcement, per player.</p>
+
+<h3>Pinned Announcements</h3>
+<p>Keep server rules, wipe schedules or current events at the top of the archive with a coherent gold treatment (gold tint, gold "PINNED" chip, gold popup frame). Pinned posts are never removed by the storage cap.</p>
+
+<h2>Scheduling, Drafts &amp; Targeting</h2>
+
+<p>The in-game editor gives you four controls alongside the type selector:</p>
+
+<ul>
+  <li><strong>DRAFT</strong> &mdash; while set, the post is never broadcast and never visible to players. Turn it off and save to publish.</li>
+  <li><strong>PUBLISH AT</strong> &mdash; leave empty to post now, or set a time and the post waits until then.</li>
+  <li><strong>EXPIRES AT</strong> &mdash; leave empty for a permanent post, or set a time and it leaves the archive automatically.</li>
+  <li><strong>AUDIENCE</strong> &mdash; leave empty for everyone, or enter a name like <code>vip</code> to restrict the post to <code>newsbroadcaster.vip</code>.</li>
+</ul>
+
+<p>Both time fields accept an exact time or a quick relative offset:</p>
+
+<pre>2026-01-31 18:00      exact date and time (server local)
+2026-01-31            midnight on that date
++30m  +2h  +3d  +1w   relative to right now</pre>
+
+<p>Editing a published post never re-broadcasts it, so you can fix a typo without spamming your players. Move a post back to draft (or forward to a future time) and it will announce again when it next goes live.</p>
+
+<h2>Archive Filters</h2>
+
+<p>The archive header carries a filter bar: type chips, an UNREAD toggle, a search box that matches titles and bodies, and a CLEAR button. Filters are per player and survive paging.</p>
+
+<p>A <strong>MARK ALL READ</strong> button appears whenever a player has unread posts. It deliberately does <em>not</em> pay read rewards &mdash; those still require actually opening the announcement, so there's no way to farm them.</p>
+
+<h2>Commands</h2>
+
+<h4>Player Commands</h4>
+<dl class="cmd">
+  <dt>/news</dt><dd>Opens the Announcement Archive and History UI.</dd>
+  <dt>/news read</dt><dd>Mark every announcement you can see as read.</dd>
+  <dt>/news unread</dt><dd>Show only unread announcements.</dd>
+  <dt>/news &lt;type&gt;</dt><dd>Filter by type, e.g. <code>/news alert</code>.</dd>
+  <dt>/news &lt;text&gt;</dt><dd>Search titles and bodies, e.g. <code>/news wipe</code>.</dd>
+  <dt>/news &lt;page&gt;</dt><dd>Jump straight to a page.</dd>
+</dl>
+
+<h4>Admin / Console Commands</h4>
+<p class="muted">Requires the <code>newsbroadcaster.admin</code> permission.</p>
+<dl class="cmd">
+  <dt>news.admin</dt>
+  <dd>Opens the In-Game Admin Control Center (Create, Schedule, Edit, Delete, change Themes).</dd>
+  <dt>news.show "Title" "ImageURL" "Text" [Type]</dt>
+  <dd>Quick-broadcast an announcement from console/RCON. Use <code>-</code> for ImageURL if you don't want an image. Types: Info, Warning, Alert, Event, Update.</dd>
+  <dt>news.list</dt>
+  <dd>List every stored announcement with its index, status and type.</dd>
+  <dt>news.delete &lt;index&gt;</dt>
+  <dd>Delete a specific announcement via console.</dd>
+  <dt>news.trigger &lt;SteamID/Name&gt; [index]</dt>
+  <dd>Force-open an announcement popup for a specific player. Great for rules screens or welcome messages!</dd>
+  <dt>news.export [filename]</dt>
+  <dd>Back up every announcement to <code>oxide/data/</code>.</dd>
+  <dt>news.import &lt;filename&gt; [merge|replace]</dt>
+  <dd>Restore announcements from <code>oxide/data/</code>. <code>merge</code> skips duplicates, <code>replace</code> clears first.</dd>
+</dl>
+
+<h2>Permissions</h2>
+
+<dl class="cmd">
+  <dt>newsbroadcaster.view</dt>
+  <dd>Required to open the <code>/news</code> archive. Grant to the default group so all players can browse your news history.</dd>
+  <dt>newsbroadcaster.admin</dt>
+  <dd>Required to access the Admin Editor UI and all console commands.</dd>
+  <dt>newsbroadcaster.&lt;audience&gt;</dt>
+  <dd>Created automatically when you give an announcement an Audience. Only holders see that post.</dd>
+</dl>
+
+<pre>oxide.grant group default newsbroadcaster.view
+oxide.grant user &lt;SteamID&gt; newsbroadcaster.admin
+oxide.grant group vip newsbroadcaster.vip</pre>
+
+<div class="note">
+  <p><strong>Note:</strong> Broadcast popups and notification toasts reach every connected player, exactly as in earlier versions. <code>newsbroadcaster.view</code> controls the <strong>archive</strong>. To restrict who receives a specific announcement, give it an <strong>Audience</strong>.</p>
+</div>
+
+<h2>Configuration</h2>
+
+<p>NewsBroadcaster is designed to be plug-and-play, but offers deep customization for server owners who want everything perfect.</p>
+
+<pre>{
+  "General": {
+    "AutoCloseSeconds": 15,
+    "EnableAutoClose": true,
+    "ShowNewsOnConnect": true,
+    "ServerName": "SERVER NEWS",
+    "AnnouncementsPerPage": 5,
+    "MaxStoredAnnouncements": 50,
+    "UnreadSummaryOnConnect": false
+  },
+  "Notification": {
+    "Enabled": true,
+    "UseNotifyPlugin": false,
+    "NotifyType": 0,
+    "Position": "Right",
+    "Duration": 8,
+    "NotificationSound": "assets/bundled/prefabs/fx/notice/loot.drag.fx.prefab"
+  },
+  "Discord": {
+    "Enabled": false,
+    "WebhookUrl": "YOUR_DISCORD_WEBHOOK_URL_HERE",
+    "BotName": "Server News",
+    "RoleMention": "@everyone"
+  },
+  "SelectedTheme": "Default",
+  "Themes": {
+    "Default":  { "..." : "..." },
+    "Dark":     { "..." : "..." },
+    "Ocean":    { "..." : "..." },
+    "Rust":     { "..." : "..." },
+    "Midnight": { "..." : "..." },
+    "Forest":   { "..." : "..." }
+  }
+}</pre>
+
+<p>Set <code>UnreadSummaryOnConnect</code> to <code>true</code> to swap the connect popup for a quiet chat summary.</p>
+
+<p>Out-of-range settings are corrected automatically on load with a warning in the console, so a stray <code>0</code> can never break your archive layout or empty your data file.</p>
+
+<h2>Rewards</h2>
+
+<p>Two independent reward bundles &mdash; one for reading an announcement (popup must stay open for <code>ReadDelaySeconds</code>) and one for liking it. Each bundle can grant any combination of:</p>
+
+<ul>
+  <li><strong>Items</strong> &mdash; any Rust shortname (<code>scrap</code>, <code>wood</code>, <code>metal.refined</code>, &hellip;) with optional skin id</li>
+  <li><strong>Points</strong> &mdash; RP via ServerRewards</li>
+  <li><strong>Currency</strong> &mdash; via Economics</li>
+</ul>
+
+<p>Rewards fire at most once per player per announcement. Inventory full? Items drop at the player's feet. ServerRewards / Economics not loaded? Items still apply, points/currency are silently skipped.</p>
+
+<pre>"ReadRewards": {
+  "Items":    [ { "Shortname": "scrap", "Amount": 5 } ],
+  "Points":   25,
+  "Currency": 100.0
+}</pre>
+
+<p>Old configs using bare item arrays are migrated automatically.</p>
+
+<h2>Pinned Announcements</h2>
+
+<p>Toggle the pin from the admin list &mdash; every row has a PIN / UNPIN button. Pinned posts get:</p>
+
+<ul>
+  <li>A gold tint and PINNED chip in the archive list</li>
+  <li>A matching gold pill in the admin list</li>
+  <li>A thin gold frame and PINNED chip on the popup itself</li>
+</ul>
+
+<p>Pinned posts, drafts and scheduled posts are protected from the <code>MaxStoredAnnouncements</code> cap, so your rules post is never quietly deleted to make room.</p>
+
+<h2>API Hooks</h2>
+
+<p>Other plugins can subscribe to:</p>
+
+<pre>void OnNewsBroadcast(Dictionary&lt;string, object&gt; ann)
+void OnNewsEdited(Dictionary&lt;string, object&gt; ann)
+void OnNewsDeleted(Dictionary&lt;string, object&gt; ann)
+void OnNewsRead(BasePlayer player, Dictionary&lt;string, object&gt; ann)
+void OnNewsLiked(BasePlayer player, Dictionary&lt;string, object&gt; ann, bool added)</pre>
+
+<p>The announcement payload contains: <code>id</code>, <code>title</code>, <code>author</code>, <code>type</code>, <code>timestamp</code>, <code>date</code>, <code>text</code>, <code>imageUrl</code>, <code>likes</code>, <code>pinned</code>, <code>draft</code>, <code>status</code>, <code>publishAt</code>, <code>expiresAt</code>, <code>audience</code>.</p>
+
+<p><code>status</code> is one of Live, Draft, Scheduled or Expired. <code>OnNewsBroadcast</code> fires when a post actually goes live &mdash; including when the scheduler publishes it &mdash; and never fires for a draft or twice for the same post.</p>
+
+<p>Every payload key from earlier versions is unchanged, so existing integrations keep working.</p>
+
+<pre>void OnNewsBroadcast(Dictionary&lt;string, object&gt; ann)
+{
+    Puts($"[News] {ann["author"]} posted '{ann["title"]}' ({ann["type"]})");
+}</pre>
+
+<h2>Also in 1.7.0</h2>
+
+<p>A round of stability work alongside the new features:</p>
+
+<ul>
+  <li>Fixed the archive, individual announcements and the like button being reachable from the F1 console without the <code>newsbroadcaster.view</code> permission.</li>
+  <li>Fixed broken UI layouts on servers running a non-English system locale (comma decimal separators).</li>
+  <li>Fixed <code>AnnouncementsPerPage: 0</code> breaking the archive, and <code>MaxStoredAnnouncements: 0</code> emptying the data file.</li>
+  <li>Fixed pinned posts being the first thing deleted when hitting the storage cap.</li>
+  <li>Fixed ordinary text containing <code>/n</code> (like <code>w/newbies</code> or <code>24/7</code>) having line breaks injected into it.</li>
+  <li>Fixed notification sounds being audible to nearby players instead of just the recipient.</li>
+  <li>Fixed announcement images never loading when ImageLibrary loads after NewsBroadcaster.</li>
+  <li>Fixed long titles causing the entire Discord webhook to fail.</li>
+  <li>A broken config file is now backed up rather than silently overwritten with defaults.</li>
+  <li>Per-player tracking writes are batched, cutting data-file churn on busy servers.</li>
+</ul>
+
+<h2>Optional Dependencies</h2>
+
+<ul>
+  <li><strong>ImageLibrary</strong> &mdash; image caching for announcement banners</li>
+  <li><strong>Notify</strong> &mdash; third-party notification popups</li>
+  <li><strong>ServerRewards</strong> &mdash; RP rewards</li>
+  <li><strong>Economics</strong> &mdash; currency rewards</li>
+</ul>
+
+<p>All are optional; the plugin degrades gracefully when they're absent.</p>
+
+</article>
+
+<script>
+  var said = document.getElementById('said');
+  var listing = document.getElementById('listing');
+  var timer;
+
+  function say(msg){
+    said.textContent = msg;
+    clearTimeout(timer);
+    timer = setTimeout(function(){ said.textContent = ''; }, 2600);
+  }
+
+  // Selecting the range and using execCommand keeps the rich formatting and
+  // works inside sandboxed frames where the async clipboard API is blocked.
+  function copyRich(){
+    var sel = window.getSelection();
+    var range = document.createRange();
+    range.selectNodeContents(listing);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    sel.removeAllRanges();
+    say(ok ? 'Copied with formatting' : 'Press Ctrl/Cmd+C now');
+    if (!ok) { sel.addRange(range); }
+  }
+
+  function copyPlain(){
+    var text = listing.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    say(ok ? 'Copied as plain text' : 'Copy failed — select manually');
+  }
+
+  document.getElementById('copyRich').addEventListener('click', copyRich);
+  document.getElementById('copyPlain').addEventListener('click', copyPlain);
+</script>
+</body>
+</html>
