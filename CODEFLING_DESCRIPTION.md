@@ -1,6 +1,6 @@
 # NewsBroadcaster
 
-**A clean, modern in-game news system for Rust — with rewards, pinned posts, Discord, themes, and a full admin UI.**
+**A clean, modern in-game news system for Rust — with scheduling, rewards, pinned posts, Discord, themes, and a full admin UI.**
 
 NewsBroadcaster lets you push beautiful announcements straight to your players: title, image, body text and a coloured type badge, all wrapped in a polished CUI. Players see a pop-up the moment something is broadcast and can browse the full archive at any time with `/news`.
 
@@ -13,8 +13,14 @@ NewsBroadcaster lets you push beautiful announcements straight to your players: 
 - **Bulk admin operations** — multi-select rows with checkboxes, then delete / pin / unpin everything in one click.
 - **Read & Like rewards** — pay players in items, RP (ServerRewards) and/or currency (Economics) for actually reading and liking your news. Once-per-announcement-per-player.
 - **Discord webhook integration** — every broadcast can mirror to Discord with embed colours per announcement type and an optional role mention.
-- **4 built-in themes** — Default, Dark, Ocean, Rust — switchable in-game with a one-click theme picker.
-- **Show on connect** — the latest unseen announcement greets returning players automatically.
+- **6 built-in themes** — Default, Dark, Ocean, Rust, Midnight, Forest — switchable in-game with a one-click theme picker.
+- **Schedule posts ahead of time** — write the wipe announcement today, set it to publish Friday at 18:00, and it broadcasts itself. Survives restarts and never double-posts.
+- **Expiring posts** — give an event announcement an end date and it leaves the player archive on its own.
+- **Drafts** — save a post without publishing, then flip it live when you are ready.
+- **Targeted announcements** — restrict any post to a permission group (VIP-only news, staff notices) with a single field.
+- **Filterable archive** — players filter by type, show unread only, or search titles and bodies; one click marks everything read.
+- **Export / import** — carry your announcements between servers, or back them up, with two console commands.
+- **Show on connect** — the latest unseen announcement greets returning players automatically, or a quiet "you have 3 unread" line if you prefer.
 - **API hooks** for plugin developers (see below) so other plugins can react to broadcasts, edits, reads and likes.
 - **Smart pagination, scrollable long-form bodies, image caching via ImageLibrary, sound effects, auto-close timer, optional Notify integration.**
 
@@ -40,6 +46,10 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | Command | Description |
 |---|---|
 | `/news` | Open the news archive UI |
+| `/news read` | Mark every announcement you can see as read |
+| `/news unread` | Show only unread announcements |
+| `/news <type>` | Filter by type, e.g. `/news alert` |
+| `/news <text>` | Search titles and bodies |
 
 ### Console / RCON
 | Command | Description |
@@ -49,6 +59,8 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | `news.delete <index>` | Delete an announcement by index (0 = newest) |
 | `news.list` | List every stored announcement with its index, id and pin state |
 | `news.admin` | Open the in-game admin panel |
+| `news.export [filename]` | Back up every announcement to `oxide/data/` |
+| `news.import <filename> [merge\|replace]` | Restore announcements from `oxide/data/` |
 
 **Example:**
 ```
