@@ -1571,9 +1571,13 @@ namespace Oxide.Plugins
 
         // Console/CUI input fields deliver their value as the whole argument
         // string, quoted when it contains spaces.
+        // FullString is a Facepunch.StringView, not a string: .ToString() is a
+        // required conversion here, not defensive coding.
         private static string ReadFullArg(ConsoleSystem.Arg arg)
         {
-            string value = (arg?.FullString ?? string.Empty).Trim();
+            if (arg == null) return string.Empty;
+
+            string value = (arg.FullString.ToString() ?? string.Empty).Trim();
             if (value.Length >= 2 && value.StartsWith("\"") && value.EndsWith("\""))
                 value = value.Substring(1, value.Length - 2);
             return value;
@@ -2318,8 +2322,7 @@ namespace Oxide.Plugins
             var connection = player.net?.connection;
             if (connection == null) return;
 
-            var effect = new Effect(prefab, player.transform.position, Vector3.zero);
-            EffectNetwork.Send(effect, connection);
+            Effect.server.Run(prefab, player.transform.position, Vector3.zero, connection, false);
         }
 
         private void DestroyNotification(BasePlayer player)
