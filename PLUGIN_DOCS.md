@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 1.7.0  
+**Version:** 2.0.0  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -9,41 +9,49 @@
 
 ## Overview
 
-NewsBroadcaster is a Rust server plugin that lets admins post rich in-game news announcements with a modern CUI (Client UI). Announcements can include a title, image, body text, and a type badge. Players receive a pop-up notification when new news is posted and can browse the announcement archive at any time.
+NewsBroadcaster is a Rust server plugin that lets admins post rich in-game news announcements with a modern CUI (Client UI). Announcements have a title, an optional image, body text and a coloured type badge. Players get a notification toast when news is posted and can browse the archive at any time with `/news`.
 
-Optional integrations: **ImageLibrary** (for cached images), **Notify** (for third-party notification popups), and **Discord Webhooks**.
+Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party notification style), **ServerRewards** / **Economics** (read & like rewards) and **Discord webhooks**.
 
 ---
 
-## Features
+## What's new in 2.0.0
 
-- Full-featured in-game announcement editor (create / edit / delete via UI) with a live preview pane and one-click type selection
-- Archive list with paged navigation
-- Per-announcement like/heart button for players
-- Scrollable long-form content body with page indicator
-- Auto-close timer for pop-ups
-- "Show on connect" — shows the latest unseen announcement to joining players
-- 6 built-in UI themes (Default, Dark, Ocean, Rust, Midnight, Forest) — switchable in-game with per-theme color swatches
-- Discord webhook integration with embed colours per announcement type
-- Sound effect on notification
-- ImageLibrary support for image caching
-- Notify plugin integration (optional)
-- Optional item rewards for reading announcements and/or liking them (once per player per announcement)
-- **Pinned announcements** — flag posts so they always sit on top of the archive and admin list
-- **Bulk admin operations** — multi-select rows, then delete / pin / unpin in one click
-- **Sidebar hub admin menu** — `/news` (admin) opens a left-nav layout: brand header, navigation (Announcements / New Post / Themes / Close), a content-area action bar, and the paginated post list. The editor and theme picker share the same shell for a consistent, full-size experience
-- **Live-preview theme picker** — themes are shown as a grid of cards rendered in each theme's own colours, with the active theme framed and badged
-- **Refreshed player archive** — larger layout with type/pinned badges, post date, preview text, and a Read button; **unread posts stand out** with a soft accent wash, an accent frame, a left accent stripe, and an `UNREAD` badge beside the title (like/read counts are admin-only)
-- **Admin dashboard** — totals bar (posts / pinned / likes / reads), per-post type badge and like/read counts, and a one-click VIEW preview of any post as players see it
-- **Scheduled announcements** — set a publish time and the post stays hidden until it is due, then broadcasts itself (survives restarts)
-- **Expiring announcements** — set an expiry and the post drops out of the player archive automatically; admins still see it
-- **Drafts** — save a post without publishing it, then flip it live when you are ready
-- **Per-announcement audiences** — restrict a post to holders of a custom permission (`newsbroadcaster.<audience>`), registered automatically
-- **Archive filters** — filter by type, show unread only, and free-text search titles and bodies
-- **Mark all read** — one button in the archive, or `/news read`
-- **Unread summary on connect** — optional quiet chat line instead of forcing the popup open
-- **Export / import** — move announcements between servers with `news.export` / `news.import`
-- **API hooks** — `OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked` for integrations with other plugins
+2.0.0 is built on the 1.2.0 design — same look, same layout, same data and config files — with fixes and new features on top.
+
+**Players**
+- **Unread tracking** — `NEW` badges and an "N UNREAD" counter in the archive; unread rows are highlighted.
+- **Archive thumbnails** — posts with an image show a small preview in the archive (`ArchiveThumbnails`).
+- **Prev / next arrows** in the popup header with a `2 / 6` position counter.
+- **Back to archive** — opening a post from the archive returns you to the same archive page.
+- **Smoother likes** — liking only updates the heart button, so you keep your scroll position in long posts.
+- **Long titles fit** — the title font shrinks automatically and wraps onto two lines instead of being cut off.
+- **Unread reminder** — on connect, players get one chat line about posts they missed since their last visit.
+- **New chat commands** — `/news latest`, `/news help`, and `/news admin` for admins.
+- **Bigger toast** with the post type in colour and a "click to read" hint.
+
+**Admins**
+- **Type chips** — all five types are visible as one-click buttons (no more cycling).
+- **Options** — `PIN TO TOP`, `NOTIFY ONLINE PLAYERS` and `POST TO DISCORD` toggles in the editor.
+- **Preview** — see the exact popup players will get before you publish.
+- **Typing no longer loses focus** — the editor isn't rebuilt after every field, so you can click straight into the next field.
+- **RESEND** — re-notify online players about an existing post (admin row button or `news.resend`).
+- **Reads / likes per post** in the admin list, plus the type and an `EDITED` marker.
+- **Theme cards with colour swatches**, pagination for more than 8 themes, and a panel that fits its contents.
+- Deleting from page 2+ keeps you on that page.
+
+**Fixes**
+- The 6th theme button no longer spills outside the theme panel.
+- Notification sounds are sent **only to the player** — nearby players no longer hear everyone's chimes.
+- ServerRewards points are paid correctly on current Rust builds (the player id is passed as a plain `ulong`).
+- `/n` no longer breaks normal words like `w/new` or `and/no` (`\n` and `/n` before a capital, digit or space still make a new line).
+- Players already in a NewsBroadcaster screen (e.g. an admin mid-edit) get a toast instead of having their screen replaced by a forced popup.
+- Players who saw a live broadcast don't get the same post again as a popup when they respawn.
+- Pinned posts are never removed by `MaxStoredAnnouncements` trimming.
+- The popup title outline now actually renders (it was attached to an empty element).
+- All UI coordinates are formatted culture-independently (safe on servers with a comma decimal separator).
+- While ImageLibrary is still downloading an image, the client loads it from the URL instead of showing a placeholder.
+- Likes, reads and "last seen" are saved with a 15 s delay instead of rewriting the data file on every click; everything is flushed on server save and unload.
 
 ---
 
@@ -52,7 +60,7 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 | Plugin | Required | Purpose |
 |---|---|---|
 | ImageLibrary | Optional | Cache remote images for faster display |
-| Notify | Optional | Use third-party notification popup style |
+| Notify | Optional | Use a third-party notification popup style |
 | ServerRewards | Optional | Grant RP (reward points) on read / like |
 | Economics | Optional | Grant currency on read / like |
 
@@ -62,17 +70,10 @@ Optional integrations: **ImageLibrary** (for cached images), **Notify** (for thi
 
 | Permission | Description |
 |---|---|
-| `newsbroadcaster.admin` | Full admin access — create, edit, delete, post, manage themes |
-| `newsbroadcaster.view` | Access to `/news` (archive viewer) |
-| `newsbroadcaster.<audience>` | Created on demand when an announcement sets an **Audience**. Only holders see that post |
+| `newsbroadcaster.admin` | Full admin access — create, edit, delete, pin, resend, themes |
+| `newsbroadcaster.view` | See news: archive, popups and toasts (not needed when `RequireViewPermission` is `false`) |
 
-**Audience permissions.** Setting an announcement's *Audience* field to `vip` registers and requires `newsbroadcaster.vip`. The suffix accepts lowercase letters, digits and underscores (max 32 chars); `admin` and `view` are reserved and rejected. Admins always see every announcement regardless of audience.
-
-> **Note:** `newsbroadcaster.view` gates the **archive** (`/news` and the console commands that open it). Broadcast popups and notification toasts still reach every connected player, as in earlier versions — use an *Audience* to restrict who receives a specific post.
-
-Grant permissions with:
 ```
-oxide.grant user <SteamID> newsbroadcaster.view
 oxide.grant group default newsbroadcaster.view
 oxide.grant user <SteamID> newsbroadcaster.admin
 ```
@@ -81,14 +82,12 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 
 ## Chat Commands
 
-| Command | Permission | Description |
+| Command | Who | Description |
 |---|---|---|
-| `/news` | `newsbroadcaster.view` | Open the news archive UI |
-| `/news <page>` | `newsbroadcaster.view` | Open the archive at a given page (1-based) |
-| `/news read` | `newsbroadcaster.view` | Mark every announcement you can see as read |
-| `/news unread` | `newsbroadcaster.view` | Open the archive filtered to unread posts |
-| `/news <type>` | `newsbroadcaster.view` | Filter by type, e.g. `/news alert` |
-| `/news <text>` | `newsbroadcaster.view` | Anything else searches titles and bodies |
+| `/news` | viewers | Open the news archive |
+| `/news latest` | viewers | Open the newest announcement |
+| `/news help` | everyone | List the commands |
+| `/news admin` | admins | Open news management |
 
 ---
 
@@ -96,15 +95,16 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 
 | Command | Permission | Description |
 |---|---|---|
-| `news.show "Title" "ImageURL" "Body" [Type]` | Admin | Post a new announcement from console/RCON |
-| `news.trigger <SteamID/Name> [index]` | Admin | Force-show a popup to a specific player |
-| `news.delete <index>` | Admin | Delete an announcement by its list index (0 = newest) |
-| `news.admin` | Admin | Open the in-game admin management panel |
-| `news.list` | Admin | List stored announcements with index, status and type |
-| `news.export [filename]` | Admin | Write all announcements to `oxide/data/<filename>.json` (defaults to a timestamped name) |
-| `news.import <filename> [merge\|replace]` | Admin | Read announcements back from `oxide/data/<filename>.json`. `merge` (default) skips ids that already exist; `replace` clears the list first |
+| `news.show "Title" "ImageURL" "Body" [Type]` | Admin | Post a new announcement (notifies players, posts to Discord) |
+| `news.list` | Admin | List stored announcements with index, id, reads and likes |
+| `news.delete <index\|id>` | Admin | Delete an announcement |
+| `news.resend <index\|id>` | Admin | Re-send the notification for an announcement to online players |
+| `news.trigger <SteamID/Name> [index]` | Admin | Force-show a popup to one player |
+| `news.admin` | Admin | Open the in-game admin panel |
 
-### `news.show` Usage
+Index `0` is always the newest announcement.
+
+### `news.show` usage
 
 ```
 news.show "Server Update" "https://example.com/img.png" "The server has been updated!" Update
@@ -112,10 +112,10 @@ news.show "Alert!" "-" "PvP zone closing in 10 minutes." Alert
 ```
 
 - Use `"-"` as the image URL to post without an image.
-- Supported types: `Info`, `Warning`, `Alert`, `Event`, `Update` (case-insensitive, defaults to `Info`).
-- The `[Type]` argument is only treated as a type when passed unquoted at the end of the line. Words inside the quoted body that happen to match a type name (e.g. `"Status: Update"`) are preserved verbatim.
+- Types: `Info`, `Warning`, `Alert`, `Event`, `Update` (case-insensitive, default `Info`). The type is only read when it is the last, unquoted word.
+- Use `\n` for a new line.
 
-### Announcement Types & Colours
+### Announcement types
 
 | Type | Colour |
 |---|---|
@@ -127,81 +127,54 @@ news.show "Alert!" "-" "PvP zone closing in 10 minutes." Alert
 
 ---
 
-## Internal Console Commands (UI-driven, not for manual use)
+## The editor
 
-These are called by CUI buttons and should not be run directly:
+`/news admin` → **NEW ANNOUNCEMENT** (or **EDIT** on a row).
 
-All UI-driven commands address announcements by their stable `Id` (a hex GUID assigned on creation), not by list position — this prevents a button from acting on the wrong announcement when posts are added/removed concurrently.
+| Control | What it does |
+|---|---|
+| Title / Image URL / Content body | Text fields. Enter (or `\n`) makes a new line in the body. An invalid image URL is rejected with a chat message |
+| Type chips | Pick one of the five types |
+| **PIN TO TOP** | Pin the post (same as the PIN button in the list) |
+| **NOTIFY ONLINE PLAYERS** | New posts: send the toast/popup to everyone online (on by default). Edits: **RE-NOTIFY PLAYERS**, off by default |
+| **POST TO DISCORD** | New posts only, shown when the Discord webhook is configured |
+| **PREVIEW** | Shows the popup exactly as players will see it. Nothing is published; **BACK TO EDITOR** returns with your draft intact |
+| **PUBLISH / SAVE CHANGES** | A title is required |
+
+Editing keeps likes, reads and reward history, and adds an `EDITED` marker.
+
+---
+
+## Internal console commands (UI buttons)
+
+These are run by CUI buttons. They address announcements by their stable id, not list position.
 
 | Command | Description |
 |---|---|
-| `news.page <page>` | Navigate archive pages |
-| `news.markread` | Mark everything the player can see as read |
-| `news.filter.type <type\|all>` | Filter the archive by announcement type |
-| `news.filter.unread` | Toggle the unread-only archive filter |
-| `news.filter.search <text>` | Set the archive search term |
-| `news.filter.clear` | Reset all archive filters |
-| `news.view <id>` | Open a specific announcement popup |
-| `news.close` | Close the main UI |
-| `news.close.notif` | Dismiss the notification toast |
-| `news.like <id>` | Toggle like on an announcement |
-| `news.admin.page <page>` | Navigate admin list pages |
-| `news.admin.create` | Open the new-announcement editor |
-| `news.admin.edit <id>` | Open the editor for an existing announcement |
-| `news.admin.del <id>` | Delete an announcement via admin UI |
-| `news.admin.delconfirm <id>` | Show the delete-confirmation dialog |
-| `news.admin.togglepin <id> [page]` | Toggle the Pinned flag on an announcement |
-| `news.admin.toggleselect <id> [page]` | Toggle the bulk-action selection for an announcement |
-| `news.admin.selectpage <page>` | Select / deselect every announcement on the current page |
-| `news.admin.clearsel [page]` | Clear the entire bulk-action selection |
-| `news.admin.bulkdelconfirm [page]` | Show the bulk-delete confirmation dialog |
-| `news.admin.bulkdel [page]` | Delete every announcement in the current selection |
-| `news.admin.bulkpin <0\|1> [page]` | Pin (`1`) or unpin (`0`) every announcement in the current selection |
-| `news.admin.themes` | Open the theme selector UI |
-| `news.admin.settheme "ThemeName"` | Apply a theme |
-| `news.editor.input <field> <value>` | Update a field in the editor (`title` / `image` / `text` / `publish` / `expires` / `audience`) |
-| `news.editor.type` | Cycle the announcement type in the editor (the `◀ TYPE ▶` button) |
-| `news.editor.draft` | Toggle the draft flag in the editor |
-| `news.editor.save` | Save and broadcast the edited/new announcement (requires a non-empty title) |
-| `news.editor.cancel` | Cancel editing and return to admin list |
-| `news.confirm.close` | Dismiss the delete-confirmation dialog |
-
-### Body scrolling
-
-Long announcements scroll inside a native CUI scroll view — players drag the auto-hiding scrollbar or use the mouse wheel inside the body panel. No extra commands are involved.
-
----
-
-## Scheduling, Expiry and Drafts
-
-The editor exposes four extra controls alongside the type selector.
-
-| Control | Effect |
-|---|---|
-| **DRAFT** | While set, the post is never broadcast and never visible to players. Flip it off and save to publish |
-| **PUBLISH AT** | Empty = publish now. Otherwise the post stays hidden until the time arrives, then broadcasts once |
-| **EXPIRES AT** | Empty = never. Otherwise the post leaves the player archive once the time passes |
-| **AUDIENCE** | Empty = everyone. Otherwise a permission suffix — only holders of `newsbroadcaster.<audience>` see the post |
-
-**Time format.** Both time fields accept an absolute server-local timestamp (`2026-01-31 18:00`, `2026-01-31 18:00:00`, or `2026-01-31`) or a relative offset: `+30m`, `+2h`, `+3d`, `+1w`. An unparseable value is rejected with a chat message and the field is left unchanged.
-
-**How publishing works.** A scheduler runs every 30 seconds and publishes anything that has come due — firing the `OnNewsBroadcast` hook, the Discord webhook, and the in-game notification exactly once. The "already broadcast" state is stored, so a restart never re-announces a post, and a post whose entire window elapsed while the server was down is retired quietly instead of arriving late.
-
-Editing a published post never re-broadcasts it. Moving a published post back to draft, or forward to a future publish time, re-arms it so it announces again when it next goes live.
-
-Expiry must be later than the publish time; saving is rejected otherwise. Drafts and not-yet-published posts are never removed by `MaxStoredAnnouncements` trimming.
-
----
-
-## Archive Filters
-
-The archive header carries a filter bar: type chips (`ALL` plus one per type), an `UNREAD` toggle, a search box matching titles and bodies (case-insensitive), and `CLEAR`. Filters are per player, survive paging, and are dropped on disconnect. When a filter is active the header count reads `shown OF total`.
-
-`MARK ALL READ` appears in the archive footer whenever the player has unread posts. It marks read but deliberately **does not** pay read rewards — those still require opening the announcement.
+| `news.page <page>` | Archive page |
+| `news.view <id> [archive\|direct]` | Open a post (`archive` = "back to archive" button) |
+| `news.like <id>` | Toggle like |
+| `news.close` / `news.close.notif` | Close the UI / the toast |
+| `news.admin.page <page>` | Admin list page |
+| `news.admin.create` / `news.admin.edit <id>` | Open the editor |
+| `news.admin.togglepin <id> [page]` | Pin / unpin |
+| `news.admin.resend <id> [page]` | Re-notify online players |
+| `news.admin.delconfirm <id> [page]` / `news.admin.del <id> [page]` | Delete with confirmation |
+| `news.admin.toggleselect <id> [page]`, `news.admin.selectpage <page>`, `news.admin.clearsel [page]` | Bulk selection |
+| `news.admin.bulkpin <0\|1> [page]`, `news.admin.bulkdelconfirm [page]`, `news.admin.bulkdel [page]` | Bulk actions |
+| `news.admin.themes [page]` / `news.admin.settheme "Name" [page]` | Theme picker |
+| `news.editor.input <title\|image\|text> <value>` | Editor field |
+| `news.editor.settype <Type>` / `news.editor.type` | Set / cycle the type |
+| `news.editor.toggle <pin\|notify\|discord>` | Editor options |
+| `news.editor.preview` / `news.editor.back` | Preview and return |
+| `news.editor.save` / `news.editor.cancel` | Save / cancel |
+| `news.confirm.close` | Close a confirmation dialog |
 
 ---
 
 ## Configuration (`oxide/config/NewsBroadcaster.json`)
+
+Existing configs are upgraded in place: your values and themes are kept and new options are added with their defaults.
 
 ```json
 {
@@ -209,10 +182,14 @@ The archive header carries a filter bar: type chips (`ALL` plus one per type), a
     "AutoCloseSeconds": 15,
     "EnableAutoClose": true,
     "ShowNewsOnConnect": true,
+    "UnreadReminderOnConnect": true,
+    "RequireViewPermission": true,
     "ServerName": "SERVER NEWS",
     "AnnouncementsPerPage": 5,
     "MaxStoredAnnouncements": 50,
-    "UnreadSummaryOnConnect": false
+    "StripLinksFromBody": true,
+    "PopupImageFrame": "Tall",
+    "ArchiveThumbnails": true
   },
   "Notification": {
     "Enabled": true,
@@ -226,308 +203,158 @@ The archive header carries a filter bar: type chips (`ALL` plus one per type), a
     "Enabled": false,
     "WebhookUrl": "",
     "BotName": "Server News",
+    "AvatarUrl": "",
     "RoleMention": ""
   },
   "Rewards": {
     "EnableReadReward": false,
     "ReadDelaySeconds": 5,
-    "ReadRewards": {
-      "Items": [{ "Shortname": "scrap", "Amount": 5, "SkinId": 0 }],
-      "Points": 0,
-      "Currency": 0.0
-    },
+    "ReadRewards": { "Items": [{ "Shortname": "scrap", "Amount": 5, "SkinId": 0 }], "Points": 0, "Currency": 0.0 },
     "EnableLikeReward": false,
-    "LikeRewards": {
-      "Items": [{ "Shortname": "scrap", "Amount": 10, "SkinId": 0 }],
-      "Points": 0,
-      "Currency": 0.0
-    },
+    "LikeRewards": { "Items": [{ "Shortname": "scrap", "Amount": 10, "SkinId": 0 }], "Points": 0, "Currency": 0.0 },
     "NotifyOnReward": true,
     "PointsLabel": "RP",
     "CurrencyLabel": "coins"
   },
   "SelectedTheme": "Default",
-  "Themes": {
-    "Default": { ... },
-    "Dark":    { ... },
-    "Ocean":   { ... },
-    "Rust":    { ... }
-  }
+  "Themes": { "Default": { }, "Dark": { }, "Ocean": { }, "Rust": { }, "Midnight": { }, "Forest": { } }
 }
 ```
 
-### General Settings
+### General
 
 | Key | Default | Description |
 |---|---|---|
-| `AutoCloseSeconds` | `15` | Seconds before a broadcast popup auto-closes |
-| `EnableAutoClose` | `true` | Toggle auto-close for broadcast popups |
-| `ShowNewsOnConnect` | `true` | Show latest unseen announcement when a player wakes |
-| `ServerName` | `"SERVER NEWS"` | Label shown in the UI header |
-| `AnnouncementsPerPage` | `5` | Archive / admin list rows per page |
-| `MaxStoredAnnouncements` | `50` | Maximum announcements kept in the data file (pinned, draft and pending posts are never trimmed) |
-| `UnreadSummaryOnConnect` | `false` | Send a quiet "you have N unread" chat line on connect instead of opening the popup. Requires `ShowNewsOnConnect` |
+| `AutoCloseSeconds` | `15` | Seconds before a broadcast / connect popup closes by itself |
+| `EnableAutoClose` | `true` | Auto-close broadcast and connect popups (popups a player opens never auto-close) |
+| `ShowNewsOnConnect` | `true` | Show the newest post to a player who has not seen it yet when they wake up |
+| `UnreadReminderOnConnect` | `true` | Once per session, tell the player in chat how many posts they missed since their last visit |
+| `RequireViewPermission` | `true` | `false` = everyone can see news without `newsbroadcaster.view` |
+| `ServerName` | `"SERVER NEWS"` | Label in the UI headers and the Discord embed |
+| `AnnouncementsPerPage` | `5` | Rows per archive / admin page (1–8) |
+| `MaxStoredAnnouncements` | `50` | Max posts kept (1–500). Oldest unpinned posts are removed first; pinned posts are kept |
+| `StripLinksFromBody` | `true` | Remove `http(s)://` and `www.` links from new post bodies (the 1.2.0 behaviour). Existing posts are never changed |
+| `PopupImageFrame` | `"Tall"` | `"Tall"` fills the popup's left column (1.2.0 look). `"Wide"` uses a 16:9 frame so widescreen images aren't stretched |
+| `ArchiveThumbnails` | `true` | Show image thumbnails in the archive |
 
-### Notification Settings
+### Notification
 
 | Key | Default | Description |
 |---|---|---|
-| `Enabled` | `true` | Use the built-in toast notification |
-| `UseNotifyPlugin` | `false` | Delegate notification to the Notify plugin |
-| `NotifyType` | `0` | Notify plugin notification type index |
+| `Enabled` | `true` | Show the toast for new posts. `false` = open the popup directly instead |
+| `UseNotifyPlugin` | `false` | Send the notification through the Notify plugin |
+| `NotifyType` | `0` | Notify plugin type index |
 | `Position` | `"Right"` | Toast position: `"Right"` or `"Left"` |
-| `Duration` | `8` | Seconds the toast is visible |
-| `NotificationSound` | loot drag fx | Sound asset path played on notification |
+| `Duration` | `8` | Seconds the toast stays visible |
+| `NotificationSound` | loot drag fx | Sound prefab, played only for the receiving player. Empty = no sound |
 
-### Discord Settings
-
-| Key | Default | Description |
-|---|---|---|
-| `Enabled` | `false` | Enable Discord webhook posting |
-| `WebhookUrl` | `""` | Discord channel webhook URL |
-| `BotName` | `"Server News"` | Webhook display name |
-| `RoleMention` | `""` | Role mention string (e.g. `<@&123456>`) |
-
-The post is sent as a **rich Discord embed** with an emoji + type-coloured title, an "Author" header, the body text, an `Type` field plus optional `Status` (📌 Pinned) and `Engagement` (❤ likes / 👁 reads) fields, the image, the server name in the footer, and Discord's native timestamp.
-
-Note: the webhook payload sets `allowed_mentions: { parse: ["roles"] }`, so body text and titles cannot trigger `@everyone` or `@here` even if a user types those literally.
-
-### Reward Settings
+### Discord
 
 | Key | Default | Description |
 |---|---|---|
-| `EnableReadReward` | `false` | Grant the read bundle when a player keeps an announcement popup open for `ReadDelaySeconds` |
-| `ReadDelaySeconds` | `5` | Seconds the popup must remain open before the read reward fires |
-| `ReadRewards` | `{ Items: [scrap × 5], Points: 0, Currency: 0 }` | What to grant on a successful read |
-| `EnableLikeReward` | `false` | Grant the like bundle when a player likes (♥) an announcement |
-| `LikeRewards` | `{ Items: [scrap × 10], Points: 0, Currency: 0 }` | What to grant on the first like |
-| `NotifyOnReward` | `true` | Whisper the player a chat message listing what they received |
-| `PointsLabel` | `"RP"` | Label shown after the points amount in the chat message |
-| `CurrencyLabel` | `"coins"` | Label shown after the currency amount in the chat message |
+| `Enabled` | `false` | Post new announcements to Discord |
+| `WebhookUrl` | `""` | Channel webhook URL |
+| `BotName` | `"Server News"` | Webhook display name (empty = webhook default) |
+| `AvatarUrl` | `""` | Optional webhook avatar image URL |
+| `RoleMention` | `""` | Sent above the embed, e.g. `<@&123456789>`, `@here` or `@everyone` |
 
-Each `RewardBundle` (`ReadRewards` / `LikeRewards`) has three sections — any combination may be set:
+The embed has a type-coloured side bar, a `TYPE • SERVER NAME` header, the title, body (truncated at 4000 characters), image, "Posted by" footer and Discord's timestamp. Only the configured `RoleMention` can ping — text inside titles and bodies never does.
 
-```json
-{
-  "Items":    [ { "Shortname": "scrap", "Amount": 5, "SkinId": 0 } ],
-  "Points":   25,
-  "Currency": 100.0
-}
-```
+### Rewards
 
-- **`Items`** — list of Rust items. Use any valid Rust shortname (`scrap`, `wood`, `stones`, `metal.refined`, etc.). `SkinId` is optional (default `0`).
-- **`Points`** — integer RP (reward points) deposited via the [ServerRewards](https://umod.org/plugins/server-rewards) plugin. Set to `0` to skip.
-- **`Currency`** — number of currency units deposited via the [Economics](https://umod.org/plugins/economics) plugin. Set to `0` to skip.
+| Key | Default | Description |
+|---|---|---|
+| `EnableReadReward` | `false` | Pay the read bundle when a player keeps a post open for `ReadDelaySeconds` |
+| `ReadDelaySeconds` | `5` | Seconds the popup must stay open to count as read |
+| `ReadRewards` | scrap × 5 | Read bundle |
+| `EnableLikeReward` | `false` | Pay the like bundle on a player's first like of a post |
+| `LikeRewards` | scrap × 10 | Like bundle |
+| `NotifyOnReward` | `true` | Tell the player in chat what they received |
+| `PointsLabel` / `CurrencyLabel` | `"RP"` / `"coins"` | Labels used in that message |
 
-Behavior details:
+Each bundle can combine **Items** (any shortname, optional `SkinId`), **Points** (ServerRewards) and **Currency** (Economics). Rewards are paid at most once per player per post. Full inventory → items drop at the player's feet. If a needed plugin is missing, the reward is skipped with a console warning and **not** recorded, so it can be paid later. Old configs with bare item arrays are migrated automatically.
 
-- Both rewards are granted **at most once per announcement per player**. Subsequent re-reads or like-toggles do not re-trigger.
-- The read reward only fires if the popup is still open when the timer elapses, so closing the popup early (or auto-close finishing first if `AutoCloseSeconds < ReadDelaySeconds`) skips the reward.
-- The like reward fires on the *first* like only; un-liking does not refund or re-trigger.
-- If the player's inventory is full, items are dropped at their feet.
-- Points / Currency are silently skipped (with a server-console warning) if `ServerRewards` / `Economics` are not loaded. The other reward components still apply.
-- Invalid item `Shortname`s are skipped with a warning; other items in the list still apply.
+### Theme colours
 
-Plugin upgrades from the previous reward schema (`ReadRewards` / `LikeRewards` as bare JSON arrays) are migrated automatically — the existing item list is wrapped into `Items` and `Points` / `Currency` start at `0`.
-
-### Theme Colors (`UIColors`)
-
-Each theme exposes these RGBA string fields (`"R G B A"`, values 0–1):
-
-| Field | Description |
-|---|---|
-| `PanelBg` | Main panel background |
-| `HeaderBg` | Header / footer bar background |
-| `ContentBg` | Archive list item background |
-| `ButtonPrimary` | Primary action button colour |
-| `ButtonSecondary` | Secondary / nav button colour |
-| `TextTitle` | Title text colour |
-| `TextNormal` | Body text colour |
-| `TextMuted` | Hint / meta text colour |
+Each theme has these `"R G B A"` (0–1) fields: `PanelBg`, `HeaderBg`, `ContentBg`, `ButtonPrimary`, `ButtonSecondary`, `TextTitle`, `TextNormal`, `TextMuted`. Add your own themes to the `Themes` list; the picker pages through them 8 at a time.
 
 ---
 
-## Pinned Announcements
+## Pinned announcements
 
-Any announcement can be **pinned** so that it always sits at the top of the in-game archive (`/news`) and the admin list, regardless of its timestamp. Use cases: server rules, wipe schedule, donation links, current event banners.
+Pinned posts always sit at the top of the archive and admin list, with a gold tint, a gold **PINNED** badge and a gold frame around the popup. Pin from the admin row (**PIN / UNPIN**), from the editor (**PIN TO TOP**) or in bulk.
 
-- Toggle the pin from the admin list — every row has a **📌 PIN** / **📌 UNPIN** button next to **EDIT** / **DEL**. The button itself turns gold when the row is pinned, so admin lists at a glance show pin state.
-- Pinned posts get a coherent gold treatment everywhere a player can see them:
-  - **Archive list (`/news`)**: the pinned row gets a subtle gold tint and a solid gold **PINNED** chip between the title and the date.
-  - **Admin list**: the pinned row gets the same gold tint, and the per-row pin button switches to a gold pill so it visually matches.
-  - **Announcement popup**: a thin gold frame outlines the entire popup, and a solid gold **PINNED** chip sits in the top-right corner of the header bar — impossible to miss.
-- Sort order: pinned (newest first) → unpinned (newest first). Insertion order in the underlying data is unchanged, so "show on connect" and `news.list` still surface the most recently broadcast announcement.
+## Bulk admin operations
 
-A console-side toggle is also available:
+Tick the checkbox on admin rows (or **SELECT PAGE**) and a toolbar appears: **DELETE** (with confirmation), **PIN ALL**, **UNPIN ALL**, **CLEAR**. The selection is per admin, survives paging, and is dropped on disconnect.
 
-```
-news.admin.togglepin <id> [returnPage]
-```
+## Read tracking
 
-`<id>` is the announcement's hex id (find it via `news.list`). `returnPage` is the admin-list page to re-render afterwards; defaults to `0`.
-
----
-
-## Bulk Admin Operations
-
-The admin list now supports multi-selection. Each row has a checkbox on the far left; click it to add the announcement to your selection set. While the selection is non-empty, a toolbar appears above the page footer:
-
-| Toolbar button | Action |
-|---|---|
-| `✕ DELETE` | Open a confirmation dialog, then delete every selected announcement |
-| `📌 PIN ALL` | Pin every selected announcement (fires `OnNewsEdited` per change) |
-| `📌 UNPIN ALL` | Unpin every selected announcement |
-| `CLEAR` | Empty the selection without affecting any data |
-| `☑ SELECT PAGE` | Toggle: select every announcement currently visible on the page; if everything on the page is already selected, deselect them all |
-
-Behavior details:
-
-- The selection is **per-admin** and lives only in memory; it is dropped when the player disconnects, on `Unload`, and after a successful bulk-delete.
-- Selecting items on one page and then paging to another does **not** lose the selection — the toolbar always reflects the global count.
-- Stale ids (announcements deleted by another admin while you had them selected) are pruned automatically before any bulk action.
-- Bulk delete fires `OnNewsDeleted` once **per** removed announcement.
-- Permissions: every bulk command requires `newsbroadcaster.admin` (or the F1 `IsAdmin` flag), exactly like the single-item operations.
-
-Console equivalents (mostly used by the UI buttons):
-
-```
-news.admin.toggleselect <id> [page]
-news.admin.selectpage <page>
-news.admin.clearsel [page]
-news.admin.bulkdelconfirm [page]
-news.admin.bulkdel [page]
-news.admin.bulkpin <0|1> [page]
-```
+A post counts as **read** for a player after its popup has stayed open for `ReadDelaySeconds`. That drives the archive's `NEW` badges, the unread counter, the admin list's read counts, the read reward and the `OnNewsRead` hook.
 
 ---
 
 ## API Hooks
 
-Other plugins can react to NewsBroadcaster events by subscribing to these hooks. All hook payloads are plain primitive types (`Dictionary<string, object>`, `BasePlayer`, `bool`, etc.) so consumers don't need to reference NewsBroadcaster's internal types.
+Other plugins can subscribe to these hooks. Payloads use plain types, so consumers don't need NewsBroadcaster's internal classes.
 
 | Hook | Signature | When it fires |
 |---|---|---|
-| `OnNewsBroadcast` | `void OnNewsBroadcast(Dictionary<string, object> ann)` | An announcement goes live — RCON `news.show`, an editor save that publishes immediately, or the scheduler firing a queued post. Never fires for a draft, and never twice for the same post. |
-| `OnNewsEdited` | `void OnNewsEdited(Dictionary<string, object> ann)` | An existing announcement's body, type, or pinned-state is updated through the admin editor or `news.admin.togglepin` / bulk pin. |
-| `OnNewsDeleted` | `void OnNewsDeleted(Dictionary<string, object> ann)` | An announcement is removed (RCON `news.delete`, single delete, or any bulk delete — fires once per victim). |
-| `OnNewsRead` | `void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)` | A player has kept an announcement popup open for `Rewards.ReadDelaySeconds` (default 5s), or used *mark all read*. Fires at most **once per player per announcement**, regardless of whether read rewards are enabled. |
-| `OnNewsLiked` | `void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)` | A player toggles the heart on an announcement. `added == true` for a like, `false` for an un-like. |
+| `OnNewsBroadcast` | `void OnNewsBroadcast(Dictionary<string, object> ann)` | A new announcement is published (console or editor) |
+| `OnNewsEdited` | `void OnNewsEdited(Dictionary<string, object> ann)` | An announcement is edited, pinned or unpinned |
+| `OnNewsDeleted` | `void OnNewsDeleted(Dictionary<string, object> ann)` | An announcement is deleted (single, bulk, console) or trimmed by `MaxStoredAnnouncements` |
+| `OnNewsRead` | `void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)` | First time a player reads a post |
+| `OnNewsLiked` | `void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)` | A player likes (`true`) or un-likes (`false`) a post |
 
-The announcement payload dictionary contains:
-
-| Key | Type | Notes |
-|---|---|---|
-| `id` | `string` | Stable hex Guid for the announcement |
-| `title` | `string` | |
-| `author` | `string` | |
-| `type` | `string` | One of `Info`, `Warning`, `Alert`, `Event`, `Update` |
-| `timestamp` | `long` | `DateTime.UtcNow.Ticks` at creation |
-| `date` | `string` | `yyyy-MM-dd HH:mm` invariant-culture timestamp shown in the UI |
-| `text` | `string` | Body text (with `\n` line breaks) |
-| `imageUrl` | `string` | May be empty |
-| `likes` | `int` | Current number of likes |
-| `pinned` | `bool` | |
-| `draft` | `bool` | `true` while the post is an unpublished draft |
-| `status` | `string` | `Live`, `Draft`, `Scheduled` or `Expired` at the moment the hook fired |
-| `publishAt` | `long` | UTC ticks of the scheduled publish time, `0` when unscheduled |
-| `expiresAt` | `long` | UTC ticks of the expiry time, `0` when it never expires |
-| `audience` | `string` | Permission suffix restricting the post, empty when open to everyone |
-
-Existing keys are unchanged, so consumers written against 1.6.x keep working.
-
-### Example consumer
+Payload keys: `id` (string), `title`, `author`, `type` (`Info`/`Warning`/`Alert`/`Event`/`Update`), `timestamp` (UTC ticks), `date` (`yyyy-MM-dd HH:mm`), `text`, `imageUrl`, `likes` (int), `pinned` (bool). Unchanged from 1.2.0.
 
 ```csharp
-using System.Collections.Generic;
-using Oxide.Core.Plugins;
-
-namespace Oxide.Plugins
+void OnNewsBroadcast(Dictionary<string, object> ann)
 {
-    [Info("NewsListener", "you", "1.0.0")]
-    class NewsListener : RustPlugin
-    {
-        void OnNewsBroadcast(Dictionary<string, object> ann)
-        {
-            Puts($"[News] {ann["author"]} posted '{ann["title"]}' ({ann["type"]})");
-        }
+    Puts($"[News] {ann["author"]} posted '{ann["title"]}' ({ann["type"]})");
+}
 
-        void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)
-        {
-            Puts($"{player.displayName} read announcement {ann["id"]}");
-        }
-
-        void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)
-        {
-            Puts($"{player.displayName} {(added ? "liked" : "un-liked")} {ann["title"]}");
-        }
-    }
+void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)
+{
+    Puts($"{player.displayName} {(added ? "liked" : "un-liked")} {ann["title"]}");
 }
 ```
 
 ---
 
-## Data File (`oxide/data/NewsBroadcaster_Data.json`)
+## Data file (`oxide/data/NewsBroadcaster_Data.json`)
 
-Stores all announcements and per-player last-seen timestamps. The plugin handles migration from the legacy format (plain list) automatically.
-
-**Announcement object fields:**
+Stores announcements and each player's last-seen marker. 1.2.0 data loads unchanged.
 
 | Field | Type | Description |
 |---|---|---|
-| `Title` | string | Announcement title |
-| `ImageUrl` | string | Remote image URL (empty = no image) |
-| `Text` | string | Body text (supports `\n` for line breaks) |
-| `Date` | string | Legacy formatted post date. Display now derives from `Timestamp`; this is only a fallback for pre-1.7.0 rows |
-| `Author` | string | Poster's display name or server name |
+| `Id` | string | Stable id |
+| `Title`, `ImageUrl`, `Text` | string | Content (`Text` uses `\n` line breaks) |
+| `Date` | string | Post date shown in the UI |
+| `EditedDate` | string | Last edit (new in 2.0.0, empty if never edited) |
+| `Author` | string | Poster |
 | `Type` | enum | `Info / Warning / Alert / Event / Update` |
-| `Timestamp` | long | UTC ticks — used for ordering and last-seen |
-| `Pinned` | bool | Keeps the post at the top of every list |
-| `PublishAt` | long | UTC ticks; `0` = published immediately |
-| `ExpiresAt` | long | UTC ticks; `0` = never expires |
-| `Draft` | bool | `true` = never broadcast, never visible to players |
-| `Broadcast` | bool | `true` once the post has been announced; prevents re-announcing after a restart |
-| `Audience` | string | Permission suffix restricting visibility; empty = everyone |
-| `LikedPlayers` | HashSet\<ulong\> | Steam IDs of players who liked this post |
-| `ReadByPlayers` | HashSet\<ulong\> | Steam IDs of players who have read this post |
-| `ReadRewardedPlayers` | HashSet\<ulong\> | Steam IDs already paid the read reward |
-| `LikeRewardedPlayers` | HashSet\<ulong\> | Steam IDs already paid the like reward |
-
-Fields added in 1.7.0 default to `0` / `false` / `""` on existing data, so an old data file loads unchanged. Announcements created before 1.7.0 are marked as already broadcast on first load so the scheduler does not re-announce them.
+| `Timestamp` | long | UTC ticks — ordering and last-seen |
+| `Pinned` | bool | Keeps the post on top |
+| `LikedPlayers`, `ReadByPlayers` | Steam IDs | Likes and reads |
+| `ReadRewardedPlayers`, `LikeRewardedPlayers` | Steam IDs | Players already paid each reward |
 
 ---
 
 ## Localization
 
-All UI strings are registered in Oxide's lang system and can be overridden per language in `oxide/lang/<lang>/NewsBroadcaster.json`.
-
-Default keys: `NoPermissionCommand`, `NoPermissionView`, `NoNewsHistory`, `NewsBroadcasted`, `ArchiveTitle`, `ReadMore`, `ViewArchive`, `PostedBy`, `NewAnnouncement`, `Close`, `Previous`, `Next`, `Page`, `AdminControl`, `NewPost`, `Themes`, `NoAnnouncementsYet`, `CreateAnnouncement`, `EditAnnouncement`, `AnnouncementTitle`, `ImageUrl`, `AnnouncementType`, `ContentBody`, `ContentBodyHint`, `SaveBroadcast`, `Cancel`, `SelectTheme`, `Active`, `Unknown`, `EditButton`, `DelButton`, `DeleteAnnouncement`, `DeleteConfirmBody`, `ConfirmDelete`, `EditTargetGone`, `AnnouncementSavedNew`, `AnnouncementUpdated`, `TitleRequired`, `RewardRead`, `RewardLike`, `PinButton`, `UnpinButton`, `PinnedBadge`, `SelectedCount`, `BulkDelete`, `BulkPin`, `BulkUnpin`, `ClearSelection`, `SelectPageToggle`, `BulkDeleteTitle`, `BulkDeleteBody`, `BulkDeleted`, `BulkPinned`, `BulkUnpinned`, `NavAnnouncements`, `BrandTop`, `BrandBottom`, `ThemeHint`, `ArchiveEmpty`, `LikesReads`, `ByAuthor`, `ByAuthorDate`, `StatPosts`, `StatPinned`, `StatLikes`, `StatReads`, `UnreadBadge`, `UnreadSummary`, `MarkedAllRead`, `NothingToMark`, `StatusLive`, `StatusDraft`, `StatusScheduled`, `StatusExpired`, `PublishAtLabel`, `ExpiresAtLabel`, `AudienceLabel`, `DraftLabel`, `DraftOn`, `DraftOff`, `ScheduleHint`, `AudienceHint`, `InvalidDate`, `InvalidAudience`, `ExpiryBeforePublish`, `SavedScheduled`, `SavedDraft`, `FilterAll`, `FilterUnread`, `ClearFilters`, `MarkAllRead`, `SearchPlaceholder`, `NoMatches`, `ShowingCount`, `PlayerNotFound`, `NoAnnouncementsStored`, `DeletedAnnouncement`, `InvalidIndex`, `TriggeredFor`, `NoAnnouncementsAvailable`, `ThemeSet`, `ThemeNotFound`, `ThemeAvailable`, `UsageShow`, `UsageTrigger`, `UsageDelete`, `UsageSetTheme`, `UsageImport`, `ExportDone`, `ImportDone`, `ImportEmpty`, `ImportFailed`.
+All player-facing text is in Oxide's lang system (`oxide/lang/<lang>/NewsBroadcaster.json`). New keys are added to your existing lang file automatically. Keys whose meaning changed in 2.0.0 were renamed so the new text shows up (`TypeLabel`, `BodyHint`, `NoPostsYet`, `PublishedNoNotify`, `ActiveBadge`); the old keys can be deleted from your lang file.
 
 ---
 
-## Behavior Notes
+## Testing a build
 
-- **URLs are stripped from body text.** `NormalizeBodyText` removes `http(s)://` and `www.` links from announcement bodies on save — both for the console command (`news.show`) and the in-game editor. Links belong in the image URL field or in Discord, not in the CUI body.
-- **Editing never re-notifies players.** Only newly created announcements trigger the notification toast / popup broadcast. Edits only change the title, image, body and type — the announcement's pinned state, likes, read marks and read/like reward tracking are preserved.
-- **A title is required to save.** Saving (new or edit) is rejected with a chat message if the title is empty or whitespace; the title is trimmed before storage.
-- **Dates render from the stored UTC timestamp.** The displayed date is derived from `Timestamp` and shown in server-local time, so it stays correct if the host timezone changes. The legacy `Date` string is only used for rows written before 1.7.0.
-- **Only `\n` breaks lines.** Earlier versions also translated `/n`, which corrupted ordinary text such as `w/newbies` or `24/7`. That alias has been removed; `\n` is unchanged.
-- **Per-player tracking writes are debounced.** Last-seen markers, likes, and read marks are flushed to the data file ~20 seconds after they change (and on plugin unload). Structural changes (post, edit, delete, pin, import) are saved immediately.
-- **Notification sounds are private.** The toast sound is sent only to the player receiving it, so a group sharing a base no longer hears one chime per member.
-- **Broadcasts respect audiences.** A post with an *Audience* set is only pushed to players holding that permission; unrestricted posts reach everyone, as before.
-- **Config values are range-checked on load.** Out-of-range settings are clamped, a warning names the value, and the corrected config is written back. `AnnouncementsPerPage` is `1-12`, `MaxStoredAnnouncements` is `1-5000`, and the timer values are at least 1 second — a `0` here previously broke the archive layout or emptied the data file.
-- **A broken config is never overwritten blind.** If the config cannot be parsed, a copy is written to `oxide/data/NewsBroadcaster_ConfigBackup.json` and the failure is logged before defaults are applied.
-- **Stale last-seen rows are pruned.** Markers that sit behind every retained announcement are dropped on save, so the data file no longer grows by one row per player forever.
-- **ImageLibrary load order no longer matters.** If ImageLibrary loads after NewsBroadcaster, announcement images are re-imported when it appears.
+The repository includes `tools/test-harness/`, which compiles the plugin against stand-ins for the Oxide/Rust APIs (strict C# 6/7, .NET Framework 4.8 surface), runs a functional test suite and renders the CUI to screenshots. See `tools/test-harness/README.md`. Final checks should still be done on a real server (`oxide.reload NewsBroadcaster`).
 
 ---
 
-## Known Limitations & Ideas
+## Known limitations
 
-- Notification toast position supports `"Left"` and `"Right"` only — no top-center option.
-- Scheduling is one-shot; there is still no *recurring* announcement (e.g. re-post rules every 30 minutes).
-- The scheduler ticks every 30 seconds, so a scheduled post can publish up to 30 seconds after its stated time.
-- No `news.reload` RCON command to re-read a hand-edited data file (`news.import` covers most of this).
-- The announcement body renders in a native CUI scroll view; the scroll height is estimated from a character-per-line guess, so very different font sizes may need it retuned.
-- `news.show` posts immediately — scheduling, drafts, expiry and audiences are editor-only.
-- The default theme definitions are duplicated between `LoadDefaultConfig` and the migration block in `LoadConfig`.
-- The theme selector lists as many themes as fit in the panel; with many custom themes, extra entries must be applied via `news.admin.settheme "Name"`.
+- The toast position is `Left` or `Right` only.
+- The popup body's scroll height is estimated from a characters-per-line guess. On very narrow (4:3) screens the last line of a very long post may sit close to the bottom edge.
+- Scheduling, drafts and per-post audiences are not part of this version.

@@ -4,45 +4,58 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-NewsBroadcaster is a single-file **Oxide/uMod plugin for the game Rust** (`NewsBroadcaster.cs`). It lets server admins post rich in-game news announcements (title, image, body, type badge) via a CUI, with player notifications, an archive viewer, rewards, Discord webhooks, and themes. Author is "DEDA"; the plugin is distributed on Codefling.
+NewsBroadcaster is a single-file **Oxide/uMod plugin for the game Rust** (`NewsBroadcaster.cs`). It lets server admins post rich in-game news announcements (title, image, body, type badge) via a CUI, with player notifications, an archive viewer with unread tracking, likes, rewards, Discord webhooks, and themes. Author is "DEDA"; the plugin is distributed on Codefling.
 
-There is no build system, package manager, or test suite. The repo is the plugin source plus documentation:
-- `NewsBroadcaster.cs` — the entire plugin (~2700 lines, one class).
-- `PLUGIN_DOCS.md` — end-user/admin reference (commands, permissions, config, API hooks).
-- `CODEFLING_DESCRIPTION.md` — marketing copy for the plugin store listing.
+Version 2.0.0 is built on the author's own 1.2.0 design (the author's "known good" version). The 1.3–1.7 redesigns in git history were dropped; keep the 1.2.0 look and layout unless asked otherwise.
+
+Repo contents:
+- `NewsBroadcaster.cs` — the entire plugin (~3400 lines, one class).
+- `PLUGIN_DOCS.md` — admin reference (commands, permissions, config, API hooks, what's new).
+- `CODEFLING_DESCRIPTION.md` — marketing copy for the store listing.
+- `previews/` — rendered screenshots of every screen (from the test harness).
+- `tools/test-harness/` — compile checks, functional tests and the screenshot renderer (see below).
+- `new-joiner-architecture.tour` — CodeTour walkthrough of the code; update line numbers when code moves.
 
 ## Building / running / testing
 
-There is no local compile step. The plugin is compiled at runtime by the Oxide/uMod framework on a Rust dedicated server. To "test" a change you deploy and run it on a server:
-- Drop `NewsBroadcaster.cs` into the server's `oxide/plugins/` directory; Oxide hot-reloads it and reports compile errors to the server console.
+The plugin is compiled at runtime by Oxide on a Rust dedicated server:
+- Drop `NewsBroadcaster.cs` into `oxide/plugins/`; Oxide hot-reloads it and prints compile errors to the console.
 - Reload manually with `oxide.reload NewsBroadcaster`.
-- Grant permissions to exercise features: `oxide.grant user <SteamID> newsbroadcaster.admin` / `newsbroadcaster.view`.
+- Grant permissions: `oxide.grant user <SteamID> newsbroadcaster.admin` / `newsbroadcaster.view`.
 
-Because there's no compiler available in this repo, validate C# changes by careful reading and by keeping syntax consistent with the existing Oxide API usage. Do not introduce dependencies beyond what the runtime provides (`Oxide.*`, `UnityEngine`, `Newtonsoft.Json`).
+**Before committing a change, run `tools/test-harness/run.sh`** (needs `dotnet-sdk-8.0`). It:
+1. compiles the plugin as C# 6 and C# 7 against the .NET Framework 4.8 API, with stand-ins for Oxide/Rust/Unity/CUI (`Stubs/`, signatures mirror the real APIs; `BasePlayer.userID` is an `EncryptedValue<ulong>` like current Rust),
+2. runs the functional suite (`Harness/Tests.cs`, ~125 checks). A simulated client tracks each player's live CUI tree and flags unknown parents or duplicate element names,
+3. with `./run.sh previews`, renders every screen to PNG (`render/`, needs Node + Playwright + `fonts-roboto-unhinted`). Copy them to `previews/` when the UI changes.
+
+When adding a feature, add a test in `Tests.cs`. If the plugin uses a new Oxide/Rust API, add it to the stubs with the **real** signature, so a wrong call fails here as it would on a server. The stubs are not the game; a server reload is still the final check.
 
 ## Code architecture
 
-Everything lives in `public class NewsBroadcaster : RustPlugin` inside `namespace Oxide.Plugins`. The file is organized into `#region` blocks — navigate by region:
+Everything lives in `public class NewsBroadcaster : RustPlugin` inside `namespace Oxide.Plugins`, organized into `#region` blocks:
 
-- **Fields & Constants** — layer names, permission constants (`PermAdmin`, `PermView`), `DataFile`, regexes, and the many per-player state dictionaries keyed by `ulong` SteamID (open-UI tracking, auto-close timers, active editors, scroll offsets, reward timers, admin multi-select selections).
-- **Data Structures** — nested classes: `StoredData` (persisted `Announcement` list + `LastSeenNews`), `Announcement`, `ReadRewardState`, and the config tree (`ConfigData` → `GeneralSettings`, `NotificationSettings`, `DiscordSettings`, `RewardSettings`/`RewardItem`/`RewardBundle`, `UIColors` themes).
-- **Localization** — `Msg(...)` keys; all player-facing strings go through the lang system.
-- **Configuration** — `LoadConfig` does **manual migration** of older config shapes via `JObject` before deserializing to `ConfigData`, injecting missing default themes and saving if `needsSave`. Preserve this migration path when changing config schema.
-- **Data Management** — JSON persistence through `Interface.Oxide.DataFileSystem` (`DataFile` = `NewsBroadcaster_Data`), including a legacy-format read fallback.
-- **Commands** — console/RCON commands (`news.show`, `news.trigger`, `news.delete`, `news.list`, `news.admin`) and chat command (`/news`). All admin commands gate on `PermAdmin`/`IsAdmin`.
-- **Notification UI / UI Generation / Admin UI / Theme UI** — CUI construction (`CuiElementContainer`, manual anchor math). This is the bulk of the file. UI is built fresh and pushed per player; state needed across rebuilds lives in the per-player dictionaries above.
-- **Rewards** — read/like payouts via optional `[PluginReference]` plugins, once per player per announcement (tracked in `Announcement`/`StoredData`).
-- **Discord Webhooks** — webhook POST with per-type embed colors.
+- **Fields & Constants** — layer names (`LayerName`, `NotificationLayer`, `ConfirmLayer`, `PopupPanel`, `LikeButtonName`), permissions, regexes, layout constants, and the per-player state dictionaries keyed by `ulong` SteamID: `autoCloseTimers`, `notificationTimers`, `playersWithUiOpen`, `editors` (`EditorSession` = draft + editing id + notify/discord toggles), `readRewardTimers`, `adminSelections`, `likeCooldowns`, `openPopups` (which post a popup shows and its `PopupOrigin`), `archivePages`, `remindedPlayers`.
+- **Data Structures** — `StoredData` (announcements + `LastSeenNews`), `Announcement`, `EditorSession`, `PopupState`/`PopupOrigin` (`Broadcast`, `Direct`, `Archive`, `Preview`), and the config tree (`ConfigData` → `GeneralSettings`, `NotificationSettings`, `DiscordSettings`, `RewardSettings`/`RewardBundle`/`RewardItem`, `UIColors` themes).
+- **Localization** — every player-facing string, through `Msg(key, player, args)`. If a key's meaning changes, rename the key: Oxide keeps old values in existing lang files.
+- **Helpers** — text normalization (`NormalizeBodyText`, `/n` handling, optional link stripping), `F()`/`Anchor()` invariant float formatting for CUI anchors (never interpolate raw floats into anchors), title auto-sizing (`PickTitleFontSize`), lookup/permission helpers (`CanView`, `CanAdmin`, `IsAdminArg`, `AdminPlayer`), `PlaySound` (sent only to the target player via `EffectNetwork`).
+- **Configuration** — `LoadConfig` migrates older shapes through `JObject` (legacy reward arrays, missing themes), validates and clamps, and re-saves when the file is missing newer keys. Keep this migration path when changing the schema.
+- **Data Management** — lifecycle hooks (`Init`, `OnServerInitialized`, `OnPluginLoaded`, `OnServerSave`, `OnPlayerSleepEnded`, `Unload`, `OnPlayerDisconnected`). **Two save paths:** `SaveAnnouncements()` writes immediately (admin actions, rewards paid); `MarkDataDirty()` debounces likes/reads/last-seen (15 s, flushed on server save and unload). `LoadAnnouncements` repairs old data and sorts newest-first.
+- **Publishing** — `CreateAnnouncement` (insert, save, register image, `OnNewsBroadcast`) and `NotifyPlayers` (toast or popup per player; marks the post as seen for everyone reached).
+- **Commands** — console/RCON (`news.show`, `news.list`, `news.delete`, `news.resend`, `news.trigger`, `news.admin`), the `/news` chat command (`latest`, `admin`, `help`), and all UI button commands (`news.view`, `news.like`, `news.admin.*`, `news.editor.*`). Admin UI commands get the player through `AdminPlayer(arg)`.
+- **Notification UI / UI Generation / Admin UI / Theme UI** — CUI construction with manual anchor math. Each screen is rebuilt and pushed whole, except the like button, which is swapped in place (`AddLikeButton`) so the reader's scroll position is kept. The editor is not rebuilt on text input, so fields don't lose focus.
+- **Rewards** — read/like payouts (items, ServerRewards points with a plain `ulong` id, Economics currency), at most once per player per announcement.
+- **Discord Webhooks** — embed per post; only the configured `RoleMention` may ping.
 
 ### Cross-cutting things to know
 
-- **Optional integrations** are referenced via `[PluginReference] private Plugin ImageLibrary, Notify, ServerRewards, Economics;` — always null-check before calling; the plugin must degrade gracefully when they're absent.
-- **API hooks** the plugin fires for other plugins (via `Interface.CallHook`): `OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked`. Payloads come from `BuildHookData(ann)`. Keep these stable — they are a documented public contract (see `PLUGIN_DOCS.md`).
-- **Per-player cleanup**: timers and UI state dictionaries are keyed by SteamID and must be torn down on `OnPlayerDisconnected`/UI close to avoid leaks. When adding new per-player state, add corresponding cleanup.
-- **Version number** appears in the `[Info("NewsBroadcaster", "DEDA", "x.y.z")]` attribute and should be bumped there for releases; note the docs and the attribute can drift, so update both.
+- **Optional integrations** are `[PluginReference] private Plugin ImageLibrary, Notify, ServerRewards, Economics;` — always null-check and `IsLoaded`-check; the plugin must work without them.
+- **API hooks** fired via `Interface.CallHook`: `OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked`, with payloads from `BuildHookData(ann)`. These are a documented public contract — don't rename or drop keys.
+- **Per-player cleanup**: every SteamID-keyed collection must be cleared in `OnPlayerDisconnected` and `Unload` (the test suite checks this by name; add new collections to that test).
+- **Oxide sandbox / compatibility**: stay within C# 6/7 features and .NET Framework 4.x APIs; no `System.IO`, `System.Net`, `System.Reflection` or threading. Only `Oxide.*`, `UnityEngine`, `Newtonsoft.Json` and the game assemblies are available.
+- **Version** lives in `[Info("NewsBroadcaster", "DEDA", "x.y.z")]`; bump it and the version in `PLUGIN_DOCS.md` together.
 
 ## Conventions
 
-- Match the existing C#/Oxide idioms already in the file (regions, manual CUI anchor math, `Msg()` for all user-facing text, defensive null checks around plugin references).
-- User-facing strings belong in the Localization region, not inline.
-- The CUI uses string color tuples like `"0.10 0.08 0.07 0.97"` (RGBA, space-separated) consistent with Rust's CUI; follow that format for theme colors.
+- Match the existing idioms: regions, manual CUI anchor math via `Anchor()`/`F()`, `Msg()` for all user-facing text, defensive null checks around plugin references.
+- CUI colours are RGBA strings like `"0.10 0.08 0.07 0.97"`, consistent with Rust's CUI.
+- CUI sizing assumes the 1280x720 reference canvas (font sizes and offsets are in those units; the popup is 832x468 units).

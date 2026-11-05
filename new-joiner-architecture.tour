@@ -1,95 +1,149 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
   "title": "NewsBroadcaster Plugin Architecture Tour",
-  "description": "A guided walkthrough of the single-file Rust/Oxide plugin for a new maintainer: state model, config migration, the broadcast pipeline, UI generation, and the optional integrations it must degrade gracefully without.",
+  "description": "A guided walkthrough of the single-file Rust/Oxide plugin (v2.0.0) for a new maintainer: state model, config migration, the broadcast pipeline, UI generation, and the optional integrations it must degrade gracefully without.",
   "ref": "main",
   "steps": [
     {
       "directory": ".",
       "title": "One File, Whole Plugin",
-      "description": "Situation: `NewsBroadcaster.cs` (~4000 lines) is the entire plugin — no build step, no package manager. `PLUGIN_DOCS.md` is the admin/API reference and `CODEFLING_DESCRIPTION.md` is store marketing copy; neither is source of truth for behavior.\n\nGotcha: there is no compiler here. Oxide compiles the file at runtime on a live Rust server — you validate changes by reading carefully and reloading with `oxide.reload NewsBroadcaster`, not by running a test suite."
+      "description": "Situation: `NewsBroadcaster.cs` (~3400 lines) is the entire plugin. `PLUGIN_DOCS.md` is the admin/API reference, `CODEFLING_DESCRIPTION.md` is store copy, `previews/` holds rendered screenshots.\n\nThere is no server here, but `tools/test-harness/run.sh` compiles the plugin as C# 6/7 against .NET Framework 4.8 with stand-ins for the Oxide/Rust APIs, runs ~125 functional checks and can render every screen to PNG. A real server reload (`oxide.reload NewsBroadcaster`) is still the final check."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 16,
+      "line": 22,
       "title": "Plugin Identity & Optional Integrations",
-      "description": "Situation: the `[Info]` attribute carries the version string (`1.7.0`) that must be bumped for releases — and drifts out of sync with the docs if you forget.\n\nMechanism: `[PluginReference]` on line 21 wires up `ImageLibrary`, `Notify`, `ServerRewards`, `Economics` as *optional* plugins.\n\nImplication: every call site against these four must null-check first — a server without ServerRewards installed should still broadcast news fine, just without point payouts."
+      "description": "The `[Info]` attribute (line 17) carries the version (`2.0.0`) — bump it together with `PLUGIN_DOCS.md`.\n\n`[PluginReference]` wires up `ImageLibrary`, `Notify`, `ServerRewards`, `Economics` as *optional* plugins. Every call site null-checks and `IsLoaded`-checks them: a server without ServerRewards still broadcasts news fine, just without point payouts."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "selection": { "start": { "line": 40, "character": 0 }, "end": { "line": 61, "character": 0 } },
+      "selection": {
+        "start": {
+          "line": 45,
+          "character": 0
+        },
+        "end": {
+          "line": 60,
+          "character": 0
+        }
+      },
       "title": "Per-Player State Lives in Parallel Dictionaries",
-      "description": "Situation: `config`/`storedData`/`announcements` are the plugin's shared state; everything below is per-player state keyed by `ulong` SteamID — open editors, admin multi-select, archive filters, reward timers.\n\nGotcha: there is no single \"player session\" object. Adding a new piece of per-player UI state means adding a new dictionary here *and* a matching removal in `OnPlayerDisconnected` (you'll see that pairing next) — miss the second half and it's a slow memory leak.\n\nAlso note `dataDirty`/`saveTimer` (59-61): writes to disk are debounced, not immediate — covered in the Data Management step."
+      "description": "Everything keyed by `ulong` SteamID: open UI, auto-close and toast timers, `editors` (an `EditorSession` per admin: draft + toggles), read-reward timers, bulk selections, like cooldowns, `openPopups` (which post a popup shows and where it was opened from), archive pages and the once-per-session reminder set.\n\nGotcha: there is no player session object. A new dictionary needs a matching removal in `OnPlayerDisconnected` and `Unload` — the test suite checks every one by name.\n\n`dataDirty`/`saveTimer` drive the debounced save path (next steps)."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "selection": { "start": { "line": 81, "character": 0 }, "end": { "line": 115, "character": 0 } },
+      "selection": {
+        "start": {
+          "line": 96,
+          "character": 0
+        },
+        "end": {
+          "line": 112,
+          "character": 0
+        }
+      },
       "title": "The Announcement Record",
-      "description": "Situation: `Announcement` is the one data shape everything revolves around — stored on disk inside `StoredData.Announcements`, and it's what CUI rendering, rewards, and Discord embeds all read from.\n\nMechanism: `PublishAt`/`ExpiresAt`/`Draft`/`Broadcast` together derive the announcement's lifecycle (`AnnouncementStatus`: Live/Draft/Scheduled/Expired) — there's no separate status enum stored, it's computed.\n\nGotcha: `LikedPlayers`/`ReadByPlayers`/`ReadRewardedPlayers`/`LikeRewardedPlayers` are per-announcement HashSets of player IDs — reward-once semantics live here, not in a global ledger."
+      "description": "`Announcement` is the one data shape everything revolves around: stored in `StoredData.Announcements`, rendered by every screen, sent to Discord and hooks.\n\n`LikedPlayers`/`ReadByPlayers`/`ReadRewardedPlayers`/`LikeRewardedPlayers` are per-post sets of SteamIDs — read tracking (NEW badges) and reward-once logic live here. `EditedDate` was added in 2.0.0; missing fields simply default on old data."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "selection": { "start": { "line": 700, "character": 0 }, "end": { "line": 742, "character": 0 } },
+      "selection": {
+        "start": {
+          "line": 600,
+          "character": 0
+        },
+        "end": {
+          "line": 655,
+          "character": 0
+        }
+      },
       "title": "Config Migration Happens Before Deserialization",
-      "description": "Situation: `LoadConfig` doesn't just deserialize `ConfigData` — it first reads the raw `JObject` and patches it (line 704: `MigrateLegacyRewardArrays`; line 706: detects a missing `Rewards` block) before converting.\n\nMechanism: if no themes exist yet (line 725), it synthesizes five default themes from whatever legacy top-level colors it can find, then flags `needsSave` so the upgraded shape is written back once.\n\nImplication for future schema changes: don't just rename/move a config field — add a JObject-level migration step here too, or existing servers' configs silently reset to defaults on upgrade."
+      "description": "`LoadConfig` reads the raw `JObject` first and patches it (`MigrateLegacyRewardArrays`), injects the default themes if none exist, validates/clamps values, and finally re-saves when the file lacks keys added in newer versions (the `DeepEquals` check).\n\nImplication: for a schema change, add a JObject-level migration here, or existing servers silently lose settings on upgrade."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "selection": { "start": { "line": 959, "character": 0 }, "end": { "line": 986, "character": 0 } },
+      "selection": {
+        "start": {
+          "line": 879,
+          "character": 0
+        },
+        "end": {
+          "line": 916,
+          "character": 0
+        }
+      },
       "title": "Two Save Paths: Immediate vs Debounced",
-      "description": "Situation: `SaveAnnouncements()` writes the data file synchronously and is used for admin actions (create/edit/delete) that must survive a crash right away.\n\nMechanism: `MarkDataDirty()` is the other path — high-frequency, low-value updates (likes, read marks, last-seen) just flip `dataDirty` and arm a `SaveDebounceSeconds` timer, coalescing many updates into one write.\n\nGotcha: `Unload()` (a few hundred lines down) checks `if (dataDirty) SaveAnnouncements()` before the plugin unloads — if you add a new mutation path, route it through `MarkDataDirty()` or a direct save, or a busy-server edit can be lost on reload."
+      "description": "`SaveAnnouncements()` writes the data file at once — used for admin actions and whenever a reward was paid (so a crash cannot pay twice). It also trims to `MaxStoredAnnouncements`, keeping pinned posts first and firing `OnNewsDeleted` for dropped ones.\n\n`MarkDataDirty()` is for high-frequency, low-value updates (likes, read marks, last-seen): it flips `dataDirty` and arms a 15 s timer. `OnServerSave` and `Unload` flush anything pending."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 1265,
+      "line": 1067,
       "title": "Cleanup Mirrors the State Dictionaries",
-      "description": "Situation: `OnPlayerDisconnected` is the teardown counterpart to the per-player dictionaries from the Fields & Constants step — `activeEditors`, `activeEditorIds`, `playersWithUiOpen`, `adminSelections`, `archiveFilters`, plus the two timer dictionaries just above it.\n\nImplication: this function is the checklist for \"did I forget to clean up my new per-player state.\" If you add a dictionary keyed by `ulong userID`, this is where its `.Remove(id)` call belongs.\n\nMechanism: `Init()` (line 1181, just above) is the mirror-image startup: register permissions, then `LoadAnnouncements()` to populate state before any player connects."
+      "description": "`OnPlayerDisconnected` is the teardown checklist for the dictionaries from the Fields step. `Init()` (line 837) is the mirror image at startup: register permissions, then `LoadAnnouncements()` repairs old data (null sets, duplicate ids) and sorts newest-first so index 0 is always the latest post.\n\n`OnPlayerSleepEnded` (line 999) shows the newest unseen post and sends the 'N unread' reminder once per session."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "selection": { "start": { "line": 1330, "character": 0 }, "end": { "line": 1356, "character": 0 } },
+      "selection": {
+        "start": {
+          "line": 1090,
+          "character": 0
+        },
+        "end": {
+          "line": 1131,
+          "character": 0
+        }
+      },
       "title": "The Broadcast Pipeline",
-      "description": "Situation: `news.show` (console command, admin-only) is the most direct path from \"admin runs a command\" to \"players see news\" — the admin CUI's save button ultimately builds an `Announcement` the same way.\n\nMechanism: construct `Announcement` → insert at index 0 → `SaveAnnouncements()` (immediate write) → fire `OnNewsBroadcast` hook → `SendToDiscord` → `PublishToPlayers` (pushes the popup UI to connected, eligible players).\n\nGotcha: the hook fires *before* Discord and player delivery — a hook subscriber sees the announcement exist even if the Discord webhook later fails."
+      "description": "`CreateAnnouncement` → insert at index 0 → `SaveAnnouncements()` → register the image with ImageLibrary → `OnNewsBroadcast` hook. Both `news.show` (line 1133) and the editor's save button go through it, then `SendToDiscord` and `NotifyPlayers`.\n\n`NotifyPlayers` shows a toast (or the popup when toasts are disabled) to every viewer, never forces a popup over an open NewsBroadcaster screen, and marks the post as seen so respawning doesn't show it again."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "selection": { "start": { "line": 1450, "character": 0 }, "end": { "line": 1463, "character": 0 } },
+      "line": 1294,
       "title": "Player Entry Point: /news",
-      "description": "Situation: this `[ChatCommand]` is the only door players use — gated by `HasView` (line 1453), which checks `newsbroadcaster.view` or admin.\n\nMechanism: no arguments opens the archive at page 0 (`ShowHistory`); subresource `read` marks everything read; a bare number pages the archive. Same dispatch pattern is reused for `unread`, filters, etc. just below.\n\nImplication: any new player-facing subcommand should slot into this same `sub` switch rather than adding a new `[ChatCommand]`."
+      "description": "The chat command dispatches `latest`, `admin` (admins only), `help`, and otherwise opens the archive (`ShowHistory`). Everything else players do is a console command bound to a CUI button (`news.view`, `news.like`, `news.page`)."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "selection": { "start": { "line": 2388, "character": 0 }, "end": { "line": 2409, "character": 0 } },
+      "line": 1998,
       "title": "CUI Is Built Fresh, Every Time",
-      "description": "Situation: `ShowPopup` is representative of every UI function in this file — there's no persistent UI object, just a `CuiElementContainer` rebuilt and pushed per call.\n\nMechanism: `DestroyUI`/`DestroyNotification` tear down any existing panel first, then anchors are hand-computed (`AnchorMin`/`AnchorMax` as `\"x y\"` strings) — see the `A(x, y)` helper from earlier for why floats are formatted invariant-culture.\n\nGotcha: colors come from `config.Colors` (the active theme, e.g. `c.PanelBg`) — hardcoding a color here instead of pulling from `UIColors` breaks theme switching."
+      "description": "`ShowPopup` is representative: tear down (`DestroyUI`), then build a `CuiElementContainer` with hand-computed anchors — always via `Anchor()`/`F()` so floats are culture-invariant.\n\nTwo exceptions avoid rebuilds: `AddLikeButton` (line 1987) swaps just the heart so the reader keeps their scroll position, and editor text input doesn't rebuild the editor so fields keep focus.\n\n`PopupOrigin` decides the footer button (archive / back to archive / back to editor), auto-close (broadcasts only) and read tracking (never for previews)."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3057,
-      "title": "Admin UI Shares One Shell",
-      "description": "Situation: `BuildAdminShell` is called by every admin screen (list, editor, themes) to get the same dark overlay, sidebar nav, and title bar — it returns the main panel name so callers know where to attach their own content.\n\nMechanism: `AddNavItem` (just above, line 3035) renders one sidebar row and highlights it if `active` — the content region contract is `x: 0.285..0.975, y: 0..0.905`, documented in the comment above the function.\n\nImplication: a new admin screen should call `BuildAdminShell` rather than reconstructing the overlay/sidebar/title bar from scratch."
+      "line": 2570,
+      "title": "Admin Screens",
+      "description": "`ShowAdminList` (rows with RESEND / PIN / EDIT / DEL and bulk selection), `ShowEditor` (line 2873: type chips, option toggles, preview) and `ShowThemeSelection` share the same admin colours (`AdminSurface`, `AdminSurfaceRaised`, …). Admin button commands get the caller through `AdminPlayer(arg)`, which returns null for non-admins."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3755,
-      "title": "Rewards: Optional Plugin, Once Per Player",
-      "description": "Situation: `GiveRewards` grants item stacks directly via `ItemManager.CreateByName`/`player.inventory.GiveItem`, and separately calls the optional `ServerRewards` plugin for points if it's loaded.\n\nGotcha: it drops the item on the ground (line 3776) if the inventory is full instead of losing it — and only calls `ServerRewards.Call(\"AddPoints\", ...)` when `ServerRewards.IsLoaded`, otherwise the points are silently skipped (see the `else` branch just past this excerpt).\n\nMechanism: the caller (e.g. `news.like`, or the read-reward timer near line 3865) is responsible for the once-per-player gate via the `LikeRewardedPlayers`/`ReadRewardedPlayers` sets on `Announcement` — `GiveRewards` itself has no idempotency check."
+      "line": 3261,
+      "title": "Rewards: Optional Plugins, Once Per Player",
+      "description": "`GiveRewards` creates items directly (dropping them at the player's feet when the inventory is full), adds ServerRewards points with a plain `ulong` id (newer Rust wraps `userID`, which ServerRewards can't read), and deposits Economics currency.\n\n`CanGrantRewardBundle` checks everything first; if a needed plugin is missing nothing is paid and nothing is recorded, so the reward can be paid later."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3873,
+      "line": 3379,
       "title": "Discord Is Fire-and-Forget",
-      "description": "Situation: `SendToDiscord` is a no-op unless `config.Discord.Enabled` and a webhook URL are set — same optional-integration discipline as `ImageLibrary`/`ServerRewards`.\n\nMechanism: `webrequest.Enqueue` posts async; failure just `PrintError`s the response code, it never throws back into the broadcast pipeline that called it.\n\nImplication: a bad or rate-limited webhook can never block or roll back a broadcast — by the time this runs, the announcement is already saved and already shown to players."
+      "description": "`SendToDiscord` is a no-op unless the webhook is configured. `webrequest.Enqueue` posts asynchronously and only logs failures — a bad webhook never breaks a broadcast. `allowed_mentions` lets only the configured `RoleMention` ping (`@everyone`/`@here` are allowed only when that setting contains them)."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "selection": { "start": { "line": 481, "character": 0 }, "end": { "line": 502, "character": 0 } },
+      "selection": {
+        "start": {
+          "line": 536,
+          "character": 0
+        },
+        "end": {
+          "line": 553,
+          "character": 0
+        }
+      },
       "title": "The Public Hook Contract",
-      "description": "Situation: `BuildHookData` is the payload shape for every `Interface.CallHook` in the file (`OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked`) — other server plugins depend on these exact keys.\n\nGotcha: this is a documented public contract (see `PLUGIN_DOCS.md`'s API section) — renaming a key like `imageUrl` or dropping a field is a breaking change for every plugin author who hooked into it, even though nothing in this file itself would fail to compile."
+      "description": "`BuildHookData` is the payload for every `Interface.CallHook` (`OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked`). Other plugins depend on these exact keys — renaming or dropping one is a breaking change; adding keys is fine."
     },
     {
       "title": "Where to Go From Here",
-      "description": "You now have the map: state dictionaries + their disconnect-time cleanup, the config migration path, the two save modes, the broadcast pipeline (create → save → hook → Discord → publish), and the shared CUI/admin-shell patterns.\n\nNext move: for a UI change, start from `ShowPopup` or `BuildAdminShell`; for a data-shape change, start from `Announcement` and trace forward through `LoadConfig`'s migration and `BuildHookData`'s contract to see everywhere it's consumed."
+      "description": "You now have the map: state dictionaries and their cleanup, config migration, the two save modes, the broadcast pipeline, and the CUI patterns.\n\nFor a UI change start from `ShowPopup`/`ShowHistory`/`ShowAdminList`, then run `tools/test-harness/run.sh previews` and look at the PNGs. For a data change start from `Announcement` and add a test in `tools/test-harness/Harness/Tests.cs`."
     }
   ]
 }
