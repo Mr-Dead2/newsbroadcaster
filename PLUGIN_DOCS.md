@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 2.1.0  
+**Version:** 2.2.0  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -14,6 +14,18 @@ NewsBroadcaster is a Rust server plugin that lets admins post rich in-game news 
 Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party notification style), **ServerRewards** / **Economics** (read & like rewards) and **Discord webhooks**.
 
 ---
+
+## What's new in 2.2.0
+
+A modern restyle that keeps the same layout, colours and themes:
+
+- **Flat outlined surfaces** — thin outline borders and hairline dividers replace the heavy header/footer bars; secondary actions are subtle outlined ("ghost") buttons and only the main action is a filled button.
+- **Popup reads like an article** — type pill and server name in the header, then the title, a "posted by · date" line right under it, and the text aligned with the title. The image sits in a framed card (the duplicate type badge on the image is gone). Like button bottom-left, main action bottom-right.
+- **Archive rows are clickable cards** — click anywhere on a row to open it; a `›` chevron replaces the per-row READ button. Unread rows get an accent outline, pinned rows a gold one.
+- Admin list, editor, theme picker, confirmation dialogs and the toast use the same outlined style (outlined fields, chips, toggles and checkboxes).
+- Popup body sizing was re-tuned so short posts don't show an unnecessary scrollbar.
+
+No config, data or command changes.
 
 ## What's new in 2.1.0
 

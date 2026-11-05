@@ -434,7 +434,7 @@ static class Tests
         Check(fs >= 14 && fs <= 18, $"120-char title shrinks to fit (font {fs})");
         H.CfgSet("General.PopupImageFrame", "Wide");
         H.Console(player, $"news.view {H.Id(Ann0)}");
-        Check(H.Live(player).Any(e => e["components"].Any(c => (string)c["type"] == "RectTransform" && (string)c["anchormin"] == "0.035 0.2895")), "wide image frame layout");
+        Check(H.Live(player).Any(e => e["components"].Any(c => (string)c["type"] == "RectTransform" && (string)c["anchormin"] == "0.03 0.29")), "wide image frame layout");
 
         // ---------------------------------------------------------------
         Section("Mark all read");

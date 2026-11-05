@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
   "title": "NewsBroadcaster Plugin Architecture Tour",
-  "description": "A guided walkthrough of the single-file Rust/Oxide plugin (v2.1.0) for a new maintainer: state model, config migration, the broadcast pipeline, UI generation, and the optional integrations it must degrade gracefully without.",
+  "description": "A guided walkthrough of the single-file Rust/Oxide plugin (v2.2.0) for a new maintainer: state model, config migration, the broadcast pipeline, UI generation, and the optional integrations it must degrade gracefully without.",
   "ref": "main",
   "steps": [
     {
@@ -13,7 +13,7 @@
       "file": "NewsBroadcaster.cs",
       "line": 22,
       "title": "Plugin Identity & Optional Integrations",
-      "description": "The `[Info]` attribute (line 17) carries the version (`2.1.0`) — bump it together with `PLUGIN_DOCS.md`.\n\n`[PluginReference]` wires up `ImageLibrary`, `Notify`, `ServerRewards`, `Economics` as *optional* plugins. Every call site null-checks and `IsLoaded`-checks them: a server without ServerRewards still broadcasts news fine, just without point payouts."
+      "description": "The `[Info]` attribute (line 17) carries the version (`2.2.0`) — bump it together with `PLUGIN_DOCS.md`.\n\n`[PluginReference]` wires up `ImageLibrary`, `Notify`, `ServerRewards`, `Economics` as *optional* plugins. Every call site null-checks and `IsLoaded`-checks them: a server without ServerRewards still broadcasts news fine, just without point payouts."
     },
     {
       "file": "NewsBroadcaster.cs",
@@ -34,11 +34,11 @@
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 106,
+          "line": 111,
           "character": 0
         },
         "end": {
-          "line": 127,
+          "line": 132,
           "character": 0
         }
       },
@@ -49,11 +49,11 @@
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 673,
+          "line": 678,
           "character": 0
         },
         "end": {
-          "line": 720,
+          "line": 725,
           "character": 0
         }
       },
@@ -64,11 +64,11 @@
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 953,
+          "line": 958,
           "character": 0
         },
         "end": {
-          "line": 990,
+          "line": 995,
           "character": 0
         }
       },
@@ -77,19 +77,19 @@
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 1145,
+      "line": 1150,
       "title": "Cleanup Mirrors the State Dictionaries",
-      "description": "`OnPlayerDisconnected` is the teardown checklist for the dictionaries from the Fields step. `Init()` (line 911) is the mirror image at startup: register permissions, then `LoadAnnouncements()` repairs old data (null sets, duplicate ids) and sorts newest-first so index 0 is always the latest post.\n\n`OnPlayerSleepEnded` (line 1076) shows the newest unseen post and sends the 'N unread' reminder once per session."
+      "description": "`OnPlayerDisconnected` is the teardown checklist for the dictionaries from the Fields step. `Init()` (line 916) is the mirror image at startup: register permissions, then `LoadAnnouncements()` repairs old data (null sets, duplicate ids) and sorts newest-first so index 0 is always the latest post.\n\n`OnPlayerSleepEnded` (line 1081) shows the newest unseen post and sends the 'N unread' reminder once per session."
     },
     {
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 1169,
+          "line": 1174,
           "character": 0
         },
         "end": {
-          "line": 1212,
+          "line": 1217,
           "character": 0
         }
       },
@@ -98,31 +98,31 @@
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 1411,
+      "line": 1416,
       "title": "Player Entry Point: /news",
       "description": "The chat command dispatches `latest`, `read` (mark all read), `admin` (admins only), `help`, and otherwise opens the archive (`ShowHistory`). Everything else players do is a console command bound to a CUI button (`news.view`, `news.like`, `news.vote`, `news.page`, `news.markread`)."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 2279,
+      "line": 2320,
       "title": "CUI Is Built Fresh, Every Time",
-      "description": "`ShowPopup` is representative: tear down (`DestroyUI`), then build a `CuiElementContainer` with hand-computed anchors — always via `Anchor()`/`F()` so floats are culture-invariant.\n\nTwo exceptions avoid rebuilds: `AddLikeButton` (line 2268) swaps just the heart and `AddPollBlock` (line 2588) just the poll so the reader keeps their scroll position, and editor text input doesn't rebuild the editor so fields keep focus.\n\n`PopupOrigin` decides the footer button (archive / back to archive / back to editor), auto-close (broadcasts only) and read tracking (never for previews)."
+      "description": "`ShowPopup` is representative: tear down (`DestroyUI`), then build a `CuiElementContainer` with hand-computed anchors — always via `Anchor()`/`F()` so floats are culture-invariant.\n\nTwo exceptions avoid rebuilds: `AddLikeButton` (line 2308) swaps just the heart and `AddPollBlock` (line 2577) just the poll so the reader keeps their scroll position, and editor text input doesn't rebuild the editor so fields keep focus.\n\n`PopupOrigin` decides the footer button (archive / back to archive / back to editor), auto-close (broadcasts only) and read tracking (never for previews).\n\nStyle helpers: `AddOutline` (1-unit border via offsets), `AddHairline`, `AddGhostButton`, `AddPanelShadow`, `AddBackdrop` — reuse them so new screens match."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 2999,
+      "line": 2941,
       "title": "Admin Screens",
-      "description": "`ShowAdminList` (rows with RESEND / PIN / EDIT / DEL and bulk selection), `ShowEditor` (line 3324: type chips, option toggles incl. ADD POLL, poll option fields, preview) and `ShowThemeSelection` share the same admin colours (`AdminSurface`, `AdminSurfaceRaised`, …). Admin button commands get the caller through `AdminPlayer(arg)`, which returns null for non-admins."
+      "description": "`ShowAdminList` (rows with RESEND / PIN / EDIT / DEL and bulk selection), `ShowEditor` (line 3246: type chips, option toggles incl. ADD POLL, poll option fields, preview) and `ShowThemeSelection` share the same admin colours (`AdminSurface`, `AdminSurfaceRaised`, …). Admin button commands get the caller through `AdminPlayer(arg)`, which returns null for non-admins."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3742,
+      "line": 3632,
       "title": "Rewards: Optional Plugins, Once Per Player",
       "description": "`GiveRewards` creates items directly (dropping them at the player's feet when the inventory is full), adds ServerRewards points with a plain `ulong` id (newer Rust wraps `userID`, which ServerRewards can't read), and deposits Economics currency.\n\n`CanGrantRewardBundle` checks everything first; if a needed plugin is missing nothing is paid and nothing is recorded, so the reward can be paid later."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3860,
+      "line": 3750,
       "title": "Discord Is Fire-and-Forget",
       "description": "`SendToDiscord` is a no-op unless the webhook is configured. `webrequest.Enqueue` posts asynchronously and only logs failures — a bad webhook never breaks a broadcast. `allowed_mentions` lets only the configured `RoleMention` ping (`@everyone`/`@here` are allowed only when that setting contains them)."
     },
@@ -130,11 +130,11 @@
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 607,
+          "line": 612,
           "character": 0
         },
         "end": {
-          "line": 626,
+          "line": 631,
           "character": 0
         }
       },

@@ -2,12 +2,13 @@
 
 **A clean, modern in-game news system for Rust — popups, polls, archive with unread tracking, likes & rewards, pinned posts, Discord and themes, all managed from an in-game admin UI.**
 
-NewsBroadcaster pushes good-looking announcements straight to your players: title, image, body text and a coloured type badge, wrapped in a polished CUI. Players get a toast the moment something is posted and can browse the full archive any time with `/news`.
+NewsBroadcaster pushes clean, modern announcements straight to your players: title, image, body text and a coloured type badge, wrapped in a polished CUI. Players get a toast the moment something is posted and can browse the full archive any time with `/news`.
 
 ---
 
 ## Highlights
 
+- **Modern, flat UI** — outlined cards, hairline dividers, blurred background and article-style popups that still match your theme colours.
 - **In-game admin panel** — create, edit, preview, pin, resend and delete announcements without leaving the game.
 - **Live preview** — see the exact popup your players will get before you hit publish.
 - **Polls** — attach a 2–4 option poll to any post. One-click voting, live result bars, change-your-vote, close voting when you're done. Results show in the archive, the admin list and on Discord.
