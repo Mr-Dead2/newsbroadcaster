@@ -589,14 +589,40 @@ static class Tests
         Check(!H.HasElement(player, "NewsBroadcasterUI.AutoClose") && !((System.Collections.IDictionary)H.Get("autoCloseTimers")).Contains(player.userID.Get()), "interacting removes the countdown and keeps the popup open");
         Sim.Advance(20);
         Check(UiOpen(player), "popup stays open after interaction");
-        Check(Fade(H.Live(player).First(e => (string)e["name"] == "NewsBroadcasterUI.Like")) == 0.25f, "like button pops in");
+        Check(H.Live(player).Where(e => (string)e["parent"] == "NewsBroadcasterUI.Like").All(e => Fade(e) == 0.25f), "like button pops in");
         H.CfgSet("Notification.Enabled", true);
 
         // poll bars grow in after voting
         H.Console(null, "news.poll \"Anim poll\" \"x\" \"A|B\"");
         H.Console(player, $"news.view {H.Id(Ann0)}");
         H.Console(player, $"news.vote {H.Id(Ann0)} 1");
-        Check(H.Live(player).Any(e => (string)e["parent"] == "NewsBroadcasterUI.Poll.Opt1" && Fade(e) == 0.5f), "poll result bars fade in");
+        var barHolders = H.Live(player).Where(e => (string)e["parent"] == "NewsBroadcasterUI.Poll.Opt1").Select(e => (string)e["name"]).ToHashSet();
+        Check(H.Live(player).Any(e => barHolders.Contains((string)e["parent"]) && Fade(e) == 0.5f), "poll result bars fade in");
+
+        // ---------------------------------------------------------------
+        Section("Rounded corners");
+        Fresh();
+        Check(FileStorage.server.Files.Count == 8, "8 corner textures stored in FileStorage");
+        Check(FileStorage.server.Files.Values.All(b => b.Length > 100 && b[0] == 137 && b[1] == 80 && b[2] == 78 && b[3] == 71), "corner textures are PNG files");
+        var cornerIds = FileStorage.server.Files.Keys.Select(k => k.ToString()).ToHashSet();
+        Post("Round", "x", "Info", "https://img.example/wipe-day.png");
+        H.Console(player, $"news.view {H.Id(Ann0)}");
+        var cornerPieces = H.Live(player).Where(e => e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.RawImage" && cornerIds.Contains((string)cc["png"]))).ToList();
+        Check(cornerPieces.Count >= 40 && cornerPieces.Count % 4 == 0, $"popup uses rounded corner pieces ({cornerPieces.Count})");
+        Check(H.Live(player).Count() < 260, $"popup stays a reasonable size ({H.Live(player).Count()} elements)");
+        H.Chat(admin, "news", "admin");
+        Check(H.Live(admin).Count() < 600, $"admin list element count ok ({H.Live(admin).Count()})");
+        // no FileStorage (e.g. API changed): square fallback, no errors
+        Fresh(preBoot: () => { CommunityEntity.ServerInstance = null; });
+        Post("Square", "x");
+        H.Console(player, $"news.view {H.Id(Ann0)}");
+        Check(FileStorage.server.Files.Count == 0 && UiOpen(player) && !H.Live(player).Any(e => e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.RawImage")), "falls back to square corners when textures are unavailable");
+        Fresh();
+        H.CfgSet("General.RoundedCorners", false);
+        H.Console(player, "news.close");
+        Post("Square2", "x");
+        H.Console(player, $"news.view {H.Id(Ann0)}");
+        Check(!H.Live(player).Any(e => e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.RawImage")), "RoundedCorners=false draws square corners");
 
         // ---------------------------------------------------------------
         Section("ImageLibrary integration");

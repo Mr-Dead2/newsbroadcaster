@@ -30,6 +30,37 @@ public class ListHashSet<T> : IEnumerable<T>
     IEnumerator IEnumerable.GetEnumerator() => list.GetEnumerator();
 }
 
+public struct NetworkableId
+{
+    public ulong Value;
+    public NetworkableId(ulong value) { Value = value; }
+    public override string ToString() => Value.ToString();
+}
+
+// Server-side file store used for CUI images (ImageLibrary stores its pictures here too).
+public class FileStorage
+{
+    public enum Type { png, jpg, ogg }
+    public static FileStorage server = new FileStorage();
+    public readonly Dictionary<uint, byte[]> Files = new Dictionary<uint, byte[]>();
+
+    public uint Store(byte[] data, Type type, NetworkableId entityID, uint numID = 0u)
+    {
+        uint crc = Crc32(data);
+        Files[crc] = data;
+        return crc;
+    }
+
+    public byte[] Get(uint crc, Type type, NetworkableId entityID, uint numID = 0u) => Files.TryGetValue(crc, out var d) ? d : null;
+
+    private static uint Crc32(byte[] data)
+    {
+        uint crc = 0xFFFFFFFF;
+        foreach (byte b in data) { crc ^= b; for (int k = 0; k < 8; k++) crc = (crc & 1) != 0 ? 0xEDB88320 ^ (crc >> 1) : crc >> 1; }
+        return crc ^ 0xFFFFFFFF;
+    }
+}
+
 namespace Network
 {
     public class Connection
@@ -46,6 +77,7 @@ namespace Network
     public class Networkable
     {
         public Connection connection;
+        public NetworkableId ID;
     }
 }
 
@@ -58,6 +90,12 @@ public class BaseNetworkable : BaseMonoBehaviour
 }
 public class BaseEntity : BaseNetworkable { }
 public class BaseCombatEntity : BaseEntity { }
+public class PointEntity : BaseEntity { }
+
+public class CommunityEntity : PointEntity
+{
+    public static CommunityEntity ServerInstance;
+}
 
 public class PlayerInventory
 {

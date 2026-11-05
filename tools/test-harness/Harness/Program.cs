@@ -219,7 +219,7 @@ static class Animation
         H.Console(null, "news.show \"Server Restart In 10 Minutes\" \"-\" \"The server restarts at 23:00 for an update. Please get somewhere safe - your base and items are saved.\" Warning");
         Frame(16.2);
 
-        File.WriteAllText(outPath, new JObject { ["duration"] = 21.0, ["frames"] = frames }.ToString(Newtonsoft.Json.Formatting.None));
+        File.WriteAllText(outPath, new JObject { ["duration"] = 21.0, ["frames"] = frames, ["files"] = H.StoredFilesJson() }.ToString(Newtonsoft.Json.Formatting.None));
         Console.WriteLine($"timeline: {frames.Count} frames -> {outPath}");
     }
 }

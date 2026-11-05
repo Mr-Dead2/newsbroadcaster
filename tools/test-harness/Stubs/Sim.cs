@@ -179,6 +179,9 @@ namespace HarnessRuntime
             LogLines.Clear(); ChatLog.Clear(); ConsoleReplies.Clear(); Clients.Clear(); MissingLangKeys.Clear();
             Permission.UserPerms.Clear(); Permission.DefaultGroupPerms.Clear();
             BasePlayer.activePlayerList.Clear();
+            FileStorage.server.Files.Clear();
+            CommunityEntity.ServerInstance = new CommunityEntity();
+            CommunityEntity.ServerInstance.net.ID = new NetworkableId(1234567);
             DataWrites = 0; ConfigWrites = 0;
         }
     }

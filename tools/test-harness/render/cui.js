@@ -111,8 +111,14 @@
           skin.style.opacity = String(opacityFor(el, graphic.fadeIn || 0));
         }
         if (raw) {
+          const generated = (window.__FILES || {})[raw.png];
           const src = IMAGES[raw.url] || IMAGES[raw.png] || null;
-          if (src) { const im = document.createElement('img'); im.src = src; im.className = 'raw'; skin.appendChild(im); }
+          if (generated) {
+            // White texture tinted by the RawImage colour (what Unity does), drawn as a CSS mask.
+            skin.style.background = rgba(raw.color);
+            skin.style.webkitMaskImage = skin.style.maskImage = `url(${generated})`;
+            skin.style.webkitMaskSize = skin.style.maskSize = '100% 100%';
+          } else if (src) { const im = document.createElement('img'); im.src = src; im.className = 'raw'; skin.appendChild(im); }
           else if (raw.color) skin.style.background = rgba(raw.color);
           skin.style.opacity = String(opacityFor(el, raw.fadeIn || 0));
         }

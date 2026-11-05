@@ -1,19 +1,19 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
   "title": "NewsBroadcaster Plugin Architecture Tour",
-  "description": "A guided walkthrough of the single-file Rust/Oxide plugin (v2.3.0) for a new maintainer: state model, config migration, the broadcast pipeline, UI generation, and the optional integrations it must degrade gracefully without.",
+  "description": "A guided walkthrough of the single-file Rust/Oxide plugin (v2.0.0) for a new maintainer: state model, config migration, the broadcast pipeline, UI generation, and the optional integrations it must degrade gracefully without.",
   "ref": "main",
   "steps": [
     {
       "directory": ".",
       "title": "One File, Whole Plugin",
-      "description": "Situation: `NewsBroadcaster.cs` (~3400 lines) is the entire plugin. `PLUGIN_DOCS.md` is the admin/API reference, `CODEFLING_DESCRIPTION.md` is store copy, `previews/` holds rendered screenshots.\n\nThere is no server here, but `tools/test-harness/run.sh` compiles the plugin as C# 6/7 against .NET Framework 4.8 with stand-ins for the Oxide/Rust APIs, runs ~175 functional checks and can render every screen to PNG. A real server reload (`oxide.reload NewsBroadcaster`) is still the final check."
+      "description": "Situation: `NewsBroadcaster.cs` (~3400 lines) is the entire plugin. `PLUGIN_DOCS.md` is the admin/API reference, `CODEFLING_DESCRIPTION.md` is store copy, `previews/` holds rendered screenshots.\n\nThere is no server here, but `tools/test-harness/run.sh` compiles the plugin as C# 6/7 against .NET Framework 4.8 with stand-ins for the Oxide/Rust APIs, runs ~185 functional checks and can render every screen to PNG. A real server reload (`oxide.reload NewsBroadcaster`) is still the final check."
     },
     {
       "file": "NewsBroadcaster.cs",
       "line": 22,
       "title": "Plugin Identity & Optional Integrations",
-      "description": "The `[Info]` attribute (line 17) carries the version (`2.3.0`) — bump it together with `PLUGIN_DOCS.md`.\n\n`[PluginReference]` wires up `ImageLibrary`, `Notify`, `ServerRewards`, `Economics` as *optional* plugins. Every call site null-checks and `IsLoaded`-checks them: a server without ServerRewards still broadcasts news fine, just without point payouts."
+      "description": "The `[Info]` attribute (line 17) carries the version (`2.0.0`) — bump it together with `PLUGIN_DOCS.md`.\n\n`[PluginReference]` wires up `ImageLibrary`, `Notify`, `ServerRewards`, `Economics` as *optional* plugins. Every call site null-checks and `IsLoaded`-checks them: a server without ServerRewards still broadcasts news fine, just without point payouts."
     },
     {
       "file": "NewsBroadcaster.cs",
@@ -23,7 +23,7 @@
           "character": 0
         },
         "end": {
-          "line": 68,
+          "line": 72,
           "character": 0
         }
       },
@@ -34,26 +34,26 @@
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 115,
+          "line": 124,
           "character": 0
         },
         "end": {
-          "line": 136,
+          "line": 145,
           "character": 0
         }
       },
       "title": "The Announcement Record",
-      "description": "`Announcement` is the one data shape everything revolves around: stored in `StoredData.Announcements`, rendered by every screen, sent to Discord and hooks.\n\n`LikedPlayers`/`ReadByPlayers`/`ReadRewardedPlayers`/`LikeRewardedPlayers` are per-post sets of SteamIDs — read tracking (NEW badges) and reward-once logic live here. `EditedDate` was added in 2.0.0; missing fields simply default on old data.\n\nSince 2.1.0 a post can carry a poll: `PollOptions` (2-4 strings), `PollVotes` (SteamID → option index) and `PollClosed`. \"Mark all read\" is not stored per post but as one timestamp per player in `StoredData.ReadAllUpTo`, so read counts stay honest."
+      "description": "`Announcement` is the one data shape everything revolves around: stored in `StoredData.Announcements`, rendered by every screen, sent to Discord and hooks.\n\n`LikedPlayers`/`ReadByPlayers`/`ReadRewardedPlayers`/`LikeRewardedPlayers` are per-post sets of SteamIDs — read tracking (NEW badges) and reward-once logic live here. `EditedDate` was added in 2.0.0; missing fields simply default on old data.\n\nSince 2.0.0 a post can carry a poll: `PollOptions` (2-4 strings), `PollVotes` (SteamID → option index) and `PollClosed`. \"Mark all read\" is not stored per post but as one timestamp per player in `StoredData.ReadAllUpTo`, so read counts stay honest."
     },
     {
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 686,
+          "line": 696,
           "character": 0
         },
         "end": {
-          "line": 733,
+          "line": 743,
           "character": 0
         }
       },
@@ -64,11 +64,11 @@
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 966,
+          "line": 977,
           "character": 0
         },
         "end": {
-          "line": 1003,
+          "line": 1014,
           "character": 0
         }
       },
@@ -77,19 +77,19 @@
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 1160,
+      "line": 1171,
       "title": "Cleanup Mirrors the State Dictionaries",
-      "description": "`OnPlayerDisconnected` is the teardown checklist for the dictionaries from the Fields step. `Init()` (line 924) is the mirror image at startup: register permissions, then `LoadAnnouncements()` repairs old data (null sets, duplicate ids) and sorts newest-first so index 0 is always the latest post.\n\n`OnPlayerSleepEnded` (line 1089) shows the newest unseen post and sends the 'N unread' reminder once per session."
+      "description": "`OnPlayerDisconnected` is the teardown checklist for the dictionaries from the Fields step. `Init()` (line 934) is the mirror image at startup: register permissions, then `LoadAnnouncements()` repairs old data (null sets, duplicate ids) and sorts newest-first so index 0 is always the latest post.\n\n`OnPlayerSleepEnded` (line 1100) shows the newest unseen post and sends the 'N unread' reminder once per session."
     },
     {
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 1186,
+          "line": 1197,
           "character": 0
         },
         "end": {
-          "line": 1229,
+          "line": 1240,
           "character": 0
         }
       },
@@ -98,31 +98,31 @@
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 1428,
+      "line": 1439,
       "title": "Player Entry Point: /news",
       "description": "The chat command dispatches `latest`, `read` (mark all read), `admin` (admins only), `help`, and otherwise opens the archive (`ShowHistory`). Everything else players do is a console command bound to a CUI button (`news.view`, `news.like`, `news.vote`, `news.page`, `news.markread`)."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 2397,
+      "line": 2632,
       "title": "CUI Is Built Fresh, Every Time",
-      "description": "`ShowPopup` is representative: tear down (`DestroyUI`), then build a `CuiElementContainer` with hand-computed anchors — always via `Anchor()`/`F()` so floats are culture-invariant.\n\nTwo exceptions avoid rebuilds: `AddLikeButton` (line 2385) swaps just the heart and `AddPollBlock` (line 2672) just the poll so the reader keeps their scroll position, and editor text input doesn't rebuild the editor so fields keep focus.\n\n`PopupOrigin` decides the footer button (archive / back to archive / back to editor), auto-close (broadcasts only) and read tracking (never for previews).\n\nStyle helpers: `AddOutline` (1-unit border via offsets), `AddHairline`, `AddGhostButton`, `AddPanelShadow`, `AddBackdrop` — reuse them so new screens match.\n\nAnimation: every view starts with `OpenScreen` (line 2287) and ends with `ApplyFadeRamp` (line 2301), which gives each element a FadeIn that grows with its position in the container, so screens reveal top-to-bottom. Redraws of the same admin screen pass 0 and are instant."
+      "description": "`ShowPopup` is representative: tear down (`DestroyUI`), then build a `CuiElementContainer` with hand-computed anchors — always via `Anchor()`/`F()` so floats are culture-invariant.\n\nTwo exceptions avoid rebuilds: `AddLikeButton` (line 2614) swaps just the heart and `AddPollBlock` (line 2860) just the poll so the reader keeps their scroll position, and editor text input doesn't rebuild the editor so fields keep focus.\n\n`PopupOrigin` decides the footer button (archive / back to archive / back to editor), auto-close (broadcasts only) and read tracking (never for previews).\n\nStyle helpers: `AddSurface` (line 2509) builds rounded cards/buttons from corner textures generated in `GenerateCornerTextures` (line 2340); plus `AddPill`, `AddPrimaryButton`, `AddGhostButton`, `AddPanelShadow`, `AddCornerMasks`, `AddBackdrop` — reuse them so new screens match.\n\nAnimation: every view starts with `OpenScreen` (line 2286) and ends with `ApplyFadeRamp` (line 2300), which gives each element a FadeIn that grows with its position in the container, so screens reveal top-to-bottom. Redraws of the same admin screen pass 0 and are instant."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3039,
+      "line": 3190,
       "title": "Admin Screens",
-      "description": "`ShowAdminList` (rows with RESEND / PIN / EDIT / DEL and bulk selection), `ShowEditor` (line 3345: type chips, option toggles incl. ADD POLL, poll option fields, preview) and `ShowThemeSelection` share the same admin colours (`AdminSurface`, `AdminSurfaceRaised`, …). Admin button commands get the caller through `AdminPlayer(arg)`, which returns null for non-admins."
+      "description": "`ShowAdminList` (rows with RESEND / PIN / EDIT / DEL and bulk selection), `ShowEditor` (line 3434: type chips, option toggles incl. ADD POLL, poll option fields, preview) and `ShowThemeSelection` share the same admin colours (`AdminSurface`, `AdminSurfaceRaised`, …). Admin button commands get the caller through `AdminPlayer(arg)`, which returns null for non-admins."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3736,
+      "line": 3779,
       "title": "Rewards: Optional Plugins, Once Per Player",
       "description": "`GiveRewards` creates items directly (dropping them at the player's feet when the inventory is full), adds ServerRewards points with a plain `ulong` id (newer Rust wraps `userID`, which ServerRewards can't read), and deposits Economics currency.\n\n`CanGrantRewardBundle` checks everything first; if a needed plugin is missing nothing is paid and nothing is recorded, so the reward can be paid later."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3854,
+      "line": 3897,
       "title": "Discord Is Fire-and-Forget",
       "description": "`SendToDiscord` is a no-op unless the webhook is configured. `webrequest.Enqueue` posts asynchronously and only logs failures — a bad webhook never breaks a broadcast. `allowed_mentions` lets only the configured `RoleMention` ping (`@everyone`/`@here` are allowed only when that setting contains them)."
     },
@@ -130,11 +130,11 @@
       "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
-          "line": 620,
+          "line": 630,
           "character": 0
         },
         "end": {
-          "line": 639,
+          "line": 649,
           "character": 0
         }
       },

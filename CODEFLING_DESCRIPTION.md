@@ -1,4 +1,4 @@
-# NewsBroadcaster
+# NewsBroadcaster 2.0.0
 
 **A clean, modern in-game news system for Rust — popups, polls, archive with unread tracking, likes & rewards, pinned posts, Discord and themes, all managed from an in-game admin UI.**
 
@@ -8,7 +8,7 @@ NewsBroadcaster pushes clean, modern announcements straight to your players: tit
 
 ## Highlights
 
-- **Modern, flat UI** — outlined cards, hairline dividers, blurred background and article-style popups that still match your theme colours.
+- **Premium, modern UI** — rounded anti-aliased corners on every panel, card, button and picture, soft layered shadows, a blurred background and article-style popups, all in your theme colours.
 - **Smooth animations** — screens reveal top-to-bottom, archive rows cascade in, toasts fade in and out, likes pop, poll bars fade in, and auto-closing popups show a live countdown. All client-side: no lag, no extra network traffic.
 - **In-game admin panel** — create, edit, preview, pin, resend and delete announcements without leaving the game.
 - **Live preview** — see the exact popup your players will get before you hit publish.
@@ -140,3 +140,16 @@ Every UI string can be translated or reworded in `oxide/lang/<lang>/NewsBroadcas
 ## Support
 
 Open an issue, leave a review, or DM me on Discord — happy to fix bugs and consider feature requests.
+
+---
+
+## Update notes — 2.0.0
+
+See `CHANGELOG.md` for the full list. Highlights:
+
+- New premium look: rounded corners, soft shadows, clean flat design, smooth animations
+- Polls with live results, unread tracking and Mark all read
+- Better editor (type chips, pin / notify / Discord / poll toggles, live preview) and RESEND
+- Popup navigation, live auto-close countdown, archive thumbnails
+- Many fixes (cut-off titles, theme overflow, private sound, ServerRewards on current Rust, comma-locale servers)
+- Drop-in update: config, themes and posts carry over

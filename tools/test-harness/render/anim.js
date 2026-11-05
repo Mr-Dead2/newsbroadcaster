@@ -85,7 +85,7 @@ const player = `
   const cursorSvg = `<svg id="cursor" viewBox="0 0 26 26"><path d="M3 2 L3 21 L8.5 16 L12.5 24 L16 22.5 L12 14.5 L19.5 14.5 Z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
   await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${css}${extraCss}</style></head>
     <body><div id="screen">${SCENE}<div id="ripple"></div>${cursorSvg}</div>
-    <script>window.__S = 1080/720; window.__IMAGES = ${JSON.stringify(IMAGES)}; window.__TIMELINE = ${JSON.stringify(timeline)};</script>
+    <script>window.__S = 1080/720; window.__IMAGES = ${JSON.stringify(IMAGES)}; window.__TIMELINE = ${JSON.stringify(timeline)}; window.__FILES = Object.fromEntries(Object.entries(window.__TIMELINE.files || {}).map(([k, b]) => [k, 'data:image/png;base64,' + b]));</script>
     <script>${cuiJs}</script><script>${player}</script></body></html>`, { waitUntil: 'load' });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(300);

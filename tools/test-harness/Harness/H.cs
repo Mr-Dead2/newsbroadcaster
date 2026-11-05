@@ -121,6 +121,7 @@ public static class H
         Directory.CreateDirectory(dir);
         var ui = Sim.Ui(p);
         File.WriteAllText(Path.Combine(dir, name + ".json"), Sim.Snapshot(p));
+        File.WriteAllText(Path.Combine(dir, "_files.json"), StoredFilesJson().ToString(Newtonsoft.Json.Formatting.None));
         if (ui.Warnings.Count > 0)
         {
             System.Console.WriteLine($"  !! CUI warnings for {name}:");
@@ -128,6 +129,13 @@ public static class H
             ui.Warnings.Clear();
         }
         System.Console.WriteLine($"  saved {name} ({ui.Elements.Count} live elements)");
+    }
+
+    public static JObject StoredFilesJson()
+    {
+        var files = new JObject();
+        foreach (var kv in FileStorage.server.Files) files[kv.Key.ToString()] = Convert.ToBase64String(kv.Value);
+        return files;
     }
 
     public static IEnumerable<JObject> Live(BasePlayer p) => Sim.Ui(p).Elements;

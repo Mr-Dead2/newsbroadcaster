@@ -14,7 +14,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "2.3.0")]
+    [Info("NewsBroadcaster", "DEDA", "2.0.0")]
     [Description("In-game news announcements with notifications, archive, polls, likes, rewards and Discord webhooks")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -61,6 +61,10 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, string> toastNames = new Dictionary<ulong, string>();
         private int toastCounter;
 
+        // Rounded-corner textures (TL, TR, BL, BR) generated at startup and kept in the server FileStorage.
+        private string[] cornerFill;
+        private string[] cornerMask;
+
         // Likes, read marks and "last seen" are saved with a short delay so a busy
         // server does not rewrite the whole data file on every click.
         private bool dataDirty;
@@ -95,8 +99,13 @@ namespace Oxide.Plugins
         private const string PinGoldText = "0.05 0.05 0.05 1";
         // Modern look: flat surfaces with 1-unit outlines instead of heavy filled bars.
         private const string Hairline = "1 1 1 0.07";
-        private const string Rim = "1 1 1 0.08";
-        private const string Ghost = "1 1 1 0.045";
+        private const string Ghost = "1 1 1 0.055";
+        private const string PanelRim = "1 1 1 0.09";
+        private const float RadiusPanel = 12f;
+        private const float RadiusCard = 8f;
+        private const float RadiusButton = 6f;
+        private const float RadiusPill = 4f;
+        private const int CornerTextureSize = 32;
         private const float BodyTop = 0.71f;
         private const float BodyBottomDefault = 0.135f;
         private const string FontBold = "robotocondensed-bold.ttf";
@@ -202,6 +211,7 @@ namespace Oxide.Plugins
             public bool StripLinksFromBody { get; set; } = true;
             public string PopupImageFrame { get; set; } = "Tall";
             public bool ArchiveThumbnails { get; set; } = true;
+            public bool RoundedCorners { get; set; } = true;
         }
 
         class NotificationSettings
@@ -930,6 +940,7 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized()
         {
+            GenerateCornerTextures();
             RegisterAllImages();
         }
 
@@ -2187,21 +2198,9 @@ namespace Oxide.Plugins
                 Image = { Color = "0 0 0 0" },
                 RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax }
             }, "Hud", root);
-            AddPanelShadow(container, root, "0 0", "1 1", true);
-
-            container.Add(new CuiButton
-            {
-                Button = { Color = "0.05 0.06 0.08 0.95", Command = $"news.view {ann.Id}" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
-                Text = { Text = "" }
-            }, root, card);
-            AddOutline(container, card, Rim);
-
-            container.Add(new CuiPanel
-            {
-                Image = { Color = typeColor },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "0 1", OffsetMin = "0 0", OffsetMax = "3 0" }
-            }, card);
+            AddPanelShadow(container, root, "0 0", "1 1", true, RadiusCard);
+            AddSurface(container, root, "0 0", "1 1", "0.055 0.064 0.08 1", RadiusCard, $"news.view {ann.Id}", card, PanelRim);
+            AddAccentBar(container, card, typeColor, 0f, 7f);
 
             string kicker = Msg(HasPoll(ann) ? "NewPoll" : "NewAnnouncement", player);
             container.Add(new CuiLabel
@@ -2226,7 +2225,7 @@ namespace Oxide.Plugins
             {
                 Button = { Color = "0 0 0 0", Command = "news.close.notif" },
                 Text = { Text = "✕", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
-                RectTransform = { AnchorMin = "0.90 0.62", AnchorMax = "0.99 0.96" }
+                RectTransform = { AnchorMin = "0.89 0.6", AnchorMax = "0.98 0.94" }
             }, card);
 
             ApplyFadeRamp(container, 0, 0.22f, 0.45f);
@@ -2331,23 +2330,263 @@ namespace Oxide.Plugins
             }, "Overlay", LayerName);
         }
 
-        // Soft two-step shadow and a faint light rim around a panel. Add it before the panel itself.
-        private void AddPanelShadow(CuiElementContainer container, string parent, string anchorMin, string anchorMax, bool small = false)
+        // ---- Rounded corners ---------------------------------------------------------------
+        // CUI has no rounded rectangles. Small anti-aliased quarter-circle textures are drawn in code at
+        // startup and stored in the server's FileStorage (the same store ImageLibrary uses). A rounded
+        // rectangle is then three non-overlapping bands plus four corner pieces, so translucent colours stay
+        // even. If the textures are unavailable (or RoundedCorners is off) the helpers draw plain rectangles.
+        private bool Rounded => cornerFill != null && config.General.RoundedCorners;
+
+        private void GenerateCornerTextures()
         {
-            string outer = small ? "4" : "12", inner = small ? "2" : "5";
-            container.Add(new CuiPanel { Image = { Color = small ? "0 0 0 0.12" : "0 0 0 0.10" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = $"-{outer} -{outer}", OffsetMax = $"{outer} {outer}" } }, parent);
-            container.Add(new CuiPanel { Image = { Color = small ? "0 0 0 0.22" : "0 0 0 0.18" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = $"-{inner} -{inner}", OffsetMax = $"{inner} {inner}" } }, parent);
-            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.07" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = "-1 -1", OffsetMax = "1 1" } }, parent);
+            cornerFill = null;
+            cornerMask = null;
+            if (!config.General.RoundedCorners) return;
+            try
+            {
+                var entity = CommunityEntity.ServerInstance;
+                if (entity == null || entity.net == null) return;
+                var fill = new string[4];
+                var mask = new string[4];
+                for (int corner = 0; corner < 4; corner++)
+                {
+                    fill[corner] = FileStorage.server.Store(BuildCornerPng(corner, false), FileStorage.Type.png, entity.net.ID).ToString();
+                    mask[corner] = FileStorage.server.Store(BuildCornerPng(corner, true), FileStorage.Type.png, entity.net.ID).ToString();
+                }
+                cornerFill = fill;
+                cornerMask = mask;
+            }
+            catch (Exception ex)
+            {
+                cornerFill = null;
+                cornerMask = null;
+                PrintWarning($"Rounded corners are disabled (could not store the corner textures): {ex.Message}");
+            }
         }
 
-        // Outline drawn just inside an element, pixel-exact at any size (offsets are in canvas units).
-        private void AddOutline(CuiElementContainer container, string parent, string color, int thickness = 1)
+        // Quarter circle for corner 0=TL, 1=TR, 2=BL, 3=BR: white with 4x4 supersampled alpha.
+        // inverse = white outside the circle (used to round off the corners of pictures).
+        private static byte[] BuildCornerPng(int corner, bool inverse)
         {
-            string t = thickness.ToString(CultureInfo.InvariantCulture);
-            container.Add(new CuiPanel { Image = { Color = color }, RectTransform = { AnchorMin = "0 1", AnchorMax = "1 1", OffsetMin = $"0 -{t}", OffsetMax = "0 0" } }, parent);
-            container.Add(new CuiPanel { Image = { Color = color }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0", OffsetMin = "0 0", OffsetMax = $"0 {t}" } }, parent);
-            container.Add(new CuiPanel { Image = { Color = color }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0 1", OffsetMin = $"0 {t}", OffsetMax = $"{t} -{t}" } }, parent);
-            container.Add(new CuiPanel { Image = { Color = color }, RectTransform = { AnchorMin = "1 0", AnchorMax = "1 1", OffsetMin = $"-{t} {t}", OffsetMax = $"0 -{t}" } }, parent);
+            int n = CornerTextureSize;
+            float cx = corner == 0 || corner == 2 ? n : 0f;
+            float cy = corner == 0 || corner == 1 ? n : 0f;   // image rows run top to bottom
+            var rgba = new byte[n * n * 4];
+            for (int y = 0; y < n; y++)
+            {
+                for (int x = 0; x < n; x++)
+                {
+                    int inside = 0;
+                    for (int sy = 0; sy < 4; sy++)
+                        for (int sx = 0; sx < 4; sx++)
+                        {
+                            float dx = x + (sx + 0.5f) / 4f - cx, dy = y + (sy + 0.5f) / 4f - cy;
+                            if (dx * dx + dy * dy <= n * n) inside++;
+                        }
+                    float alpha = inside / 16f;
+                    if (inverse) alpha = 1f - alpha;
+                    int k = (y * n + x) * 4;
+                    rgba[k] = 255; rgba[k + 1] = 255; rgba[k + 2] = 255;
+                    rgba[k + 3] = (byte)Mathf.RoundToInt(alpha * 255f);
+                }
+            }
+            return EncodePng(n, n, rgba);
+        }
+
+        // Minimal PNG writer (RGBA, zlib "stored" blocks). Plugins can't use System.IO, so it works on byte lists.
+        private static byte[] EncodePng(int width, int height, byte[] rgba)
+        {
+            var raw = new byte[height * (width * 4 + 1)];
+            for (int y = 0; y < height; y++)
+            {
+                raw[y * (width * 4 + 1)] = 0;
+                Array.Copy(rgba, y * width * 4, raw, y * (width * 4 + 1) + 1, width * 4);
+            }
+
+            var zlib = new List<byte>(raw.Length + 64) { 0x78, 0x01 };
+            int pos = 0;
+            do
+            {
+                int len = Math.Min(65535, raw.Length - pos);
+                zlib.Add((byte)(pos + len >= raw.Length ? 1 : 0));
+                zlib.Add((byte)(len & 0xFF)); zlib.Add((byte)(len >> 8));
+                zlib.Add((byte)(~len & 0xFF)); zlib.Add((byte)((~len >> 8) & 0xFF));
+                for (int i = 0; i < len; i++) zlib.Add(raw[pos + i]);
+                pos += len;
+            }
+            while (pos < raw.Length);
+            uint a = 1, b = 0;
+            foreach (byte value in raw) { a = (a + value) % 65521; b = (b + a) % 65521; }
+            AddUInt32(zlib, (b << 16) | a);
+
+            var png = new List<byte> { 137, 80, 78, 71, 13, 10, 26, 10 };
+            var header = new List<byte>();
+            AddUInt32(header, (uint)width);
+            AddUInt32(header, (uint)height);
+            header.AddRange(new byte[] { 8, 6, 0, 0, 0 });
+            AddPngChunk(png, "IHDR", header);
+            AddPngChunk(png, "IDAT", zlib);
+            AddPngChunk(png, "IEND", new List<byte>());
+            return png.ToArray();
+        }
+
+        private static void AddUInt32(List<byte> bytes, uint value)
+        {
+            bytes.Add((byte)(value >> 24)); bytes.Add((byte)(value >> 16)); bytes.Add((byte)(value >> 8)); bytes.Add((byte)value);
+        }
+
+        private static void AddPngChunk(List<byte> png, string type, List<byte> data)
+        {
+            AddUInt32(png, (uint)data.Count);
+            var body = new List<byte>(data.Count + 4);
+            foreach (char ch in type) body.Add((byte)ch);
+            body.AddRange(data);
+            png.AddRange(body);
+            uint crc = 0xFFFFFFFF;
+            foreach (byte value in body)
+            {
+                crc ^= value;
+                for (int k = 0; k < 8; k++) crc = (crc & 1) != 0 ? 0xEDB88320 ^ (crc >> 1) : crc >> 1;
+            }
+            AddUInt32(png, crc ^ 0xFFFFFFFF);
+        }
+
+        private static CuiPanel Piece(string color, string anchorMin, string anchorMax, string offsetMin, string offsetMax, float fade)
+        {
+            var panel = new CuiPanel { Image = { Color = color, FadeIn = fade } };
+            panel.RectTransform.AnchorMin = anchorMin;
+            panel.RectTransform.AnchorMax = anchorMax;
+            panel.RectTransform.OffsetMin = offsetMin;
+            panel.RectTransform.OffsetMax = offsetMax;
+            return panel;
+        }
+
+        // Rounded rectangle filling its parent, inset by `inset` units (negative = larger than the parent).
+        private void AddRoundedFill(CuiElementContainer container, string parent, string color, float radius, float inset = 0f, float fade = 0f)
+        {
+            string a = F(inset), na = F(-inset);
+            if (!Rounded || radius < 0.5f)
+            {
+                container.Add(Piece(color, "0 0", "1 1", $"{a} {a}", $"{na} {na}", fade), parent);
+                return;
+            }
+
+            string b = F(inset + radius), nb = F(-(inset + radius));
+            container.Add(Piece(color, "0 0", "1 1", $"{b} {a}", $"{nb} {na}", fade), parent);
+            container.Add(Piece(color, "0 0", "0 1", $"{a} {b}", $"{b} {nb}", fade), parent);
+            container.Add(Piece(color, "1 0", "1 1", $"{nb} {b}", $"{na} {nb}", fade), parent);
+            AddCorners(container, parent, cornerFill, color, a, na, b, nb, fade);
+        }
+
+        private static void AddCorners(CuiElementContainer container, string parent, string[] textures, string color, string a, string na, string b, string nb, float fade)
+        {
+            string[] anchors = { "0 1", "1 1", "0 0", "1 0" };
+            string[] mins = { $"{a} {nb}", $"{nb} {nb}", $"{a} {a}", $"{nb} {a}" };
+            string[] maxs = { $"{b} {na}", $"{na} {na}", $"{b} {b}", $"{na} {b}" };
+            for (int k = 0; k < 4; k++)
+            {
+                container.Add(new CuiElement
+                {
+                    Parent = parent,
+                    Components =
+                    {
+                        new CuiRawImageComponent { Png = textures[k], Color = color, FadeIn = fade },
+                        new CuiRectTransformComponent { AnchorMin = anchors[k], AnchorMax = anchors[k], OffsetMin = mins[k], OffsetMax = maxs[k] }
+                    }
+                });
+            }
+        }
+
+        // Rounds off the corners of a picture by covering them with the colour behind it.
+        private void AddCornerMasks(CuiElementContainer container, string parent, string backgroundColor, float radius)
+        {
+            if (!Rounded) return;
+            AddCorners(container, parent, cornerMask, backgroundColor, "0", "0", F(radius), F(-radius), 0f);
+        }
+
+        // Rounded card / button. Content added to the returned element draws on top of the fill.
+        // rim: a border colour drawn just outside the fill (use with opaque fills).
+        private string AddSurface(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, float radius, string command = null, string name = null, string rim = null, float rimWidth = 1f)
+        {
+            string holder = command != null
+                ? container.Add(new CuiButton { Button = { Color = "0 0 0 0", Command = command }, Text = { Text = "" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name)
+                : container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name);
+            if (rim != null) AddRoundedFill(container, holder, rim, radius + rimWidth, -rimWidth);
+            AddRoundedFill(container, holder, color, radius);
+            return holder;
+        }
+
+        // Faint light line just inside the top edge of a panel (a "glass" highlight).
+        private void AddTopSheen(CuiElementContainer container, string parent, float radius)
+        {
+            container.Add(Piece("1 1 1 0.07", "0 1", "1 1", $"{F(radius)} -2", $"{F(-radius)} -1", 0f), parent);
+        }
+
+        private string AddLabelIn(CuiElementContainer container, string parent, string text, int fontSize, string color, TextAnchor align = TextAnchor.MiddleCenter, string font = FontBold)
+        {
+            return container.Add(new CuiLabel
+            {
+                Text = { Text = text, FontSize = fontSize, Align = align, Color = color, Font = font },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, parent);
+        }
+
+        // Rounded label ("pill"): type tags, badges, counters.
+        private string AddPill(CuiElementContainer container, string parent, string text, string anchorMin, string anchorMax, string background, string textColor, int fontSize = 9)
+        {
+            string pill = AddSurface(container, parent, anchorMin, anchorMax, background, RadiusPill);
+            AddLabelIn(container, pill, text, fontSize, textColor);
+            return pill;
+        }
+
+        // Filled rounded button for the main action of a screen.
+        private string AddPrimaryButton(CuiElementContainer container, string parent, string text, string command, string anchorMin, string anchorMax, string color, string textColor = "1 1 1 1", int fontSize = 11, string name = null)
+        {
+            string button = AddSurface(container, parent, anchorMin, anchorMax, color, RadiusButton, command, name);
+            AddLabelIn(container, button, text, fontSize, textColor);
+            return button;
+        }
+
+        // Opaque version of a colour as seen on top of `under` (both "r g b a").
+        private static string Blend(string top, string under)
+        {
+            float[] t = ParseColor(top), u = ParseColor(under);
+            float a = t[3];
+            return $"{F(t[0] * a + u[0] * (1 - a))} {F(t[1] * a + u[1] * (1 - a))} {F(t[2] * a + u[2] * (1 - a))} 1";
+        }
+
+        private static string Opaque(string rgba)
+        {
+            float[] c = ParseColor(rgba);
+            return $"{F(c[0])} {F(c[1])} {F(c[2])} 1";
+        }
+
+        private static float[] ParseColor(string rgba)
+        {
+            var result = new float[] { 1f, 1f, 1f, 1f };
+            var parts = (rgba ?? string.Empty).Split(' ');
+            for (int i = 0; i < 4 && i < parts.Length; i++)
+            {
+                float value;
+                if (float.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out value)) result[i] = value;
+            }
+            return result;
+        }
+
+        // Soft rounded shadow (three layers) around a panel. Add it before the panel itself.
+        private void AddPanelShadow(CuiElementContainer container, string parent, string anchorMin, string anchorMax, bool small = false, float radius = RadiusPanel)
+        {
+            float[] spreads = small ? new[] { 6f, 2.5f } : new[] { 18f, 9f, 3.5f };
+            string[] colors = small ? new[] { "0 0 0 0.10", "0 0 0 0.20" } : new[] { "0 0 0 0.06", "0 0 0 0.11", "0 0 0 0.20" };
+            for (int i = 0; i < spreads.Length; i++)
+            {
+                string layer = container.Add(new CuiPanel
+                {
+                    Image = { Color = "0 0 0 0" },
+                    RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = $"{F(-spreads[i])} {F(-spreads[i])}", OffsetMax = $"{F(spreads[i])} {F(spreads[i])}" }
+                }, parent);
+                AddRoundedFill(container, layer, colors[i], radius + spreads[i]);
+            }
         }
 
         // 1-unit horizontal divider.
@@ -2356,21 +2595,11 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel { Image = { Color = Hairline }, RectTransform = { AnchorMin = Anchor(left, y), AnchorMax = Anchor(right, y), OffsetMin = "0 0", OffsetMax = "0 1" } }, parent);
         }
 
-        // Subtle outlined button (secondary actions).
+        // Soft rounded secondary button.
         private string AddGhostButton(CuiElementContainer container, string parent, string text, string command, string anchorMin, string anchorMax, string textColor, int fontSize = 10, string name = null)
         {
-            string button = container.Add(new CuiButton
-            {
-                Button = { Color = Ghost, Command = command },
-                Text = { Text = "" },
-                RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax }
-            }, parent, name);
-            AddOutline(container, button, Rim);
-            container.Add(new CuiLabel
-            {
-                Text = { Text = text, FontSize = fontSize, Align = TextAnchor.MiddleCenter, Color = textColor, Font = FontBold },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, button);
+            string button = AddSurface(container, parent, anchorMin, anchorMax, Ghost, RadiusButton, command, name);
+            AddLabelIn(container, button, text, fontSize, textColor);
             return button;
         }
 
@@ -2387,11 +2616,17 @@ namespace Oxide.Plugins
             bool liked = ann.LikedPlayers.Contains(player.userID);
             string button = container.Add(new CuiButton
             {
-                Button = { Color = liked ? "0.90 0.30 0.35 0.14" : Ghost, Command = $"news.like {ann.Id}", FadeIn = 0.25f },
-                Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = liked ? "0.96 0.40 0.44 1" : "0.62 0.63 0.68 1", Font = FontBold, FadeIn = 0.25f },
+                Button = { Color = "0 0 0 0", Command = $"news.like {ann.Id}" },
+                Text = { Text = "" },
                 RectTransform = { AnchorMin = "0.03 0.028", AnchorMax = "0.135 0.082" }
             }, PopupPanel, LikeButtonName);
-            AddOutline(container, button, liked ? "0.96 0.40 0.44 0.45" : Rim);
+            // Pops in (explicit fade) whenever it is redrawn after a like.
+            AddRoundedFill(container, button, liked ? "0.90 0.30 0.35 0.16" : Ghost, RadiusButton, 0f, 0.25f);
+            container.Add(new CuiLabel
+            {
+                Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = liked ? "0.96 0.40 0.44 1" : "0.62 0.63 0.68 1", Font = FontBold, FadeIn = 0.25f },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, button);
         }
 
         private void ShowPopup(BasePlayer player, Announcement ann, PopupOrigin origin, bool playSound = false)
@@ -2413,25 +2648,11 @@ namespace Oxide.Plugins
             int contentStart = container.Count;
             AddPanelShadow(container, LayerName, "0.175 0.175", "0.825 0.825");
 
-            string mainPanel = PopupPanel;
-            container.Add(new CuiPanel
-            {
-                Image = { Color = c.PanelBg },
-                RectTransform = { AnchorMin = "0.175 0.175", AnchorMax = "0.825 0.825" }
-            }, LayerName, mainPanel);
-
-            if (ann.Pinned)
-            {
-                container.Add(new CuiPanel { Image = { Color = PinGold }, RectTransform = { AnchorMin = "0 0.997", AnchorMax = "1 1" } }, mainPanel);
-                container.Add(new CuiPanel { Image = { Color = PinGold }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.003" } }, mainPanel);
-                container.Add(new CuiPanel { Image = { Color = PinGold }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0.0015 1" } }, mainPanel);
-                container.Add(new CuiPanel { Image = { Color = PinGold }, RectTransform = { AnchorMin = "0.9985 0", AnchorMax = "1 1" } }, mainPanel);
-            }
-            else
-            {
-                // Thin type-coloured line along the top edge (pinned posts get the gold frame instead).
-                container.Add(new CuiPanel { Image = { Color = typeColor }, RectTransform = { AnchorMin = "0 0.995", AnchorMax = "1 1" } }, mainPanel);
-            }
+            // Rounded panel with a faint rim (gold for pinned posts) and a glass highlight along the top.
+            string panelColor = Opaque(c.PanelBg);
+            string mainPanel = AddSurface(container, LayerName, "0.175 0.175", "0.825 0.825", panelColor, RadiusPanel, null, PopupPanel,
+                ann.Pinned ? PinGold : PanelRim, ann.Pinned ? 1.5f : 1f);
+            AddTopSheen(container, mainPanel, RadiusPanel);
 
             // Header: type pill (+ POLL chip) and server name on the left, navigation and close on the right.
             float pillLeft = 0.03f;
@@ -2445,24 +2666,10 @@ namespace Oxide.Plugins
             }, mainPanel);
 
             if (ann.Pinned)
-            {
-                container.Add(new CuiPanel { Image = { Color = PinGold }, RectTransform = { AnchorMin = "0.755 0.928", AnchorMax = "0.84 0.972" } }, mainPanel);
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = Msg("PinnedBadge", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = PinGoldText, Font = FontBold },
-                    RectTransform = { AnchorMin = "0.755 0.928", AnchorMax = "0.84 0.972" }
-                }, mainPanel);
-            }
+                AddPill(container, mainPanel, Msg("PinnedBadge", player), "0.755 0.928", "0.84 0.972", PinGold, PinGoldText, 10);
 
             if (preview)
-            {
-                container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0.852 0.928", AnchorMax = "0.938 0.972" } }, mainPanel);
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = Msg("PreviewBadge", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                    RectTransform = { AnchorMin = "0.852 0.928", AnchorMax = "0.938 0.972" }
-                }, mainPanel);
-            }
+                AddPill(container, mainPanel, Msg("PreviewBadge", player), "0.852 0.928", "0.938 0.972", c.ButtonPrimary, "1 1 1 1", 10);
             else
             {
                 AddPopupNavigation(container, player, ann, origin, mainPanel, c);
@@ -2483,22 +2690,18 @@ namespace Oxide.Plugins
                 float frameTop = wide ? 0.73f : 0.885f;
                 string imgPanel = mainPanel + ".Img";
 
-                container.Add(new CuiPanel
-                {
-                    Image = { Color = "0 0 0 0.35" },
-                    RectTransform = { AnchorMin = Anchor(0.03f, frameBottom), AnchorMax = Anchor(0.47f, frameTop) }
-                }, mainPanel, imgPanel);
-
+                // Picture with rounded corners: drawn square, then the corners are masked with the panel colour.
+                AddSurface(container, mainPanel, Anchor(0.03f, frameBottom), Anchor(0.47f, frameTop), Blend("0 0 0 0.35", panelColor), RadiusCard, null, imgPanel);
                 container.Add(new CuiElement
                 {
                     Parent = imgPanel,
                     Components =
                     {
                         BuildRawImage(ann.ImageUrl),
-                        new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "1 1", OffsetMax = "-1 -1" }
+                        new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" }
                     }
                 });
-                AddOutline(container, imgPanel, Rim);
+                AddCornerMasks(container, imgPanel, panelColor, RadiusCard);
             }
 
             // Title, then "posted by" line: the font shrinks for long titles so they wrap instead of being cut off.
@@ -2576,13 +2779,8 @@ namespace Oxide.Plugins
 
             if (preview)
             {
-                string likePreview = container.Add(new CuiPanel { Image = { Color = Ghost }, RectTransform = { AnchorMin = "0.03 0.028", AnchorMax = "0.135 0.082" } }, mainPanel);
-                AddOutline(container, likePreview, Rim);
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = $"❤  {ann.LikedPlayers?.Count ?? 0}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "0.62 0.63 0.68 0.6", Font = FontBold },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-                }, likePreview);
+                string likePreview = AddSurface(container, mainPanel, "0.03 0.028", "0.135 0.082", Ghost, RadiusButton);
+                AddLabelIn(container, likePreview, $"❤  {ann.LikedPlayers?.Count ?? 0}", 12, "0.62 0.63 0.68 0.6");
             }
             else if (!string.IsNullOrEmpty(ann.Id))
             {
@@ -2594,12 +2792,7 @@ namespace Oxide.Plugins
             else if (origin == PopupOrigin.Archive) { footerCommand = $"news.page {GetArchivePage(player.userID)}"; footerText = Msg("BackToArchive", player); }
             else { footerCommand = "news.page 0"; footerText = Msg("ViewArchive", player); }
 
-            container.Add(new CuiButton
-            {
-                Button = { Color = c.ButtonPrimary, Command = footerCommand },
-                Text = { Text = footerText, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                RectTransform = { AnchorMin = "0.78 0.028", AnchorMax = "0.97 0.082" }
-            }, mainPanel);
+            AddPrimaryButton(container, mainPanel, footerText, footerCommand, "0.78 0.028", "0.97 0.082", c.ButtonPrimary);
 
             if (origin == PopupOrigin.Broadcast && config.General.EnableAutoClose)
             {
@@ -2641,13 +2834,8 @@ namespace Oxide.Plugins
         // Small filled label in the popup header; returns the x where the next item can start.
         private float AddHeaderPill(CuiElementContainer container, string parent, string text, string background, string textColor, float left)
         {
-            float width = (text.Length * 5.4f + 18f) / PopupWidthUnits;
-            container.Add(new CuiPanel { Image = { Color = background }, RectTransform = { AnchorMin = Anchor(left, 0.928f), AnchorMax = Anchor(left + width, 0.972f) } }, parent);
-            container.Add(new CuiLabel
-            {
-                Text = { Text = text, FontSize = 10, Align = TextAnchor.MiddleCenter, Color = textColor, Font = FontBold },
-                RectTransform = { AnchorMin = Anchor(left, 0.928f), AnchorMax = Anchor(left + width, 0.972f) }
-            }, parent);
+            float width = (text.Length * 5.4f + 20f) / PopupWidthUnits;
+            AddPill(container, parent, text, Anchor(left, 0.928f), Anchor(left + width, 0.972f), background, textColor, 10);
             return left + width + 0.008f;
         }
 
@@ -2677,12 +2865,8 @@ namespace Oxide.Plugins
             float bodyBottom, pollBottom;
             PollLayout(ann, out bodyBottom, out pollBottom);
 
-            container.Add(new CuiPanel
-            {
-                Image = { Color = "1 1 1 0.025" },
-                RectTransform = { AnchorMin = Anchor(left, pollBottom), AnchorMax = Anchor(0.97f, pollBottom + h) }
-            }, PopupPanel, PollPanelName);
-            AddOutline(container, PollPanelName, "1 1 1 0.05");
+            AddSurface(container, PopupPanel, Anchor(left, pollBottom), Anchor(0.97f, pollBottom + h), "1 1 1 0.03", RadiusCard, null, PollPanelName);
+            float rowWidthUnits = (0.97f - left) * PopupWidthUnits * 0.95f;
 
             ulong userId = player.userID;
             int myVote = preview ? -1 : VoteOf(ann, userId);
@@ -2716,22 +2900,16 @@ namespace Oxide.Plugins
                 string background = mine ? MixAlpha(c.ButtonPrimary, 0.12f) : "1 1 1 0.04";
                 string rowMin = Anchor(0.025f, rowBottom), rowMax = Anchor(0.975f, rowTop);
 
-                if (canVote && !mine)
-                    container.Add(new CuiButton { Button = { Color = background, Command = $"news.vote {ann.Id} {i}" }, Text = { Text = "" }, RectTransform = { AnchorMin = rowMin, AnchorMax = rowMax } }, PollPanelName, row);
-                else
-                    container.Add(new CuiPanel { Image = { Color = background }, RectTransform = { AnchorMin = rowMin, AnchorMax = rowMax } }, PollPanelName, row);
+                AddSurface(container, PollPanelName, rowMin, rowMax, background, RadiusButton, canVote && !mine ? $"news.vote {ann.Id} {i}" : null, row);
 
                 float share = total > 0 ? (float)counts[i] / total : 0f;
                 if (showResults && share > 0f)
                 {
-                    container.Add(new CuiPanel
-                    {
-                        // Result bars fade in after voting.
-                        Image = { Color = MixAlpha(c.ButtonPrimary, mine ? 0.42f : 0.2f), FadeIn = 0.5f },
-                        RectTransform = { AnchorMin = "0 0", AnchorMax = Anchor(Math.Max(0.006f, share), 1f) }
-                    }, row);
+                    // Rounded result bar (at least as wide as its rounded ends); fades in after voting.
+                    float width = Math.Min(1f, Math.Max(share, RadiusButton * 2f / rowWidthUnits));
+                    string bar = container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = "0 0", AnchorMax = Anchor(width, 1f) } }, row);
+                    AddRoundedFill(container, bar, MixAlpha(c.ButtonPrimary, mine ? 0.45f : 0.2f), RadiusButton, 0f, 0.5f);
                 }
-                AddOutline(container, row, mine ? MixAlpha(c.ButtonPrimary, 0.6f) : Rim);
 
                 container.Add(new CuiLabel
                 {
@@ -2776,13 +2954,8 @@ namespace Oxide.Plugins
             if (command == null)
             {
                 // At the first/last post: drawn dimmed and not clickable.
-                string box = container.Add(new CuiPanel { Image = { Color = "1 1 1 0.015" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent);
-                AddOutline(container, box, "1 1 1 0.04");
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = glyph, FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 0.15", Font = FontBold },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-                }, box);
+                string box = AddSurface(container, parent, anchorMin, anchorMax, "1 1 1 0.02", RadiusButton);
+                AddLabelIn(container, box, glyph, 12, "1 1 1 0.15");
                 return;
             }
 
@@ -2835,13 +3008,9 @@ namespace Oxide.Plugins
             int contentStart = container.Count;
             AddPanelShadow(container, LayerName, "0.15 0.1", "0.85 0.9");
 
-            string mainPanel = LayerName + ".List";
-            container.Add(new CuiPanel
-            {
-                Image = { Color = c.PanelBg },
-                RectTransform = { AnchorMin = "0.15 0.1", AnchorMax = "0.85 0.9" }
-            }, LayerName, mainPanel);
-            container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0 0.996", AnchorMax = "1 1" } }, mainPanel);
+            string panelColor = Opaque(c.PanelBg);
+            string mainPanel = AddSurface(container, LayerName, "0.15 0.1", "0.85 0.9", panelColor, RadiusPanel, null, LayerName + ".List", PanelRim);
+            AddTopSheen(container, mainPanel, RadiusPanel);
 
             // Header
             container.Add(new CuiLabel
@@ -2854,12 +3023,7 @@ namespace Oxide.Plugins
             if (unread > 0)
             {
                 AddGhostButton(container, mainPanel, Msg("MarkAllRead", player), "news.markread", "0.655 0.927", "0.79 0.973", c.TextNormal, 10);
-                container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0.80 0.927", AnchorMax = "0.928 0.973" } }, mainPanel);
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = Msg("UnreadCount", player, unread), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                    RectTransform = { AnchorMin = "0.80 0.927", AnchorMax = "0.928 0.973" }
-                }, mainPanel);
+                AddPill(container, mainPanel, Msg("UnreadCount", player, unread), "0.80 0.927", "0.928 0.973", c.ButtonPrimary, "1 1 1 1", 10);
             }
 
             AddGhostButton(container, mainPanel, "✕", "news.close", "0.945 0.927", "0.975 0.973", c.TextNormal, 11);
@@ -2881,37 +3045,26 @@ namespace Oxide.Plugins
                 string itemPanel = mainPanel + $".{i}";
                 string typeColor = GetTypeColor(ann.Type);
 
-                container.Add(new CuiButton
-                {
-                    Button = { Color = c.ContentBg, Command = $"news.view {ann.Id} archive" },
-                    Text = { Text = "" },
-                    RectTransform = { AnchorMin = Anchor(0.025f, bottom), AnchorMax = Anchor(0.975f, top) }
-                }, mainPanel, itemPanel);
+                // Rounded, clickable card. Colours are blended to opaque so rims and picture corners stay crisp.
+                string rowColor = Blend(c.ContentBg, panelColor);
+                if (ann.Pinned) rowColor = Blend("0.95 0.70 0.20 0.07", rowColor);
+                else if (isUnread) rowColor = Blend("1 1 1 0.025", rowColor);
+                string rim = ann.Pinned ? "0.95 0.70 0.20 0.40" : isUnread ? MixAlpha(c.ButtonPrimary, 0.45f) : null;
+                AddSurface(container, mainPanel, Anchor(0.025f, bottom), Anchor(0.975f, top), rowColor, RadiusCard, $"news.view {ann.Id} archive", itemPanel, rim);
+                AddAccentBar(container, itemPanel, typeColor);
 
-                if (ann.Pinned)
-                    container.Add(new CuiPanel { Image = { Color = "0.95 0.70 0.20 0.07" }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" } }, itemPanel);
-                else if (isUnread)
-                    container.Add(new CuiPanel { Image = { Color = "1 1 1 0.03" }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" } }, itemPanel);
-
-                AddOutline(container, itemPanel, ann.Pinned ? "0.95 0.70 0.20 0.30" : isUnread ? MixAlpha(c.ButtonPrimary, 0.35f) : Rim);
-                container.Add(new CuiPanel { Image = { Color = typeColor }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0 1", OffsetMin = "0 0", OffsetMax = "3 0" } }, itemPanel);
-
-                float textLeft = 0.025f;
+                float textLeft = 0.03f;
                 if (config.General.ArchiveThumbnails && !string.IsNullOrEmpty(ann.ImageUrl))
                 {
                     string thumb = itemPanel + ".Thumb";
-                    container.Add(new CuiPanel
-                    {
-                        Image = { Color = "0 0 0 0.45" },
-                        RectTransform = { AnchorMin = "0.015 0.13", AnchorMax = "0.12 0.87" }
-                    }, itemPanel, thumb);
+                    AddSurface(container, itemPanel, "0.022 0.13", "0.127 0.87", Blend("0 0 0 0.45", rowColor), RadiusButton, null, thumb);
                     container.Add(new CuiElement
                     {
                         Parent = thumb,
-                        Components = { BuildRawImage(ann.ImageUrl), new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "1 1", OffsetMax = "-1 -1" } }
+                        Components = { BuildRawImage(ann.ImageUrl), new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" } }
                     });
-                    AddOutline(container, thumb, Rim);
-                    textLeft = 0.135f;
+                    AddCornerMasks(container, thumb, rowColor, RadiusButton);
+                    textLeft = 0.142f;
                 }
 
                 string title = Ellipsize((string.IsNullOrEmpty(ann.Title) ? Msg("NoTitle", player) : ann.Title).ToUpper(), textLeft > 0.1f ? 40 : 52);
@@ -2989,16 +3142,14 @@ namespace Oxide.Plugins
 
         private void AddBadge(CuiElementContainer container, string parent, string text, string background, string textColor, float left, float right)
         {
-            container.Add(new CuiPanel
-            {
-                Image = { Color = background },
-                RectTransform = { AnchorMin = Anchor(left, 0.6f), AnchorMax = Anchor(right, 0.82f) }
-            }, parent);
-            container.Add(new CuiLabel
-            {
-                Text = { Text = text, FontSize = 9, Align = TextAnchor.MiddleCenter, Color = textColor, Font = FontBold },
-                RectTransform = { AnchorMin = Anchor(left, 0.6f), AnchorMax = Anchor(right, 0.82f) }
-            }, parent);
+            AddPill(container, parent, text, Anchor(left, 0.6f), Anchor(right, 0.82f), background, textColor, 9);
+        }
+
+        // Short rounded type-colour bar inside the left edge of a card.
+        private void AddAccentBar(CuiElementContainer container, string parent, string color, float anchorX = 0f, float leftUnits = 8f)
+        {
+            string bar = container.Add(Piece("0 0 0 0", Anchor(anchorX, 0f), Anchor(anchorX, 1f), $"{F(leftUnits)} 14", $"{F(leftUnits + 3f)} -14", 0f), parent);
+            AddRoundedFill(container, bar, color, 1.5f);
         }
 
         private string GetTypeColor(AnnouncementType type)
@@ -3048,14 +3199,10 @@ namespace Oxide.Plugins
             int contentStart = container.Count;
             AddPanelShadow(container, LayerName, "0.16 0.12", "0.84 0.88");
 
-            string mainPanel = LayerName + ".Admin";
-            container.Add(new CuiPanel
-            {
-                Image = { Color = AdminSurface },
-                RectTransform = { AnchorMin = "0.16 0.12", AnchorMax = "0.84 0.88" }
-            }, LayerName, mainPanel);
+            string surface = Opaque(AdminSurface);
+            string mainPanel = AddSurface(container, LayerName, "0.16 0.12", "0.84 0.88", surface, RadiusPanel, null, LayerName + ".Admin", PanelRim);
+            AddTopSheen(container, mainPanel, RadiusPanel);
 
-            container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0 0.994", AnchorMax = "1 1" } }, mainPanel);
             AddHairline(container, mainPanel, 0.866f, 0.025f, 0.975f);
 
             container.Add(new CuiLabel
@@ -3072,12 +3219,8 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0.035 0.875", AnchorMax = "0.57 0.92" }
             }, mainPanel);
 
-            container.Add(new CuiButton
-            {
-                Button = { Color = c.ButtonPrimary, Command = "news.admin.create" },
-                Text = { Text = Msg("NewPost", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                RectTransform = { AnchorMin = "0.735 0.907", AnchorMax = "0.925 0.961" }
-            }, mainPanel);
+            AddPrimaryButton(container, mainPanel, Msg("NewPost", player), "news.admin.create", "0.735 0.907", "0.925 0.961", c.ButtonPrimary, "1 1 1 1", 10);
+
 
             AddGhostButton(container, mainPanel, Msg("Themes", player), "news.admin.themes", "0.59 0.907", "0.725 0.961", c.TextNormal, 9);
             AddGhostButton(container, mainPanel, "✕", "news.close", "0.94 0.907", "0.975 0.961", c.TextNormal, 12);
@@ -3114,35 +3257,17 @@ namespace Oxide.Plugins
                 string typeColor = GetTypeColor(ann.Type);
                 bool selected = selection.Contains(ann.Id);
 
-                container.Add(new CuiPanel
-                {
-                    Image = { Color = selected ? "0.10 0.18 0.24 0.98" : AdminSurfaceRaised },
-                    RectTransform = { AnchorMin = Anchor(0.025f, bottom), AnchorMax = Anchor(0.975f, top) }
-                }, mainPanel, itemPanel);
-                AddOutline(container, itemPanel, selected ? MixAlpha(c.ButtonPrimary, 0.5f) : ann.Pinned ? "0.95 0.70 0.20 0.28" : Rim);
+                string rowColor = Blend(AdminSurfaceRaised, surface);
+                if (selected) rowColor = Blend(MixAlpha(c.ButtonPrimary, 0.12f), rowColor);
+                else if (ann.Pinned) rowColor = Blend("0.95 0.70 0.20 0.05", rowColor);
+                string rowRim = selected ? MixAlpha(c.ButtonPrimary, 0.55f) : ann.Pinned ? "0.95 0.70 0.20 0.35" : null;
+                AddSurface(container, mainPanel, Anchor(0.025f, bottom), Anchor(0.975f, top), rowColor, RadiusCard, null, itemPanel, rowRim);
 
-                if (ann.Pinned)
-                {
-                    container.Add(new CuiPanel
-                    {
-                        Image = { Color = "0.95 0.70 0.20 0.045" },
-                        RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-                    }, itemPanel);
-                }
+                string check = AddSurface(container, itemPanel, "0.012 0.32", "0.034 0.68", selected ? c.ButtonPrimary : rowColor, RadiusPill,
+                    $"news.admin.toggleselect {ann.Id} {page}", null, selected ? null : "1 1 1 0.22", 1.5f);
+                if (selected) AddLabelIn(container, check, "✓", 11, "1 1 1 1");
+                AddAccentBar(container, itemPanel, typeColor, 0.045f, 0f);
 
-                string check = container.Add(new CuiButton
-                {
-                    Button = { Color = selected ? c.ButtonPrimary : Ghost, Command = $"news.admin.toggleselect {ann.Id} {page}" },
-                    Text = { Text = selected ? "✓" : "", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                    RectTransform = { AnchorMin = "0.01 0.3", AnchorMax = "0.035 0.7" }
-                }, itemPanel);
-                if (!selected) AddOutline(container, check, "1 1 1 0.16");
-
-                container.Add(new CuiPanel
-                {
-                    Image = { Color = typeColor },
-                    RectTransform = { AnchorMin = "0.047 0.18", AnchorMax = "0.047 0.82", OffsetMin = "0 0", OffsetMax = "3 0" }
-                }, itemPanel);
 
                 container.Add(new CuiLabel
                 {
@@ -3168,24 +3293,15 @@ namespace Oxide.Plugins
 
                 if (ann.Pinned)
                 {
-                    container.Add(new CuiButton
-                    {
-                        Button = { Color = PinGold, Command = $"news.admin.togglepin {ann.Id} {page}" },
-                        Text = { Text = Msg("UnpinButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = PinGoldText, Font = FontBold },
-                        RectTransform = { AnchorMin = "0.665 0.24", AnchorMax = "0.76 0.76" }
-                    }, itemPanel);
+                    AddPrimaryButton(container, itemPanel, Msg("UnpinButton", player), $"news.admin.togglepin {ann.Id} {page}", "0.665 0.24", "0.76 0.76", PinGold, PinGoldText, 9);
                 }
                 else
                 {
                     AddGhostButton(container, itemPanel, Msg("PinButton", player), $"news.admin.togglepin {ann.Id} {page}", "0.665 0.24", "0.76 0.76", c.TextNormal, 9);
                 }
 
-                container.Add(new CuiButton
-                {
-                    Button = { Color = c.ButtonPrimary, Command = $"news.admin.edit {ann.Id}" },
-                    Text = { Text = Msg("EditButton", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                    RectTransform = { AnchorMin = "0.77 0.24", AnchorMax = "0.865 0.76" }
-                }, itemPanel);
+                AddPrimaryButton(container, itemPanel, Msg("EditButton", player), $"news.admin.edit {ann.Id}", "0.77 0.24", "0.865 0.76", c.ButtonPrimary, "1 1 1 1", 9);
+
 
                 AddGhostButton(container, itemPanel, Msg("DelButton", player), $"news.admin.delconfirm {ann.Id} {page}", "0.875 0.24", "0.97 0.76", "0.95 0.48 0.50 1", 9);
 
@@ -3195,12 +3311,8 @@ namespace Oxide.Plugins
             if (selection.Count > 0)
             {
                 string bulkPanel = mainPanel + ".Bulk";
-                container.Add(new CuiPanel
-                {
-                    Image = { Color = MixAlpha(c.ButtonPrimary, 0.08f) },
-                    RectTransform = { AnchorMin = "0.025 0.108", AnchorMax = "0.975 0.165" }
-                }, mainPanel, bulkPanel);
-                AddOutline(container, bulkPanel, MixAlpha(c.ButtonPrimary, 0.35f));
+                AddSurface(container, mainPanel, "0.025 0.108", "0.975 0.165", Blend(MixAlpha(c.ButtonPrimary, 0.08f), surface), RadiusCard, null, bulkPanel, MixAlpha(c.ButtonPrimary, 0.35f));
+
 
                 container.Add(new CuiLabel
                 {
@@ -3208,22 +3320,12 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = "0.02 0", AnchorMax = "0.18 1" }
                 }, bulkPanel);
 
-                container.Add(new CuiButton
-                {
-                    Button = { Color = AdminDanger, Command = $"news.admin.bulkdelconfirm {page}" },
-                    Text = { Text = Msg("BulkDelete", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                    RectTransform = { AnchorMin = "0.19 0.15", AnchorMax = "0.32 0.85" }
-                }, bulkPanel);
+                AddPrimaryButton(container, bulkPanel, Msg("BulkDelete", player), $"news.admin.bulkdelconfirm {page}", "0.19 0.17", "0.32 0.83", AdminDanger, "1 1 1 1", 10);
+                AddPrimaryButton(container, bulkPanel, Msg("BulkPin", player), $"news.admin.bulkpin 1 {page}", "0.33 0.17", "0.46 0.83", c.ButtonPrimary, "1 1 1 1", 10);
 
-                container.Add(new CuiButton
-                {
-                    Button = { Color = c.ButtonPrimary, Command = $"news.admin.bulkpin 1 {page}" },
-                    Text = { Text = Msg("BulkPin", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                    RectTransform = { AnchorMin = "0.33 0.15", AnchorMax = "0.46 0.85" }
-                }, bulkPanel);
 
-                AddGhostButton(container, bulkPanel, Msg("BulkUnpin", player), $"news.admin.bulkpin 0 {page}", "0.47 0.15", "0.60 0.85", c.TextTitle, 10);
-                AddGhostButton(container, bulkPanel, Msg("ClearSelection", player), $"news.admin.clearsel {page}", "0.61 0.15", "0.74 0.85", c.TextTitle, 10);
+                AddGhostButton(container, bulkPanel, Msg("BulkUnpin", player), $"news.admin.bulkpin 0 {page}", "0.47 0.17", "0.60 0.83", c.TextTitle, 10);
+                AddGhostButton(container, bulkPanel, Msg("ClearSelection", player), $"news.admin.clearsel {page}", "0.61 0.17", "0.74 0.83", c.TextTitle, 10);
             }
 
             AddHairline(container, mainPanel, 0.095f, 0.025f, 0.975f);
@@ -3265,12 +3367,8 @@ namespace Oxide.Plugins
 
         private void AddEditorInput(CuiElementContainer container, string parent, string field, string value, int limit, float bottom, float top, bool multiline, float left = 0.05f, float right = 0.95f, string prefix = null)
         {
-            string fieldBox = container.Add(new CuiPanel
-            {
-                Image = { Color = "1 1 1 0.035" },
-                RectTransform = { AnchorMin = Anchor(left, bottom), AnchorMax = Anchor(right, top) }
-            }, parent);
-            AddOutline(container, fieldBox, Rim);
+            AddSurface(container, parent, Anchor(left, bottom), Anchor(right, top), "1 1 1 0.045", RadiusButton);
+
 
             float inputLeft = left + 0.01f;
             if (prefix != null)
@@ -3312,21 +3410,12 @@ namespace Oxide.Plugins
 
         private void AddEditorToggle(CuiElementContainer container, string parent, string text, string command, bool on, float left, float right, UIColors c, float bottom = 0.478f, float top = 0.535f)
         {
-            string button = container.Add(new CuiButton
-            {
-                Button = { Color = on ? MixAlpha(c.ButtonPrimary, 0.10f) : Ghost, Command = command },
-                Text = { Text = "" },
-                RectTransform = { AnchorMin = Anchor(left, bottom), AnchorMax = Anchor(right, top) }
-            }, parent);
-            AddOutline(container, button, on ? MixAlpha(c.ButtonPrimary, 0.5f) : Rim);
+            string button = AddSurface(container, parent, Anchor(left, bottom), Anchor(right, top), on ? MixAlpha(c.ButtonPrimary, 0.14f) : Ghost, RadiusButton, command);
 
             // Square check box sized from the button width so it stays square at any toggle width.
             float boxW = 0.56f * (top - bottom) * EditorHeightUnits / (Math.Max(0.05f, right - left) * EditorWidthUnits);
-            container.Add(new CuiPanel
-            {
-                Image = { Color = on ? c.ButtonPrimary : "1 1 1 0.12" },
-                RectTransform = { AnchorMin = Anchor(0.035f, 0.22f), AnchorMax = Anchor(0.035f + boxW, 0.78f) }
-            }, button);
+            AddSurface(container, button, Anchor(0.035f, 0.22f), Anchor(0.035f + boxW, 0.78f), on ? c.ButtonPrimary : "1 1 1 0.14", RadiusPill - 1f);
+
             if (on)
             {
                 container.Add(new CuiLabel
@@ -3358,10 +3447,9 @@ namespace Oxide.Plugins
             int contentStart = container.Count;
             AddPanelShadow(container, LayerName, "0.21 0.13", "0.79 0.87");
 
-            string editorPanel = LayerName + ".Editor";
-            container.Add(new CuiPanel { Image = { Color = AdminSurface }, RectTransform = { AnchorMin = "0.21 0.13", AnchorMax = "0.79 0.87" } }, LayerName, editorPanel);
+            string editorPanel = AddSurface(container, LayerName, "0.21 0.13", "0.79 0.87", Opaque(AdminSurface), RadiusPanel, null, LayerName + ".Editor", PanelRim);
+            AddTopSheen(container, editorPanel, RadiusPanel);
 
-            container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0 0.994", AnchorMax = "1 1" } }, editorPanel);
             AddHairline(container, editorPanel, 0.91f, 0.04f, 0.96f);
             container.Add(new CuiLabel { Text = { Text = session.IsNew ? Msg("CreateAnnouncement", player) : Msg("EditAnnouncement", player), FontSize = 14, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold }, RectTransform = { AnchorMin = "0.04 0.91", AnchorMax = "0.9 1" } }, editorPanel);
 
@@ -3383,21 +3471,9 @@ namespace Oxide.Plugins
                 bool selected = types[i] == ann.Type;
                 float left = 0.05f + i * (chipWidth + chipGap);
                 string typeColor = GetTypeColor(types[i]);
-                string chip = container.Add(new CuiButton
-                {
-                    Button = { Color = selected ? typeColor : Ghost, Command = $"news.editor.settype {types[i]}" },
-                    Text = { Text = types[i].ToString().ToUpper(), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = selected ? "1 1 1 1" : c.TextNormal, Font = FontBold },
-                    RectTransform = { AnchorMin = Anchor(left, 0.575f), AnchorMax = Anchor(left + chipWidth, 0.63f) }
-                }, editorPanel);
-                if (!selected)
-                {
-                    AddOutline(container, chip, Rim);
-                    container.Add(new CuiPanel
-                    {
-                        Image = { Color = typeColor },
-                        RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0", OffsetMin = "0 0", OffsetMax = "0 2" }
-                    }, chip);
-                }
+                // Selected chip is filled with its type colour; the others show the colour in their text.
+                string chip = AddSurface(container, editorPanel, Anchor(left, 0.575f), Anchor(left + chipWidth, 0.63f), selected ? typeColor : Ghost, RadiusButton, $"news.editor.settype {types[i]}");
+                AddLabelIn(container, chip, types[i].ToString().ToUpper(), 10, selected ? "1 1 1 1" : typeColor);
             }
 
             // Option toggles share the row evenly.
@@ -3436,18 +3512,13 @@ namespace Oxide.Plugins
             }
 
             string footerPanel = editorPanel + ".Footer";
-            container.Add(new CuiPanel { Image = { Color = AdminSurface }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.115" } }, editorPanel, footerPanel);
+            container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.115" } }, editorPanel, footerPanel);
             AddHairline(container, editorPanel, 0.115f, 0.04f, 0.96f);
 
             AddGhostButton(container, footerPanel, Msg("Cancel", player), "news.editor.cancel", "0.05 0.2", "0.29 0.8", c.TextNormal, 11);
             AddGhostButton(container, footerPanel, Msg("Preview", player), "news.editor.preview", "0.31 0.2", "0.53 0.8", c.TextTitle, 11);
 
-            container.Add(new CuiButton
-            {
-                Button = { Color = c.ButtonPrimary, Command = "news.editor.save" },
-                Text = { Text = session.IsNew ? Msg("SaveBroadcast", player) : Msg("SaveChanges", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                RectTransform = { AnchorMin = "0.55 0.2", AnchorMax = "0.95 0.8" }
-            }, footerPanel);
+            AddPrimaryButton(container, footerPanel, session.IsNew ? Msg("SaveBroadcast", player) : Msg("SaveChanges", player), "news.editor.save", "0.55 0.2", "0.95 0.8", c.ButtonPrimary);
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.38f * anim);
             CuiHelper.AddUi(player, container);
@@ -3466,39 +3537,27 @@ namespace Oxide.Plugins
 
             AddPanelShadow(container, ConfirmLayer, "0.355 0.385", "0.645 0.615");
 
-            string dialogPanel = ConfirmLayer + ".Dialog";
-            container.Add(new CuiPanel
-            {
-                Image = { Color = AdminSurface },
-                RectTransform = { AnchorMin = "0.355 0.385", AnchorMax = "0.645 0.615" }
-            }, ConfirmLayer, dialogPanel);
+            string dialogPanel = AddSurface(container, ConfirmLayer, "0.355 0.385", "0.645 0.615", Opaque(AdminSurface), RadiusPanel, null, ConfirmLayer + ".Dialog", PanelRim);
+            AddTopSheen(container, dialogPanel, RadiusPanel);
 
-            container.Add(new CuiPanel
-            {
-                Image = { Color = AdminDanger },
-                RectTransform = { AnchorMin = "0 0.982", AnchorMax = "1 1" }
-            }, dialogPanel);
+            // Round warning icon above the title.
+            string icon = AddSurface(container, dialogPanel, "0.465 0.75", "0.535 0.907", Blend(MixAlpha(AdminDanger, 0.22f), Opaque(AdminSurface)), 13f);
+            AddLabelIn(container, icon, "!", 15, "0.98 0.52 0.54 1");
 
             container.Add(new CuiLabel
             {
                 Text = { Text = title, FontSize = 13, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = FontBold },
-                RectTransform = { AnchorMin = "0 0.78", AnchorMax = "1 0.95" }
+                RectTransform = { AnchorMin = "0 0.58", AnchorMax = "1 0.73" }
             }, dialogPanel);
-
             container.Add(new CuiLabel
             {
                 Text = { Text = body, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = FontRegular },
-                RectTransform = { AnchorMin = "0.05 0.30", AnchorMax = "0.95 0.74" }
+                RectTransform = { AnchorMin = "0.05 0.29", AnchorMax = "0.95 0.58" }
             }, dialogPanel);
 
             AddGhostButton(container, dialogPanel, Msg("Cancel", player), "news.confirm.close", "0.05 0.08", "0.46 0.26", c.TextTitle, 11);
 
-            container.Add(new CuiButton
-            {
-                Button = { Color = AdminDanger, Command = confirmCommand },
-                Text = { Text = Msg("ConfirmDelete", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                RectTransform = { AnchorMin = "0.54 0.08", AnchorMax = "0.95 0.26" }
-            }, dialogPanel);
+            AddPrimaryButton(container, dialogPanel, Msg("ConfirmDelete", player), confirmCommand, "0.54 0.08", "0.95 0.26", AdminDanger);
         }
 
         private void ShowDeleteConfirm(BasePlayer player, string id, int returnPage)
@@ -3593,15 +3652,11 @@ namespace Oxide.Plugins
 
             AddPanelShadow(container, LayerName, Anchor(0.27f, 0.5f - panelH / 2f), Anchor(0.73f, 0.5f + panelH / 2f));
 
-            string mainPanel = LayerName + ".Themes";
-            container.Add(new CuiPanel
-            {
-                Image = { Color = AdminSurface },
-                RectTransform = { AnchorMin = Anchor(0.27f, 0.5f - panelH / 2f), AnchorMax = Anchor(0.73f, 0.5f + panelH / 2f) }
-            }, LayerName, mainPanel);
+            string surface = Opaque(AdminSurface);
+            string mainPanel = AddSurface(container, LayerName, Anchor(0.27f, 0.5f - panelH / 2f), Anchor(0.73f, 0.5f + panelH / 2f), surface, RadiusPanel, null, LayerName + ".Themes", PanelRim);
+            AddTopSheen(container, mainPanel, RadiusPanel);
 
             float headerBottom = 1f - headerH / panelH;
-            container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = Anchor(0f, 1f - 0.004f / panelH), AnchorMax = "1 1" } }, mainPanel);
             AddHairline(container, mainPanel, headerBottom, 0.05f, 0.95f);
             container.Add(new CuiLabel { Text = { Text = Msg("SelectTheme", player), FontSize = 16, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold }, RectTransform = { AnchorMin = Anchor(0.05f, headerBottom), AnchorMax = "0.7 1" } }, mainPanel);
 
@@ -3622,14 +3677,9 @@ namespace Oxide.Plugins
                 float left = gridLeft + col * (cardWidth + gap);
                 float top = 1f - (headerH + padTop + row * (cardH + gapY)) / panelH;
 
-                string card = container.Add(new CuiButton
-                {
-                    Button = { Color = isSelected ? MixAlpha(theme.ButtonPrimary, 0.08f) : Ghost, Command = $"news.admin.settheme \"{themeName}\" {page}" },
-                    Text = { Text = "" },
-                    RectTransform = { AnchorMin = Anchor(left, top - cardHeight), AnchorMax = Anchor(left + cardWidth, top) }
-                }, mainPanel);
-
-                AddOutline(container, card, isSelected ? theme.ButtonPrimary : Rim, isSelected ? 2 : 1);
+                string cardColor = Blend(isSelected ? MixAlpha(theme.ButtonPrimary, 0.10f) : "1 1 1 0.04", surface);
+                string card = AddSurface(container, mainPanel, Anchor(left, top - cardHeight), Anchor(left + cardWidth, top), cardColor, RadiusCard,
+                    $"news.admin.settheme \"{themeName}\" {page}", null, isSelected ? Opaque(theme.ButtonPrimary) : null, 2f);
 
                 container.Add(new CuiLabel
                 {
@@ -3638,23 +3688,16 @@ namespace Oxide.Plugins
                 }, card);
 
                 if (isSelected)
-                {
-                    container.Add(new CuiPanel { Image = { Color = theme.ButtonPrimary }, RectTransform = { AnchorMin = "0.70 0.60", AnchorMax = "0.95 0.88" } }, card);
-                    container.Add(new CuiLabel
-                    {
-                        Text = { Text = Msg("ActiveBadge", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                        RectTransform = { AnchorMin = "0.70 0.60", AnchorMax = "0.95 0.88" }
-                    }, card);
-                }
+                    AddPill(container, card, Msg("ActiveBadge", player), "0.72 0.62", "0.94 0.86", theme.ButtonPrimary, "1 1 1 1", 9);
 
-                // Colour swatches: panel, header, content, primary button, secondary button, title text.
+                // Colour swatches in a rounded tray: panel, header, content, primary button, secondary button, title text.
+                string tray = AddSurface(container, card, "0.06 0.13", "0.94 0.47", Blend("0 0 0 0.35", cardColor), RadiusPill);
                 string[] swatches = { theme.PanelBg, theme.HeaderBg, theme.ContentBg, theme.ButtonPrimary, theme.ButtonSecondary, theme.TextTitle };
-                float swatchWidth = 0.13f, swatchGap = 0.018f;
+                float swatchWidth = (0.96f - 0.012f * (swatches.Length - 1)) / swatches.Length;
                 for (int s = 0; s < swatches.Length; s++)
                 {
-                    float sx = 0.06f + s * (swatchWidth + swatchGap);
-                    container.Add(new CuiPanel { Image = { Color = "1 1 1 0.12" }, RectTransform = { AnchorMin = Anchor(sx, 0.14f), AnchorMax = Anchor(sx + swatchWidth, 0.46f) } }, card);
-                    container.Add(new CuiPanel { Image = { Color = OpaqueColor(swatches[s]) }, RectTransform = { AnchorMin = Anchor(sx + 0.004f, 0.16f), AnchorMax = Anchor(sx + swatchWidth - 0.004f, 0.44f) } }, card);
+                    float sx = 0.02f + s * (swatchWidth + 0.012f);
+                    container.Add(new CuiPanel { Image = { Color = OpaqueColor(swatches[s]) }, RectTransform = { AnchorMin = Anchor(sx, 0.18f), AnchorMax = Anchor(sx + swatchWidth, 0.82f) } }, tray);
                 }
             }
 
