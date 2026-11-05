@@ -14,7 +14,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "2.2.0")]
+    [Info("NewsBroadcaster", "DEDA", "2.3.0")]
     [Description("In-game news announcements with notifications, archive, polls, likes, rewards and Discord webhooks")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -27,6 +27,7 @@ namespace Oxide.Plugins
         private const string PopupPanel = LayerName + ".Main";
         private const string LikeButtonName = LayerName + ".Like";
         private const string PollPanelName = LayerName + ".Poll";
+        private const string AutoCloseName = LayerName + ".AutoClose";
         private const string BlurMaterial = "assets/content/ui/uibackgroundblur-ingamemenu.mat";
         private const string DataFile = "NewsBroadcaster_Data";
 
@@ -56,6 +57,9 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, PopupState> openPopups = new Dictionary<ulong, PopupState>();
         private readonly Dictionary<ulong, int> archivePages = new Dictionary<ulong, int>();
         private readonly HashSet<ulong> remindedPlayers = new HashSet<ulong>();
+        private readonly Dictionary<ulong, UiScreen> currentScreens = new Dictionary<ulong, UiScreen>();
+        private readonly Dictionary<ulong, string> toastNames = new Dictionary<ulong, string>();
+        private int toastCounter;
 
         // Likes, read marks and "last seen" are saved with a short delay so a busy
         // server does not rewrite the whole data file on every click.
@@ -149,6 +153,9 @@ namespace Oxide.Plugins
         }
 
         enum PopupOrigin { Broadcast, Direct, Archive, Preview }
+
+        // Which full-screen view a player has open; drives how much a redraw animates.
+        enum UiScreen { None, Popup, Archive, Admin, Editor, Themes }
 
         class PopupState
         {
@@ -308,6 +315,7 @@ namespace Oxide.Plugins
                 ["PostedBy"] = "POSTED BY",
                 ["EditedTag"] = "EDITED",
                 ["NewAnnouncement"] = "NEW ANNOUNCEMENT",
+                ["AutoCloseIn"] = "CLOSES IN %TIME_LEFT%S",
                 ["ClickToRead"] = "CLICK TO READ",
                 ["Close"] = "CLOSE",
                 ["Previous"] = "< PREVIOUS",
@@ -1141,6 +1149,8 @@ namespace Oxide.Plugins
             openPopups.Clear();
             archivePages.Clear();
             remindedPlayers.Clear();
+            currentScreens.Clear();
+            toastNames.Clear();
 
             if (dataDirty && storedData != null) SaveAnnouncements();
             saveTimer?.Destroy();
@@ -1159,6 +1169,8 @@ namespace Oxide.Plugins
             openPopups.Remove(id);
             archivePages.Remove(id);
             remindedPlayers.Remove(id);
+            currentScreens.Remove(id);
+            toastNames.Remove(id);
             CancelReadRewardTimer(id);
             CancelAutoClose(id);
 
@@ -1550,7 +1562,7 @@ namespace Oxide.Plugins
             ann.PollVotes[userId] = option;
             MarkDataDirty();
             Interface.CallHook("OnNewsPollVote", player, BuildHookData(ann), option);
-            CancelAutoClose(userId);
+            StopAutoClose(player);
 
             PopupState state;
             if (playersWithUiOpen.Contains(userId) && openPopups.TryGetValue(userId, out state) && state.AnnId == ann.Id)
@@ -1600,7 +1612,7 @@ namespace Oxide.Plugins
             else MarkDataDirty();
 
             Interface.CallHook("OnNewsLiked", player, BuildHookData(ann), addedLike);
-            CancelAutoClose(userId);
+            StopAutoClose(player);
 
             PopupState state;
             if (playersWithUiOpen.Contains(userId) && openPopups.TryGetValue(userId, out state) && state.AnnId == ann.Id)
@@ -2131,7 +2143,12 @@ namespace Oxide.Plugins
         #region Notification UI
         private void DestroyNotification(BasePlayer player)
         {
-            CuiHelper.DestroyUi(player, NotificationLayer);
+            string toast;
+            if (toastNames.TryGetValue(player.userID, out toast))
+            {
+                CuiHelper.DestroyUi(player, toast);
+                toastNames.Remove(player.userID);
+            }
             Timer t;
             if (notificationTimers.TryGetValue(player.userID, out t))
             {
@@ -2160,64 +2177,74 @@ namespace Oxide.Plugins
             var container = new CuiElementContainer();
             var c = config.Colors;
             string typeColor = GetTypeColor(ann.Type);
-            string card = NotificationLayer + ".Card";
+            // Every toast gets its own name, so a new one can fade in while the previous one fades out.
+            string root = NotificationLayer + "." + (++toastCounter).ToString(CultureInfo.InvariantCulture);
+            string card = root + ".Card";
 
             // Transparent root so the soft shadow can sit behind the card.
             container.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0" },
                 RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax }
-            }, "Hud", NotificationLayer);
-            AddPanelShadow(container, NotificationLayer, "0 0", "1 1", 0.30f, true);
+            }, "Hud", root);
+            AddPanelShadow(container, root, "0 0", "1 1", true);
 
             container.Add(new CuiButton
             {
-                Button = { Color = "0.05 0.06 0.08 0.95", Command = $"news.view {ann.Id}", FadeIn = 0.30f },
+                Button = { Color = "0.05 0.06 0.08 0.95", Command = $"news.view {ann.Id}" },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
                 Text = { Text = "" }
-            }, NotificationLayer, card);
+            }, root, card);
             AddOutline(container, card, Rim);
 
             container.Add(new CuiPanel
             {
-                Image = { Color = typeColor, FadeIn = 0.30f },
+                Image = { Color = typeColor },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "0 1", OffsetMin = "0 0", OffsetMax = "3 0" }
             }, card);
 
             string kicker = Msg(HasPoll(ann) ? "NewPoll" : "NewAnnouncement", player);
             container.Add(new CuiLabel
             {
-                Text = { Text = $"{kicker}  <color={RgbaToHex(typeColor)}>•  {ann.Type.ToString().ToUpper()}</color>", FontSize = 9, Align = TextAnchor.LowerLeft, Color = c.ButtonPrimary, Font = FontBold, FadeIn = 0.30f },
+                Text = { Text = $"{kicker}  <color={RgbaToHex(typeColor)}>•  {ann.Type.ToString().ToUpper()}</color>", FontSize = 9, Align = TextAnchor.LowerLeft, Color = c.ButtonPrimary, Font = FontBold },
                 RectTransform = { AnchorMin = "0.06 0.64", AnchorMax = "0.88 0.92" }
             }, card);
 
             container.Add(new CuiLabel
             {
-                Text = { Text = Ellipsize(safeTitle, 28), FontSize = 13, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold, FadeIn = 0.30f },
+                Text = { Text = Ellipsize(safeTitle, 28), FontSize = 13, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
                 RectTransform = { AnchorMin = "0.06 0.30", AnchorMax = "0.97 0.66" }
             }, card);
 
             container.Add(new CuiLabel
             {
-                Text = { Text = Msg("ClickToRead", player), FontSize = 8, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = FontRegular, FadeIn = 0.30f },
+                Text = { Text = Msg("ClickToRead", player), FontSize = 8, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = FontRegular },
                 RectTransform = { AnchorMin = "0.06 0.06", AnchorMax = "0.9 0.30" }
             }, card);
 
             container.Add(new CuiButton
             {
                 Button = { Color = "0 0 0 0", Command = "news.close.notif" },
-                Text = { Text = "✕", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, FadeIn = 0.30f },
+                Text = { Text = "✕", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
                 RectTransform = { AnchorMin = "0.90 0.62", AnchorMax = "0.99 0.96" }
             }, card);
 
+            ApplyFadeRamp(container, 0, 0.22f, 0.45f);
+            foreach (var element in container) element.FadeOut = 0.35f;
             CuiHelper.AddUi(player, container);
+            toastNames[player.userID] = root;
             PlaySound(player);
 
             ulong userId = player.userID;
             notificationTimers[userId] = timer.Once(config.Notification.Duration, () =>
             {
                 notificationTimers.Remove(userId);
-                if (player != null && player.IsConnected) CuiHelper.DestroyUi(player, NotificationLayer);
+                string current;
+                if (toastNames.TryGetValue(userId, out current) && current == root)
+                {
+                    toastNames.Remove(userId);
+                    if (player != null && player.IsConnected) CuiHelper.DestroyUi(player, root);
+                }
             });
         }
         #endregion
@@ -2228,9 +2255,18 @@ namespace Oxide.Plugins
             CuiHelper.DestroyUi(player, LayerName);
             CuiHelper.DestroyUi(player, ConfirmLayer);
             playersWithUiOpen.Remove(player.userID);
+            currentScreens.Remove(player.userID);
             openPopups.Remove(player.userID);
             CancelAutoClose(player.userID);
             CancelReadRewardTimer(player.userID);
+        }
+
+        // The player is interacting with a broadcast popup: keep it open and remove the countdown.
+        private void StopAutoClose(BasePlayer player)
+        {
+            if (!autoCloseTimers.ContainsKey(player.userID)) return;
+            CancelAutoClose(player.userID);
+            CuiHelper.DestroyUi(player, AutoCloseName);
         }
 
         private void CancelAutoClose(ulong userId)
@@ -2243,24 +2279,65 @@ namespace Oxide.Plugins
             }
         }
 
-        private void AddBackdrop(CuiElementContainer container, string color)
+        // Animation. Rust CUI fades graphics in when they appear (FadeIn) and out when destroyed (FadeOut);
+        // both run on the client, so they are smooth and cost no extra network traffic.
+
+        // Opens a full-screen view. Returns the animation strength: 1 when switching to a new view,
+        // sameScreen when redrawing the view that is already open (0 = instant redraw).
+        private float OpenScreen(BasePlayer player, UiScreen screen, float sameScreen, out bool fresh)
         {
-            // Dimmed + blurred game view behind every full-screen panel.
+            UiScreen previous;
+            currentScreens.TryGetValue(player.userID, out previous);
+            DestroyUI(player);
+            currentScreens[player.userID] = screen;
+            playersWithUiOpen.Add(player.userID);
+            fresh = previous == UiScreen.None;
+            return previous == screen ? sameScreen : 1f;
+        }
+
+        // Staggered reveal: elements added later fade in a little slower, so a screen builds up
+        // top-to-bottom (header, content, footer; archive rows one after another).
+        // Elements that already have an explicit fade keep it.
+        private static void ApplyFadeRamp(CuiElementContainer container, int fromIndex, float first, float last)
+        {
+            if (last <= 0f) return;
+            int span = Math.Max(1, container.Count - fromIndex - 1);
+            for (int i = fromIndex; i < container.Count; i++)
+            {
+                float seconds = first + (last - first) * (i - fromIndex) / span;
+                foreach (var component in container[i].Components)
+                {
+                    var image = component as CuiImageComponent;
+                    if (image != null) { if (image.FadeIn <= 0f) image.FadeIn = seconds; continue; }
+                    var raw = component as CuiRawImageComponent;
+                    if (raw != null) { if (raw.FadeIn <= 0f) raw.FadeIn = seconds; continue; }
+                    var text = component as CuiTextComponent;
+                    if (text != null) { if (text.FadeIn <= 0f) text.FadeIn = seconds; continue; }
+                    var button = component as CuiButtonComponent;
+                    if (button != null && button.FadeIn <= 0f) button.FadeIn = seconds;
+                }
+            }
+        }
+
+        private void AddBackdrop(CuiElementContainer container, string color, float fade = 0f)
+        {
+            // Dimmed + blurred game view behind every full-screen panel. It only fades in when nothing
+            // was open before, so moving between screens never flashes the game view.
             container.Add(new CuiPanel
             {
-                Image = { Color = color, Material = BlurMaterial, FadeIn = 0.18f },
+                Image = { Color = color, Material = BlurMaterial, FadeIn = fade },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
                 CursorEnabled = true
             }, "Overlay", LayerName);
         }
 
         // Soft two-step shadow and a faint light rim around a panel. Add it before the panel itself.
-        private void AddPanelShadow(CuiElementContainer container, string parent, string anchorMin, string anchorMax, float fade = 0.16f, bool small = false)
+        private void AddPanelShadow(CuiElementContainer container, string parent, string anchorMin, string anchorMax, bool small = false)
         {
             string outer = small ? "4" : "12", inner = small ? "2" : "5";
-            container.Add(new CuiPanel { Image = { Color = small ? "0 0 0 0.12" : "0 0 0 0.10", FadeIn = fade }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = $"-{outer} -{outer}", OffsetMax = $"{outer} {outer}" } }, parent);
-            container.Add(new CuiPanel { Image = { Color = small ? "0 0 0 0.22" : "0 0 0 0.18", FadeIn = fade }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = $"-{inner} -{inner}", OffsetMax = $"{inner} {inner}" } }, parent);
-            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.07", FadeIn = fade }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = "-1 -1", OffsetMax = "1 1" } }, parent);
+            container.Add(new CuiPanel { Image = { Color = small ? "0 0 0 0.12" : "0 0 0 0.10" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = $"-{outer} -{outer}", OffsetMax = $"{outer} {outer}" } }, parent);
+            container.Add(new CuiPanel { Image = { Color = small ? "0 0 0 0.22" : "0 0 0 0.18" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = $"-{inner} -{inner}", OffsetMax = $"{inner} {inner}" } }, parent);
+            container.Add(new CuiPanel { Image = { Color = "1 1 1 0.07" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = "-1 -1", OffsetMax = "1 1" } }, parent);
         }
 
         // Outline drawn just inside an element, pixel-exact at any size (offsets are in canvas units).
@@ -2310,8 +2387,8 @@ namespace Oxide.Plugins
             bool liked = ann.LikedPlayers.Contains(player.userID);
             string button = container.Add(new CuiButton
             {
-                Button = { Color = liked ? "0.90 0.30 0.35 0.14" : Ghost, Command = $"news.like {ann.Id}" },
-                Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = liked ? "0.96 0.40 0.44 1" : "0.62 0.63 0.68 1", Font = FontBold },
+                Button = { Color = liked ? "0.90 0.30 0.35 0.14" : Ghost, Command = $"news.like {ann.Id}", FadeIn = 0.25f },
+                Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = liked ? "0.96 0.40 0.44 1" : "0.62 0.63 0.68 1", Font = FontBold, FadeIn = 0.25f },
                 RectTransform = { AnchorMin = "0.03 0.028", AnchorMax = "0.135 0.082" }
             }, PopupPanel, LikeButtonName);
             AddOutline(container, button, liked ? "0.96 0.40 0.44 0.45" : Rim);
@@ -2322,9 +2399,9 @@ namespace Oxide.Plugins
             if (!CanView(player) || ann == null) return;
             bool preview = origin == PopupOrigin.Preview;
 
-            DestroyUI(player);
+            bool fresh;
+            float anim = OpenScreen(player, UiScreen.Popup, 0.5f, out fresh);
             DestroyNotification(player);
-            playersWithUiOpen.Add(player.userID);
             if (!preview) openPopups[player.userID] = new PopupState { AnnId = ann.Id, Origin = origin };
 
             var container = new CuiElementContainer();
@@ -2332,13 +2409,14 @@ namespace Oxide.Plugins
             string accentHex = RgbaToHex(c.ButtonPrimary);
             string typeColor = GetTypeColor(ann.Type);
 
-            AddBackdrop(container, "0 0 0 0.62");
+            AddBackdrop(container, "0 0 0 0.62", fresh ? 0.25f : 0f);
+            int contentStart = container.Count;
             AddPanelShadow(container, LayerName, "0.175 0.175", "0.825 0.825");
 
             string mainPanel = PopupPanel;
             container.Add(new CuiPanel
             {
-                Image = { Color = c.PanelBg, FadeIn = 0.20f },
+                Image = { Color = c.PanelBg },
                 RectTransform = { AnchorMin = "0.175 0.175", AnchorMax = "0.825 0.825" }
             }, LayerName, mainPanel);
 
@@ -2523,6 +2601,23 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0.78 0.028", AnchorMax = "0.97 0.082" }
             }, mainPanel);
 
+            if (origin == PopupOrigin.Broadcast && config.General.EnableAutoClose)
+            {
+                // Live "closes in 12s" countdown, counted down by the client itself.
+                container.Add(new CuiElement
+                {
+                    Name = AutoCloseName,
+                    Parent = mainPanel,
+                    Components =
+                    {
+                        new CuiTextComponent { Text = Msg("AutoCloseIn", player), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = FontBold },
+                        new CuiCountdownComponent { StartTime = config.General.AutoCloseSeconds, EndTime = 0, Step = 1 },
+                        new CuiRectTransformComponent { AnchorMin = "0.35 0.028", AnchorMax = "0.65 0.082" }
+                    }
+                });
+            }
+
+            ApplyFadeRamp(container, contentStart, 0.16f * anim, 0.62f * anim);
             CuiHelper.AddUi(player, container);
 
             if (playSound) PlaySound(player);
@@ -2631,7 +2726,8 @@ namespace Oxide.Plugins
                 {
                     container.Add(new CuiPanel
                     {
-                        Image = { Color = MixAlpha(c.ButtonPrimary, mine ? 0.42f : 0.2f) },
+                        // Result bars fade in after voting.
+                        Image = { Color = MixAlpha(c.ButtonPrimary, mine ? 0.42f : 0.2f), FadeIn = 0.5f },
                         RectTransform = { AnchorMin = "0 0", AnchorMax = Anchor(Math.Max(0.006f, share), 1f) }
                     }, row);
                 }
@@ -2713,15 +2809,16 @@ namespace Oxide.Plugins
         private void ShowHistory(BasePlayer player, int page)
         {
             if (!CanView(player)) return;
-            DestroyUI(player);
 
             if (announcements.Count == 0)
             {
+                DestroyUI(player);
                 SendReply(player, Msg("NoNewsHistory", player));
                 return;
             }
 
-            playersWithUiOpen.Add(player.userID);
+            bool fresh;
+            float anim = OpenScreen(player, UiScreen.Archive, 0.6f, out fresh);
 
             var container = new CuiElementContainer();
             var c = config.Colors;
@@ -2734,13 +2831,14 @@ namespace Oxide.Plugins
             if (page >= totalPages) page = totalPages - 1;
             archivePages[userId] = page;
 
-            AddBackdrop(container, "0 0 0 0.62");
+            AddBackdrop(container, "0 0 0 0.62", fresh ? 0.25f : 0f);
+            int contentStart = container.Count;
             AddPanelShadow(container, LayerName, "0.15 0.1", "0.85 0.9");
 
             string mainPanel = LayerName + ".List";
             container.Add(new CuiPanel
             {
-                Image = { Color = c.PanelBg, FadeIn = 0.20f },
+                Image = { Color = c.PanelBg },
                 RectTransform = { AnchorMin = "0.15 0.1", AnchorMax = "0.85 0.9" }
             }, LayerName, mainPanel);
             container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0 0.996", AnchorMax = "1 1" } }, mainPanel);
@@ -2782,11 +2880,10 @@ namespace Oxide.Plugins
 
                 string itemPanel = mainPanel + $".{i}";
                 string typeColor = GetTypeColor(ann.Type);
-                float rowFade = 0.18f + count * 0.04f;
 
                 container.Add(new CuiButton
                 {
-                    Button = { Color = c.ContentBg, Command = $"news.view {ann.Id} archive", FadeIn = rowFade },
+                    Button = { Color = c.ContentBg, Command = $"news.view {ann.Id} archive" },
                     Text = { Text = "" },
                     RectTransform = { AnchorMin = Anchor(0.025f, bottom), AnchorMax = Anchor(0.975f, top) }
                 }, mainPanel, itemPanel);
@@ -2886,6 +2983,7 @@ namespace Oxide.Plugins
             if (page < totalPages - 1)
                 AddGhostButton(container, mainPanel, Msg("Next", player), $"news.page {page + 1}", "0.85 0.022", "0.975 0.073", c.TextTitle, 10);
 
+            ApplyFadeRamp(container, contentStart, 0.14f * anim, 0.6f * anim);
             CuiHelper.AddUi(player, container);
         }
 
@@ -2940,19 +3038,20 @@ namespace Oxide.Plugins
         #region Admin UI
         private void ShowAdminList(BasePlayer player, int page)
         {
-            DestroyUI(player);
-            playersWithUiOpen.Add(player.userID);
+            bool fresh;
+            float anim = OpenScreen(player, UiScreen.Admin, 0f, out fresh);
 
             var container = new CuiElementContainer();
             var c = config.Colors;
 
-            AddBackdrop(container, AdminBackdrop);
+            AddBackdrop(container, AdminBackdrop, fresh ? 0.22f : 0f);
+            int contentStart = container.Count;
             AddPanelShadow(container, LayerName, "0.16 0.12", "0.84 0.88");
 
             string mainPanel = LayerName + ".Admin";
             container.Add(new CuiPanel
             {
-                Image = { Color = AdminSurface, FadeIn = 0.14f },
+                Image = { Color = AdminSurface },
                 RectTransform = { AnchorMin = "0.16 0.12", AnchorMax = "0.84 0.88" }
             }, LayerName, mainPanel);
 
@@ -3015,10 +3114,9 @@ namespace Oxide.Plugins
                 string typeColor = GetTypeColor(ann.Type);
                 bool selected = selection.Contains(ann.Id);
 
-                float adminRowFade = 0.18f + count * 0.04f;
                 container.Add(new CuiPanel
                 {
-                    Image = { Color = selected ? "0.10 0.18 0.24 0.98" : AdminSurfaceRaised, FadeIn = adminRowFade },
+                    Image = { Color = selected ? "0.10 0.18 0.24 0.98" : AdminSurfaceRaised },
                     RectTransform = { AnchorMin = Anchor(0.025f, bottom), AnchorMax = Anchor(0.975f, top) }
                 }, mainPanel, itemPanel);
                 AddOutline(container, itemPanel, selected ? MixAlpha(c.ButtonPrimary, 0.5f) : ann.Pinned ? "0.95 0.70 0.20 0.28" : Rim);
@@ -3027,7 +3125,7 @@ namespace Oxide.Plugins
                 {
                     container.Add(new CuiPanel
                     {
-                        Image = { Color = "0.95 0.70 0.20 0.045", FadeIn = adminRowFade },
+                        Image = { Color = "0.95 0.70 0.20 0.045" },
                         RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
                     }, itemPanel);
                 }
@@ -3152,6 +3250,7 @@ namespace Oxide.Plugins
                 AddGhostButton(container, mainPanel, ">", $"news.admin.page {page + 1}", "0.62 0.02", "0.655 0.075", c.TextNormal, 11);
             }
 
+            ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.5f * anim);
             CuiHelper.AddUi(player, container);
         }
 
@@ -3168,7 +3267,7 @@ namespace Oxide.Plugins
         {
             string fieldBox = container.Add(new CuiPanel
             {
-                Image = { Color = "1 1 1 0.035", FadeIn = 0.12f },
+                Image = { Color = "1 1 1 0.035" },
                 RectTransform = { AnchorMin = Anchor(left, bottom), AnchorMax = Anchor(right, top) }
             }, parent);
             AddOutline(container, fieldBox, Rim);
@@ -3249,17 +3348,18 @@ namespace Oxide.Plugins
             if (session == null) return;
             var ann = session.Draft;
 
-            DestroyUI(player);
-            playersWithUiOpen.Add(player.userID);
+            bool fresh;
+            float anim = OpenScreen(player, UiScreen.Editor, 0f, out fresh);
 
             var container = new CuiElementContainer();
             var c = config.Colors;
 
-            AddBackdrop(container, AdminBackdrop);
+            AddBackdrop(container, AdminBackdrop, fresh ? 0.22f : 0f);
+            int contentStart = container.Count;
             AddPanelShadow(container, LayerName, "0.21 0.13", "0.79 0.87");
 
             string editorPanel = LayerName + ".Editor";
-            container.Add(new CuiPanel { Image = { Color = AdminSurface, FadeIn = 0.14f }, RectTransform = { AnchorMin = "0.21 0.13", AnchorMax = "0.79 0.87" } }, LayerName, editorPanel);
+            container.Add(new CuiPanel { Image = { Color = AdminSurface }, RectTransform = { AnchorMin = "0.21 0.13", AnchorMax = "0.79 0.87" } }, LayerName, editorPanel);
 
             container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = "0 0.994", AnchorMax = "1 1" } }, editorPanel);
             AddHairline(container, editorPanel, 0.91f, 0.04f, 0.96f);
@@ -3336,7 +3436,7 @@ namespace Oxide.Plugins
             }
 
             string footerPanel = editorPanel + ".Footer";
-            container.Add(new CuiPanel { Image = { Color = AdminSurface, FadeIn = 0.12f }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.115" } }, editorPanel, footerPanel);
+            container.Add(new CuiPanel { Image = { Color = AdminSurface }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.115" } }, editorPanel, footerPanel);
             AddHairline(container, editorPanel, 0.115f, 0.04f, 0.96f);
 
             AddGhostButton(container, footerPanel, Msg("Cancel", player), "news.editor.cancel", "0.05 0.2", "0.29 0.8", c.TextNormal, 11);
@@ -3344,11 +3444,12 @@ namespace Oxide.Plugins
 
             container.Add(new CuiButton
             {
-                Button = { Color = c.ButtonPrimary, Command = "news.editor.save", FadeIn = 0.14f },
-                Text = { Text = session.IsNew ? Msg("SaveBroadcast", player) : Msg("SaveChanges", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold, FadeIn = 0.20f },
+                Button = { Color = c.ButtonPrimary, Command = "news.editor.save" },
+                Text = { Text = session.IsNew ? Msg("SaveBroadcast", player) : Msg("SaveChanges", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
                 RectTransform = { AnchorMin = "0.55 0.2", AnchorMax = "0.95 0.8" }
             }, footerPanel);
 
+            ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.38f * anim);
             CuiHelper.AddUi(player, container);
         }
 
@@ -3358,35 +3459,35 @@ namespace Oxide.Plugins
 
             container.Add(new CuiPanel
             {
-                Image = { Color = "0 0 0 0.45", Material = BlurMaterial, FadeIn = 0.10f },
+                Image = { Color = "0 0 0 0.45", Material = BlurMaterial },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
                 CursorEnabled = true
             }, "Overlay", ConfirmLayer);
 
-            AddPanelShadow(container, ConfirmLayer, "0.355 0.385", "0.645 0.615", 0.10f);
+            AddPanelShadow(container, ConfirmLayer, "0.355 0.385", "0.645 0.615");
 
             string dialogPanel = ConfirmLayer + ".Dialog";
             container.Add(new CuiPanel
             {
-                Image = { Color = AdminSurface, FadeIn = 0.12f },
+                Image = { Color = AdminSurface },
                 RectTransform = { AnchorMin = "0.355 0.385", AnchorMax = "0.645 0.615" }
             }, ConfirmLayer, dialogPanel);
 
             container.Add(new CuiPanel
             {
-                Image = { Color = AdminDanger, FadeIn = 0.12f },
+                Image = { Color = AdminDanger },
                 RectTransform = { AnchorMin = "0 0.982", AnchorMax = "1 1" }
             }, dialogPanel);
 
             container.Add(new CuiLabel
             {
-                Text = { Text = title, FontSize = 13, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = FontBold, FadeIn = 0.18f },
+                Text = { Text = title, FontSize = 13, Align = TextAnchor.MiddleCenter, Color = c.TextTitle, Font = FontBold },
                 RectTransform = { AnchorMin = "0 0.78", AnchorMax = "1 0.95" }
             }, dialogPanel);
 
             container.Add(new CuiLabel
             {
-                Text = { Text = body, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = FontRegular, FadeIn = 0.18f },
+                Text = { Text = body, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = c.TextNormal, Font = FontRegular },
                 RectTransform = { AnchorMin = "0.05 0.30", AnchorMax = "0.95 0.74" }
             }, dialogPanel);
 
@@ -3394,8 +3495,8 @@ namespace Oxide.Plugins
 
             container.Add(new CuiButton
             {
-                Button = { Color = AdminDanger, Command = confirmCommand, FadeIn = 0.12f },
-                Text = { Text = Msg("ConfirmDelete", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold, FadeIn = 0.18f },
+                Button = { Color = AdminDanger, Command = confirmCommand },
+                Text = { Text = Msg("ConfirmDelete", player), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
                 RectTransform = { AnchorMin = "0.54 0.08", AnchorMax = "0.95 0.26" }
             }, dialogPanel);
         }
@@ -3408,6 +3509,7 @@ namespace Oxide.Plugins
 
             var container = new CuiElementContainer();
             AddConfirmDialog(container, player, Msg("DeleteAnnouncement", player), Msg("DeleteConfirmBody", player, Ellipsize(ann.Title, 32)), $"news.admin.del {ann.Id} {returnPage}");
+            ApplyFadeRamp(container, 0, 0.1f, 0.26f);
             CuiHelper.AddUi(player, container);
         }
 
@@ -3419,6 +3521,7 @@ namespace Oxide.Plugins
 
             var container = new CuiElementContainer();
             AddConfirmDialog(container, player, Msg("BulkDeleteTitle", player), Msg("BulkDeleteBody", player, sel.Count), $"news.admin.bulkdel {returnPage}");
+            ApplyFadeRamp(container, 0, 0.1f, 0.26f);
             CuiHelper.AddUi(player, container);
         }
         #endregion
@@ -3467,13 +3570,14 @@ namespace Oxide.Plugins
 
         private void ShowThemeSelection(BasePlayer player, int page)
         {
-            DestroyUI(player);
-            playersWithUiOpen.Add(player.userID);
+            bool fresh;
+            float anim = OpenScreen(player, UiScreen.Themes, 0f, out fresh);
 
             var container = new CuiElementContainer();
             var c = config.Colors;
 
-            AddBackdrop(container, AdminBackdrop);
+            AddBackdrop(container, AdminBackdrop, fresh ? 0.22f : 0f);
+            int contentStart = container.Count;
 
             var names = config.Themes.Keys.ToList();
             int totalPages = Math.Max(1, Mathf.CeilToInt((float)names.Count / ThemesPerPage));
@@ -3492,14 +3596,14 @@ namespace Oxide.Plugins
             string mainPanel = LayerName + ".Themes";
             container.Add(new CuiPanel
             {
-                Image = { Color = AdminSurface, FadeIn = 0.14f },
+                Image = { Color = AdminSurface },
                 RectTransform = { AnchorMin = Anchor(0.27f, 0.5f - panelH / 2f), AnchorMax = Anchor(0.73f, 0.5f + panelH / 2f) }
             }, LayerName, mainPanel);
 
             float headerBottom = 1f - headerH / panelH;
             container.Add(new CuiPanel { Image = { Color = c.ButtonPrimary }, RectTransform = { AnchorMin = Anchor(0f, 1f - 0.004f / panelH), AnchorMax = "1 1" } }, mainPanel);
             AddHairline(container, mainPanel, headerBottom, 0.05f, 0.95f);
-            container.Add(new CuiLabel { Text = { Text = Msg("SelectTheme", player), FontSize = 16, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold, FadeIn = 0.14f }, RectTransform = { AnchorMin = Anchor(0.05f, headerBottom), AnchorMax = "0.7 1" } }, mainPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("SelectTheme", player), FontSize = 16, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold }, RectTransform = { AnchorMin = Anchor(0.05f, headerBottom), AnchorMax = "0.7 1" } }, mainPanel);
 
             AddGhostButton(container, mainPanel, Msg("Back", player), "news.admin", Anchor(0.80f, 1f - headerH * 0.78f / panelH), Anchor(0.95f, 1f - headerH * 0.22f / panelH), c.TextNormal, 10);
 
@@ -3517,11 +3621,10 @@ namespace Oxide.Plugins
                 int col = slot % 2, row = slot / 2;
                 float left = gridLeft + col * (cardWidth + gap);
                 float top = 1f - (headerH + padTop + row * (cardH + gapY)) / panelH;
-                float fade = 0.12f + slot * 0.025f;
 
                 string card = container.Add(new CuiButton
                 {
-                    Button = { Color = isSelected ? MixAlpha(theme.ButtonPrimary, 0.08f) : Ghost, Command = $"news.admin.settheme \"{themeName}\" {page}", FadeIn = fade },
+                    Button = { Color = isSelected ? MixAlpha(theme.ButtonPrimary, 0.08f) : Ghost, Command = $"news.admin.settheme \"{themeName}\" {page}" },
                     Text = { Text = "" },
                     RectTransform = { AnchorMin = Anchor(left, top - cardHeight), AnchorMax = Anchor(left + cardWidth, top) }
                 }, mainPanel);
@@ -3568,6 +3671,7 @@ namespace Oxide.Plugins
                     AddGhostButton(container, mainPanel, ">", $"news.admin.themes {page + 1}", Anchor(0.66f, 0.014f / panelH), Anchor(0.72f, 0.048f / panelH), c.TextNormal, 11);
             }
 
+            ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.45f * anim);
             CuiHelper.AddUi(player, container);
         }
 

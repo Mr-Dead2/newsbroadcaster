@@ -1,4 +1,5 @@
 using HarnessRuntime;
+using Newtonsoft.Json.Linq;
 
 var mode = args.Length > 0 ? args[0] : "previews";
 var outDir = args.Length > 1 ? args[1] : "out";
@@ -7,7 +8,8 @@ switch (mode)
 {
     case "previews": Previews.Run(outDir); break;
     case "tests": Environment.ExitCode = Tests.Run(); break;
-    default: Console.WriteLine("modes: previews <dir> | tests"); break;
+    case "animation": Animation.Run(outDir); break;
+    default: Console.WriteLine("modes: previews <dir> | tests | animation <timeline.json>"); break;
 }
 
 static class Sample
@@ -172,5 +174,52 @@ static class Previews
 
         Console.WriteLine($"previews done. data writes={Sim.DataWrites} hooks={Sim.Hooks.Count} webreq={Sim.WebRequests.Count}");
         if (Sim.MissingLangKeys.Count > 0) Console.WriteLine("!! missing lang keys: " + string.Join(", ", Sim.MissingLangKeys));
+    }
+}
+
+// Records one player's client UI at points in time (plus the button that was clicked) for render/anim.js.
+static class Animation
+{
+    public static void Run(string outPath)
+    {
+        Sim.Quiet = true;
+        Previews.Run(Path.Combine(Path.GetTempPath(), "nb-anim-previews"));
+        var admin = BasePlayer.Find("DEDA");
+        var player = BasePlayer.Find("Survivor");
+        foreach (var p in new[] { admin, player }) { H.Console(p, "news.close"); H.Console(p, "news.close.notif"); }
+        Sim.Advance(10);
+
+        var wipe = H.AnnByTitle("Wipe Day - Fresh Map Is Live");
+        var poll = H.AnnByTitle("Next Wipe: Pick The Map Size");
+        ((Dictionary<ulong, int>)H.AGet(poll, "PollVotes")).Remove(player.userID);
+        ((HashSet<ulong>)H.AGet(wipe, "LikedPlayers")).Remove(player.userID);
+
+        var frames = new JArray();
+        void Frame(double t, string click = null)
+        {
+            frames.Add(new JObject { ["t"] = t, ["click"] = click, ["elements"] = JArray.Parse(Sim.Snapshot(player)) });
+        }
+        void Click(double t, string command)
+        {
+            H.Console(player, command);
+            Frame(t, command);
+            Sim.Advance(1.5);
+        }
+
+        Frame(0);
+        H.Console(null, $"news.resend {H.Id(wipe)}");          // toast slides... fades in
+        Frame(0.6);
+        Click(2.8, $"news.view {H.Id(wipe)}");                 // open from the toast
+        Click(5.6, $"news.like {H.Id(wipe)}");                 // like pops
+        Click(7.2, $"news.view {H.Id(poll)} direct");          // previous post (the poll)
+        Click(9.6, $"news.vote {H.Id(poll)} 1");               // vote: result bars fade in
+        Click(12.2, "news.page 0");                            // archive: rows cascade, no blink
+        Click(15.4, "news.close");
+        H.CfgSet("Notification.Enabled", false);               // broadcast popup with live countdown
+        H.Console(null, "news.show \"Server Restart In 10 Minutes\" \"-\" \"The server restarts at 23:00 for an update. Please get somewhere safe - your base and items are saved.\" Warning");
+        Frame(16.2);
+
+        File.WriteAllText(outPath, new JObject { ["duration"] = 21.0, ["frames"] = frames }.ToString(Newtonsoft.Json.Formatting.None));
+        Console.WriteLine($"timeline: {frames.Count} frames -> {outPath}");
     }
 }

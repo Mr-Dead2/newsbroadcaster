@@ -38,7 +38,7 @@ static class Tests
 
     static int HooksNamed(string n) => Sim.Hooks.Count(h => h.Key == n);
     static bool UiOpen(BasePlayer p) => H.HasElement(p, "NewsBroadcasterUI");
-    static bool ToastOpen(BasePlayer p) => H.HasElement(p, "NewsNotificationUI");
+    static bool ToastOpen(BasePlayer p) => H.Live(p).Any(e => (string)e["parent"] == "Hud" && ((string)e["name"]).StartsWith("NewsNotificationUI."));
     static string LastChat(BasePlayer p) => H.ChatOf(p).LastOrDefault() ?? "";
     static List<string> CuiWarnings() => Sim.Clients.Values.SelectMany(c => c.Warnings).ToList();
     static object Ann0 => H.Ann(0);
@@ -407,7 +407,7 @@ static class Tests
         H.Call("OnPlayerDisconnected", admin, "bye");
         H.Call("OnPlayerDisconnected", player, "bye");
         bool clean = true;
-        foreach (var f in new[] { "editors", "playersWithUiOpen", "adminSelections", "openPopups", "archivePages", "remindedPlayers", "readRewardTimers", "autoCloseTimers", "notificationTimers", "likeCooldowns", "voteCooldowns" })
+        foreach (var f in new[] { "editors", "playersWithUiOpen", "adminSelections", "openPopups", "archivePages", "remindedPlayers", "readRewardTimers", "autoCloseTimers", "notificationTimers", "likeCooldowns", "voteCooldowns", "currentScreens", "toastNames" })
         {
             var coll = H.Get(f);
             int n = (int)coll.GetType().GetProperty("Count").GetValue(coll);
@@ -548,6 +548,55 @@ static class Tests
         Check(dp["embeds"][0]["fields"][0]["value"].ToString().Contains("A") && dp["embeds"][0]["fields"][0]["value"].ToString().Contains("B"), "Discord embed lists poll options");
         var hook = (Dictionary<string, object>)Sim.Hooks.Last(h => h.Key == "OnNewsBroadcast").Value[0];
         Check(((string[])hook["pollOptions"]).Length == 2 && hook.ContainsKey("title"), "hook payload has pollOptions, old keys unchanged");
+
+        // ---------------------------------------------------------------
+        Section("Animations");
+        Fresh();
+        Post("Anim A", "a"); Post("Anim B", "b");
+        static float Fade(JObject e) => e["components"].Children<JObject>().Select(c => (float?)c["fadeIn"] ?? 0f).DefaultIfEmpty(0f).Max();
+        H.Console(player, "news.close.notif");
+        H.Chat(player, "news");
+        var arch = H.Live(player).ToList();
+        Check(Fade(arch.First(e => (string)e["name"] == "NewsBroadcasterUI")) == 0.25f, "opening from nothing fades the background in");
+        var rows = arch.Where(e => ((string)e["name"]).StartsWith("NewsBroadcasterUI.List.") && (string)e["parent"] == "NewsBroadcasterUI.List").ToList();
+        Check(rows.Count == 2 && Fade(rows[0]) > 0 && Fade(rows[1]) > Fade(rows[0]), "archive rows cascade (later rows fade slower)");
+        H.Console(player, $"news.view {H.Id(Ann0)} archive");
+        var pop = H.Live(player).ToList();
+        Check(Fade(pop.First(e => (string)e["name"] == "NewsBroadcasterUI")) == 0f, "switching screens does not re-fade the background (no blink)");
+        Check(Fade(pop.First(e => (string)e["name"] == "NewsBroadcasterUI.Main.TitleText")) > Fade(pop.First(e => (string)e["name"] == "NewsBroadcasterUI.Main")), "popup reveals panel first, then title");
+        H.Console(admin, "news.close.notif");
+        H.Console(admin, "news.admin");
+        Check(H.Live(admin).Any(e => Fade(e) > 0f), "admin list animates on open");
+        H.Console(admin, $"news.admin.toggleselect {H.Id(Ann0)} 0");
+        Check(!H.Live(admin).Any(e => Fade(e) > 0f), "admin refresh (select) is instant");
+        H.Console(admin, "news.close");
+
+        // toast fade-out + replacement
+        Post("Anim C", "c");
+        var toast1 = H.Live(player).First(e => (string)e["parent"] == "Hud" && ((string)e["name"]).StartsWith("NewsNotificationUI."));
+        Check(H.Live(player).Where(e => ((string)e["name"]).StartsWith((string)toast1["name"])).All(e => (float?)e["fadeOut"] == 0.35f), "toast elements fade out");
+        Post("Anim D", "d");
+        var toasts = H.Live(player).Where(e => (string)e["parent"] == "Hud" && ((string)e["name"]).StartsWith("NewsNotificationUI.")).ToList();
+        Check(toasts.Count == 1 && (string)toasts[0]["name"] != (string)toast1["name"], "new toast replaces the old one under a new name");
+
+        // countdown on broadcast popups
+        H.CfgSet("Notification.Enabled", false);
+        H.Console(player, "news.close");
+        Post("Anim E", "e");
+        var cd = H.Live(player).FirstOrDefault(e => (string)e["name"] == "NewsBroadcasterUI.AutoClose");
+        Check(cd != null && cd["components"].Any(c => (string)c["type"] == "Countdown" && (int)c["startTime"] == 15) && H.Texts(player).Contains("CLOSES IN %TIME_LEFT%S"), "broadcast popup shows a live countdown");
+        H.Console(player, $"news.like {H.Id(Ann0)}");
+        Check(!H.HasElement(player, "NewsBroadcasterUI.AutoClose") && !((System.Collections.IDictionary)H.Get("autoCloseTimers")).Contains(player.userID.Get()), "interacting removes the countdown and keeps the popup open");
+        Sim.Advance(20);
+        Check(UiOpen(player), "popup stays open after interaction");
+        Check(Fade(H.Live(player).First(e => (string)e["name"] == "NewsBroadcasterUI.Like")) == 0.25f, "like button pops in");
+        H.CfgSet("Notification.Enabled", true);
+
+        // poll bars grow in after voting
+        H.Console(null, "news.poll \"Anim poll\" \"x\" \"A|B\"");
+        H.Console(player, $"news.view {H.Id(Ann0)}");
+        H.Console(player, $"news.vote {H.Id(Ann0)} 1");
+        Check(H.Live(player).Any(e => (string)e["parent"] == "NewsBroadcasterUI.Poll.Opt1" && Fade(e) == 0.5f), "poll result bars fade in");
 
         // ---------------------------------------------------------------
         Section("ImageLibrary integration");

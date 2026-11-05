@@ -9,6 +9,7 @@ NewsBroadcaster pushes clean, modern announcements straight to your players: tit
 ## Highlights
 
 - **Modern, flat UI** — outlined cards, hairline dividers, blurred background and article-style popups that still match your theme colours.
+- **Smooth animations** — screens reveal top-to-bottom, archive rows cascade in, toasts fade in and out, likes pop, poll bars fade in, and auto-closing popups show a live countdown. All client-side: no lag, no extra network traffic.
 - **In-game admin panel** — create, edit, preview, pin, resend and delete announcements without leaving the game.
 - **Live preview** — see the exact popup your players will get before you hit publish.
 - **Polls** — attach a 2–4 option poll to any post. One-click voting, live result bars, change-your-vote, close voting when you're done. Results show in the archive, the admin list and on Discord.

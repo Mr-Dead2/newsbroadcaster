@@ -207,6 +207,17 @@ namespace Oxide.Game.Rust.Cui
         [JsonProperty("hudMenuInput")] public bool HudMenuInput { get; set; }
     }
 
+    // Older Oxide builds use int for these, newer ones float; int here so only values valid in both compile.
+    public class CuiCountdownComponent : ICuiComponent
+    {
+        public string Type => "Countdown";
+        [JsonProperty("endTime")] public int EndTime { get; set; }
+        [JsonProperty("startTime")] public int StartTime { get; set; }
+        [JsonProperty("step")] public int Step { get; set; }
+        [JsonProperty("command")] public string Command { get; set; }
+        [JsonProperty("fadeIn")] public float FadeIn { get; set; }
+    }
+
     public class CuiNeedsCursorComponent : ICuiComponent { public string Type => "NeedsCursor"; }
     public class CuiNeedsKeyboardComponent : ICuiComponent { public string Type => "NeedsKeyboard"; }
 

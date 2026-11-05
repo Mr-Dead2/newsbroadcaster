@@ -21,7 +21,7 @@ namespace HarnessRuntime
         public static readonly JsonSerializerSettings OxideJsonSettings = new JsonSerializerSettings();
         public static readonly Dictionary<string, string> DataFiles = new Dictionary<string, string>();
         public static readonly Dictionary<string, string> ConfigFiles = new Dictionary<string, string>();
-        public static int DataWrites, ConfigWrites;
+        public static int DataWrites, ConfigWrites, ElementIds;
         public static readonly List<KeyValuePair<string, object[]>> Hooks = new List<KeyValuePair<string, object[]>>();
         public static readonly List<WebRequestRecord> WebRequests = new List<WebRequestRecord>();
         public static Func<string, string, (int, string)> WebResponder = (u, b) => (204, "");
@@ -81,6 +81,7 @@ namespace HarnessRuntime
                     ui.Warnings.Add($"duplicate element name '{name}' (parent '{parent}')");
                 el["name"] = name;
                 el["parent"] = parent;
+                el["__id"] = ++ElementIds;
                 ui.Elements.Add(el);
             }
         }

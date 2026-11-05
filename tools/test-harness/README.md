@@ -6,9 +6,12 @@ There is no Rust server here, so this folder lets you check the plugin before de
 2. **Functional tests** (`Harness/Tests.cs`). They drive the plugin like a server would: hooks, console/chat commands, button commands, timers, data/config migration, rewards, Discord payloads. A simulated client keeps the live CUI tree per player and flags elements with unknown parents or duplicate names.
 3. **Screenshots** (`render/`). CUI snapshots are drawn in Chromium on a 1280x720-unit canvas scaled to 1920x1080, with Roboto Condensed, rich text, scroll views and outlines, to show what players will see.
 
+4. **Animation video** (`render/anim.js`). The harness records one player's UI at points in time (`Harness.dll animation`). The player redraws each video frame applying every element's `fadeIn`/`fadeOut` the way the client does. A cursor shows the clicks, and ffmpeg encodes MP4 + GIF.
+
 ```bash
 ./run.sh            # compile checks + tests
 ./run.sh previews   # + screenshots in out/png
+./run.sh video      # + animation preview in out/anim (needs ffmpeg)
 ```
 
 Needs the .NET 8 SDK (`apt install dotnet-sdk-8.0`). Screenshots also need Node with Playwright/Chromium and the `fonts-roboto-unhinted` package. To check another copy of the plugin: `dotnet build Plugin/Plugin.csproj -p:PluginFile=/path/to/NewsBroadcaster.cs`.

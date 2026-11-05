@@ -1,5 +1,9 @@
 // Browser-side CUI renderer: draws a Rust CUI element list (as the client would hold it) into #screen.
 // Reference canvas is 1280x720 units (offsets + font sizes), scaled to the screen height.
+//
+// renderCui(elements, screen, anim?) — anim (optional, for the animation player):
+//   { t, appearedAt: {id: seconds}, fadingOut: {id: {start, duration}}, onButton: fn(div, command) }
+// Like the Unity client, fadeIn/fadeOut affect each element's own graphic only (not its children).
 (function () {
   const IMAGES = window.__IMAGES || {};
 
@@ -17,8 +21,7 @@
   function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   function richText(s) {
     if (s == null) return '';
-    // Tokenize Unity rich text tags.
-    let out = '', i = 0; const stack = [];
+    let out = '';
     const re = /<(\/?)(color|b|i|size)(=([^>]+))?>/gi; let m; let last = 0;
     while ((m = re.exec(s)) !== null) {
       out += esc(s.slice(last, m.index)); last = re.lastIndex;
@@ -47,18 +50,8 @@
     if (f.includes('regular')) return ['"Roboto Condensed", sans-serif', 400];
     return ['"Roboto Condensed", sans-serif', 700];
   }
-  function spriteStyle(sprite, el) {
-    if (!sprite) return;
-    const s = sprite.toLowerCase();
-    if (s.includes('rounded')) el.style.borderRadius = (6 * window.__S) + 'px';
-  }
-  function materialStyle(mat, el) {
-    if (!mat) return;
-    const m = mat.toLowerCase();
-    if (m.includes('blur')) el.style.backdropFilter = 'blur(10px)';
-  }
 
-  window.renderCui = function (elements, screen) {
+  window.renderCui = function (elements, screen, anim) {
     const S = window.__S;
     const W = screen.clientWidth, Hh = screen.clientHeight;
     const nodes = {};
@@ -68,6 +61,17 @@
       d.className = 'layer'; d.style.zIndex = String(10 + i);
       screen.appendChild(d); nodes[n] = { div: d, w: W, h: Hh, content: d, cw: W, ch: Hh };
     });
+
+    // Opacity of an element's own graphic at the current animation time.
+    function opacityFor(el, fadeIn) {
+      if (!anim || el.__id == null) return 1;
+      let o = 1;
+      const t0 = anim.appearedAt[el.__id];
+      if (fadeIn > 0 && t0 != null) o = Math.max(0, Math.min(1, (anim.t - t0) / fadeIn));
+      const fo = anim.fadingOut && anim.fadingOut[el.__id];
+      if (fo) o *= Math.max(0, 1 - (anim.t - fo.start) / fo.duration);
+      return o;
+    }
 
     for (const el of elements) {
       const parent = nodes[el.parent];
@@ -80,12 +84,12 @@
       const pw = parent.cw, ph = parent.ch;
       const x0 = amin[0] * pw + omin[0] * S, x1 = amax[0] * pw + omax[0] * S;
       const y0 = amin[1] * ph + omin[1] * S, y1 = amax[1] * ph + omax[1] * S;
+      const w = Math.max(0, x1 - x0), h = Math.max(0, y1 - y0);
       const d = document.createElement('div');
       d.className = 'el';
       d.dataset.name = el.name || '';
       d.style.left = x0 + 'px'; d.style.top = (ph - y1) + 'px';
-      d.style.width = Math.max(0, x1 - x0) + 'px'; d.style.height = Math.max(0, y1 - y0) + 'px';
-      const w = Math.max(0, x1 - x0), h = Math.max(0, y1 - y0);
+      d.style.width = w + 'px'; d.style.height = h + 'px';
 
       const img = get('UnityEngine.UI.Image');
       const btn = get('UnityEngine.UI.Button');
@@ -94,18 +98,31 @@
       const inp = get('UnityEngine.UI.InputField');
       const outline = get('UnityEngine.UI.Outline');
       const scroll = get('UnityEngine.UI.ScrollView');
+      const countdown = get('Countdown');
 
-      if (img) { d.style.background = rgba(img.color); spriteStyle(img.sprite, d); materialStyle(img.material, d); }
-      if (btn) { d.style.background = rgba(btn.color); spriteStyle(btn.sprite, d); materialStyle(btn.material, d); d.classList.add('btn'); }
-      if (raw) {
-        const src = IMAGES[raw.url] || IMAGES[raw.png] || null;
-        if (src) {
-          const im = document.createElement('img'); im.src = src; im.className = 'raw';
-          const tint = rgba(raw.color);
-          d.appendChild(im);
-          if (tint !== 'rgba(255,255,255,1)') im.style.opacity = String(Number((raw.color || '1 1 1 1').split(' ')[3] ?? 1));
-        } else if (raw.color) { d.style.background = rgba(raw.color); }
+      // The element's own graphic lives in a "skin" so its fade does not affect children.
+      const graphic = img || btn;
+      if (graphic || raw) {
+        const skin = document.createElement('div');
+        skin.className = 'skin';
+        if (graphic) {
+          skin.style.background = rgba(graphic.color);
+          if ((graphic.material || '').toLowerCase().includes('blur')) skin.style.backdropFilter = 'blur(10px)';
+          skin.style.opacity = String(opacityFor(el, graphic.fadeIn || 0));
+        }
+        if (raw) {
+          const src = IMAGES[raw.url] || IMAGES[raw.png] || null;
+          if (src) { const im = document.createElement('img'); im.src = src; im.className = 'raw'; skin.appendChild(im); }
+          else if (raw.color) skin.style.background = rgba(raw.color);
+          skin.style.opacity = String(opacityFor(el, raw.fadeIn || 0));
+        }
+        d.appendChild(skin);
       }
+      if (btn) {
+        d.classList.add('btn');
+        if (btn.command) d.dataset.command = btn.command;
+      }
+
       if (txt || inp) {
         const t = txt || inp;
         const [ff, fw] = fontFor(t.font);
@@ -120,12 +137,20 @@
         inner.style.fontSize = ((t.fontSize || 14) * S) + 'px';
         inner.style.color = rgba(t.color);
         if (inp && (inp.lineType || 'SingleLine') === 'SingleLine') { inner.style.whiteSpace = 'pre'; }
-        inner.innerHTML = richText(txt ? (t.text ?? 'Text') : (t.text || ''));
+        let text = txt ? (t.text ?? 'Text') : (t.text || '');
+        if (countdown && text.includes('%TIME_LEFT%')) {
+          const start = countdown.startTime || 0, end = countdown.endTime || 0, step = countdown.step || 1;
+          let left = start;
+          if (anim && el.__id != null && anim.appearedAt[el.__id] != null) left = Math.max(end, start - Math.floor(anim.t - anim.appearedAt[el.__id]) * step);
+          text = text.split('%TIME_LEFT%').join(String(left));
+        }
+        inner.innerHTML = richText(text);
         if (outline) {
           const [dx, dy] = vec(outline.distance, [1, -1]).map(v => v * S * 0.8);
           const oc = rgba(outline.color, '0 0 0 0.5');
           inner.style.textShadow = `${dx}px ${-dy}px 0 ${oc}, ${-dx}px ${-dy}px 0 ${oc}, ${dx}px ${dy}px 0 ${oc}, ${-dx}px ${dy}px 0 ${oc}`;
         }
+        box.style.opacity = String(opacityFor(el, txt ? (txt.fadeIn || 0) : 0));
         box.appendChild(inner); d.appendChild(box);
         if ((t.verticalOverflow || 'Truncate') === 'Truncate') box.style.overflow = 'hidden';
       }

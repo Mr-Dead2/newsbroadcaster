@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 2.2.0  
+**Version:** 2.3.0  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -14,6 +14,19 @@ NewsBroadcaster is a Rust server plugin that lets admins post rich in-game news 
 Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party notification style), **ServerRewards** / **Economics** (read & like rewards) and **Discord webhooks**.
 
 ---
+
+## What's new in 2.3.0
+
+Animations. They all run on the client (Rust's built-in fade-in / fade-out), so they are smooth and add no extra network traffic. A short preview is in `previews/newsbroadcaster-animations.mp4` (and `.gif`).
+
+- **Staggered reveal** — screens build up softly: panel first, then header, title, text and buttons; archive and admin rows cascade in one after another (about 0.6 s in total).
+- **No more blink between screens** — the dimmed background only fades in when nothing was open before. Moving archive → post → archive, or opening the editor, changes the panel without flashing the game behind it.
+- **Instant redraws** — clicking toggles, chips, checkboxes or pins in the admin screens redraws instantly instead of re-playing the animation.
+- **Toast** fades in and fades out (a new toast cross-fades with the previous one).
+- **Live countdown** — broadcast/connect popups that close automatically show "CLOSES IN 12S", counted down by the client. Liking or voting keeps the popup open and removes the countdown.
+- **Likes pop** and **poll result bars fade in** after voting.
+
+New lang key: `AutoCloseIn` (keep the `%TIME_LEFT%` token).
 
 ## What's new in 2.2.0
 
@@ -255,7 +268,7 @@ Existing configs are upgraded in place: your values and themes are kept and new 
 
 | Key | Default | Description |
 |---|---|---|
-| `AutoCloseSeconds` | `15` | Seconds before a broadcast / connect popup closes by itself |
+| `AutoCloseSeconds` | `15` | Seconds before a broadcast / connect popup closes by itself (shown as a live countdown) |
 | `EnableAutoClose` | `true` | Auto-close broadcast and connect popups (popups a player opens never auto-close) |
 | `ShowNewsOnConnect` | `true` | Show the newest post to a player who has not seen it yet when they wake up |
 | `UnreadReminderOnConnect` | `true` | Once per session, tell the player in chat how many posts they missed since their last visit |
@@ -324,6 +337,20 @@ Pinned posts always sit at the top of the archive and admin list, with a gold ti
 ## Bulk admin operations
 
 Tick the checkbox on admin rows (or **SELECT PAGE**) and a toolbar appears: **DELETE** (with confirmation), **PIN ALL**, **UNPIN ALL**, **CLEAR**. The selection is per admin, survives paging, and is dropped on disconnect.
+
+## Animations
+
+Rust CUI can fade an element's graphic in when it appears (`FadeIn`) and out when it is destroyed (`FadeOut`); the client runs both. NewsBroadcaster uses them like this:
+
+| Where | Animation |
+|---|---|
+| Opening any screen from nothing | Background fades in (0.25 s), then the content reveals top-to-bottom (0.15 s → 0.6 s) |
+| Switching screens (archive ↔ post, admin → editor) | Background stays, new content reveals |
+| Prev/next post, archive paging | Shorter reveal |
+| Admin list / editor / theme picker redraws | Instant |
+| Toast | Fades in, fades out after `Notification.Duration` or when clicked |
+| Like / vote | Like button pops, result bars fade in; rest of the popup stays still |
+| Auto-closing popups | Live "CLOSES IN %TIME_LEFT%S" countdown |
 
 ## Read tracking
 
