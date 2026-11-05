@@ -1,7 +1,7 @@
-// node compare.js out.png title before.png after.png [caption]
+// node compare.js out.png title before.png after.png [caption] [beforeLabel] [afterLabel]
 const { chromium } = require('playwright');
 const fs = require('fs');
-const [out, title, before, after, caption] = process.argv.slice(2);
+const [out, title, before, after, caption, beforeLabel, afterLabel] = process.argv.slice(2);
 const b64 = f => 'data:image/png;base64,' + fs.readFileSync(f).toString('base64');
 (async () => {
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1920, height: 640 } });
@@ -16,8 +16,8 @@ const b64 = f => 'data:image/png;base64,' + fs.readFileSync(f).toString('base64'
     .tag{position:absolute;left:12px;top:10px;padding:5px 12px;font-size:16px;font-weight:700;border-radius:3px}
     .b{background:#3a3f47;color:#cfd3d8}.a{background:#5bb5ff;color:#06121f}
   </style><h1>${title}</h1>${caption ? `<div class="cap">${caption}</div>` : ''}
-  <div class="row"><div class="cell"><img src="${b64(before)}"><span class="tag b">BEFORE · 1.2.0</span></div>
-  <div class="cell"><img src="${b64(after)}"><span class="tag a">AFTER · 2.0.0</span></div></div>`);
+  <div class="row"><div class="cell"><img src="${b64(before)}"><span class="tag b">${beforeLabel || 'BEFORE'}</span></div>
+  <div class="cell"><img src="${b64(after)}"><span class="tag a">${afterLabel || 'AFTER'}</span></div></div>`);
   await p.evaluate(() => document.fonts.ready);
   const h = await p.evaluate(() => document.body.scrollHeight);
   await p.setViewportSize({ width: 1920, height: h });

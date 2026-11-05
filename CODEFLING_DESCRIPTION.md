@@ -1,6 +1,6 @@
 # NewsBroadcaster
 
-**A clean, modern in-game news system for Rust — popups, archive with unread tracking, likes & rewards, pinned posts, Discord and themes, all managed from an in-game admin UI.**
+**A clean, modern in-game news system for Rust — popups, polls, archive with unread tracking, likes & rewards, pinned posts, Discord and themes, all managed from an in-game admin UI.**
 
 NewsBroadcaster pushes good-looking announcements straight to your players: title, image, body text and a coloured type badge, wrapped in a polished CUI. Players get a toast the moment something is posted and can browse the full archive any time with `/news`.
 
@@ -10,8 +10,9 @@ NewsBroadcaster pushes good-looking announcements straight to your players: titl
 
 - **In-game admin panel** — create, edit, preview, pin, resend and delete announcements without leaving the game.
 - **Live preview** — see the exact popup your players will get before you hit publish.
+- **Polls** — attach a 2–4 option poll to any post. One-click voting, live result bars, change-your-vote, close voting when you're done. Results show in the archive, the admin list and on Discord.
 - **One-click type chips** — Info, Warning, Alert, Event, Update, each with its own colour.
-- **Unread tracking** — `NEW` badges and an unread counter in the archive, and a one-line chat reminder for posts a player missed while offline.
+- **Unread tracking** — `NEW` badges, an unread counter and a **Mark all read** button in the archive, plus a one-line chat reminder for posts a player missed while offline.
 - **Archive with thumbnails** — image previews, type labels and like counts on every row.
 - **Prev / next navigation** inside the popup, and "back to archive" returns players to the page they were on.
 - **Pinned posts** — keep rules, wipe schedules or events on top with a gold badge and frame. Pinned posts are never trimmed.
@@ -47,6 +48,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 |---|---|
 | `/news` | Open the news archive |
 | `/news latest` | Open the newest announcement |
+| `/news read` | Mark everything as read |
 | `/news admin` | Open news management (admins) |
 | `/news help` | List commands |
 
@@ -54,6 +56,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | Command | Description |
 |---|---|
 | `news.show "Title" "ImageURL" "Body" [Type]` | Post a new announcement |
+| `news.poll "Title" "Text" "A\|B\|C" [Type]` | Post an announcement with a poll |
 | `news.list` | List posts with index, id, reads and likes |
 | `news.delete <index\|id>` | Delete a post |
 | `news.resend <index\|id>` | Re-notify online players |
@@ -99,6 +102,8 @@ Two independent bundles — one for **reading** a post (popup open for `ReadDela
 | `StripLinksFromBody` | `true` | Remove links from post bodies |
 | `Notification.Position` | `"Right"` | Toast on the left or right |
 | `Discord.RoleMention` | `""` | Role / `@here` / `@everyone` ping for Discord posts |
+| `Polls.AllowVoteChange` | `true` | Players can change their vote |
+| `Polls.ShowResultsBeforeVoting` | `false` | Show results before a player votes |
 
 Updating from an older version keeps your config, themes and announcements — new options are added automatically.
 
@@ -119,8 +124,8 @@ All optional — the plugin works fully without them.
 
 ## API hooks
 
-`OnNewsBroadcast(Dictionary<string, object> ann)`, `OnNewsEdited(...)`, `OnNewsDeleted(...)`, `OnNewsRead(BasePlayer, ...)`, `OnNewsLiked(BasePlayer, ..., bool added)`.
-Payload: `id`, `title`, `author`, `type`, `timestamp`, `date`, `text`, `imageUrl`, `likes`, `pinned`.
+`OnNewsBroadcast(Dictionary<string, object> ann)`, `OnNewsEdited(...)`, `OnNewsDeleted(...)`, `OnNewsRead(BasePlayer, ...)`, `OnNewsLiked(BasePlayer, ..., bool added)`, `OnNewsPollVote(BasePlayer, ..., int option)`.
+Payload: `id`, `title`, `author`, `type`, `timestamp`, `date`, `text`, `imageUrl`, `likes`, `pinned`, `pollOptions`, `pollVotes`.
 
 ---
 

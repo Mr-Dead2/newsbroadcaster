@@ -96,6 +96,7 @@ static class Tests
         Check(H.Id(H.Ann(0)) != H.Id(H.Ann(1)), "duplicate ids repaired");
         Check(Set(H.Ann(1), "ReadByPlayers").Contains(5) && Set(H.Ann(1), "LikeRewardedPlayers") != null, "null sets repaired (reads seeded from rewards)");
         Check(((string)H.AGet(H.Ann(0), "Text")).Contains("https://example.com"), "links in stored posts are not stripped on load");
+        Check(H.AGet(H.Ann(0), "PollOptions") != null && H.AGet(H.Ann(1), "PollVotes") != null, "old posts get empty poll fields");
 
         // ---------------------------------------------------------------
         Section("news.show broadcast, notifications, permissions, sound");
@@ -406,7 +407,7 @@ static class Tests
         H.Call("OnPlayerDisconnected", admin, "bye");
         H.Call("OnPlayerDisconnected", player, "bye");
         bool clean = true;
-        foreach (var f in new[] { "editors", "playersWithUiOpen", "adminSelections", "openPopups", "archivePages", "remindedPlayers", "readRewardTimers", "autoCloseTimers", "notificationTimers", "likeCooldowns" })
+        foreach (var f in new[] { "editors", "playersWithUiOpen", "adminSelections", "openPopups", "archivePages", "remindedPlayers", "readRewardTimers", "autoCloseTimers", "notificationTimers", "likeCooldowns", "voteCooldowns" })
         {
             var coll = H.Get(f);
             int n = (int)coll.GetType().GetProperty("Count").GetValue(coll);
@@ -434,6 +435,119 @@ static class Tests
         H.CfgSet("General.PopupImageFrame", "Wide");
         H.Console(player, $"news.view {H.Id(Ann0)}");
         Check(H.Live(player).Any(e => e["components"].Any(c => (string)c["type"] == "RectTransform" && (string)c["anchormin"] == "0.035 0.2895")), "wide image frame layout");
+
+        // ---------------------------------------------------------------
+        Section("Mark all read");
+        Fresh();
+        for (int i = 1; i <= 4; i++) Post("M" + i);
+        H.Console(player, "news.close.notif");
+        var m1 = H.AnnByTitle("M1");
+        H.Console(player, $"news.view {H.Id(m1)}");
+        Sim.Advance(6);
+        H.Chat(player, "news");
+        Check(H.Texts(player).Contains("3 UNREAD") && H.Commands(player).Contains("news.markread"), "archive shows MARK ALL READ while posts are unread");
+        H.Console(player, "news.markread");
+        Check(LastChat(player) == "Marked 3 announcement(s) as read." && UiOpen(player) && !H.Texts(player).Any(t => t != null && t.EndsWith("UNREAD")), "mark all read clears the badges and redraws the archive");
+        Check(!H.Commands(player).Contains("news.markread") && H.Texts(player).Count(t => t == "NEW") == 0, "no NEW badges, button hidden");
+        Check(Set(H.AnnByTitle("M2"), "ReadByPlayers").Count == 0 && Set(m1, "ReadByPlayers").Count == 1, "per-post read stats are not inflated");
+        Check(HooksNamed("OnNewsRead") == 1, "mark all read does not fire OnNewsRead");
+        Post("M5");
+        H.Console(player, "news.close.notif");
+        H.Chat(player, "news");
+        Check(H.Texts(player).Contains("1 UNREAD"), "posts published afterwards are unread again");
+        H.Chat(player, "news", "read");
+        Check(LastChat(player) == "Marked 1 announcement(s) as read.", "/news read");
+        H.Chat(player, "news", "read");
+        Check(LastChat(player) == "You have no unread announcements.", "/news read with nothing unread");
+        Sim.Advance(16);
+        Check(JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["ReadAllUpTo"][player.UserIDString] != null, "mark-read marker saved");
+
+        // ---------------------------------------------------------------
+        Section("Polls: console, voting, results, partial redraw, closing, editing");
+        Fresh();
+        H.Console(null, "news.poll \"Map size?\" \"Pick one\" \"Small|Medium|Large\" Event");
+        var pl = Ann0;
+        Check(((List<string>)H.AGet(pl, "PollOptions")).Count == 3 && H.AGet(pl, "Type").ToString() == "Event", "news.poll creates a 3-option poll");
+        Check(H.Texts(player).Any(t => t != null && t.StartsWith("NEW POLL")), "toast says NEW POLL");
+        H.Console(null, "news.poll \"Bad\" \"x\" \"Only one\"");
+        Check(Sim.ConsoleReplies.Last() == "A poll needs at least 2 options." && H.Announcements.Count == 1, "poll with < 2 options rejected");
+        H.Console(player, $"news.view {H.Id(pl)}");
+        Check(H.HasElement(player, "NewsBroadcasterUI.Poll") && H.Commands(player).Contains($"news.vote {H.Id(pl)} 0") && !H.Texts(player).Any(t => t != null && t.Contains("%")), "poll shows vote buttons, results hidden before voting");
+        Check(H.Texts(player).Contains("CLICK AN OPTION TO VOTE"), "vote hint");
+        int adds = Sim.Ui(player).AddCalls;
+        H.Console(player, $"news.vote {H.Id(pl)} 2");
+        var votes = (Dictionary<ulong, int>)H.AGet(pl, "PollVotes");
+        Check(votes[player.userID] == 2, "vote recorded");
+        Check(Sim.Ui(player).AddCalls == adds + 1 && H.HasElement(player, "NewsBroadcasterUI.Main.Body") && H.HasElement(player, "NewsBroadcasterUI.Poll"), "vote redraws only the poll block");
+        Check(H.Texts(player).Any(t => t == "✓  Large") && H.Texts(player).Any(t => t != null && t.StartsWith("100%")), "results shown after voting with own choice ticked");
+        Check(HooksNamed("OnNewsPollVote") == 1, "OnNewsPollVote fired");
+        H.Console(player, $"news.vote {H.Id(pl)} 0");
+        Check(votes[player.userID] == 2, "vote change within cooldown ignored");
+        Sim.Advance(1);
+        H.Console(player, $"news.vote {H.Id(pl)} 0");
+        Check(votes[player.userID] == 0, "vote changed after cooldown (AllowVoteChange)");
+        H.Console(player, $"news.vote {H.Id(pl)} 7");
+        Check(votes.Count == 1 && votes[player.userID] == 0, "invalid option ignored");
+        H.CfgSet("Polls.AllowVoteChange", false);
+        Sim.Advance(1);
+        H.Console(player, $"news.vote {H.Id(pl)} 1");
+        Check(votes[player.userID] == 0 && LastChat(player) == "You have already voted in this poll.", "AllowVoteChange=false keeps the first vote");
+        H.CfgSet("Polls.AllowVoteChange", true);
+        H.Console(admin, $"news.view {H.Id(pl)}");
+        Check(H.Texts(admin).Any(t => t != null && t.StartsWith("100%")), "admins see results before voting");
+        H.Chat(noperm, "news");
+        H.Console(noperm, $"news.vote {H.Id(pl)} 1");
+        Check(votes.Count == 1, "players without view permission cannot vote");
+
+        // edit: close voting + drop option 2 (votes follow their option)
+        votes[76561198000000077] = 2;
+        H.Console(admin, $"news.admin.edit {H.Id(pl)}");
+        Check(H.Texts(admin).Contains("POLL OPTIONS (2-4, empty ones are skipped)") && H.Texts(admin).Contains("CLOSE VOTING"), "editor shows poll section for existing poll");
+        H.Console(admin, "news.editor.input poll2");
+        H.Console(admin, "news.editor.toggle pollclosed");
+        H.Console(admin, "news.editor.save");
+        var opts = (List<string>)H.AGet(pl, "PollOptions");
+        Check(opts.Count == 2 && opts[1] == "Large" && !ReferenceEquals(votes, H.AGet(pl, "PollVotes")), "empty option removed");
+        var newVotes = (Dictionary<ulong, int>)H.AGet(pl, "PollVotes");
+        Check(newVotes[player.userID] == 0 && newVotes[76561198000000077] == 1, "votes remapped to the remaining options");
+        Check((bool)H.AGet(pl, "PollClosed"), "poll closed");
+        Sim.Advance(1);
+        H.Console(player, $"news.view {H.Id(pl)}");
+        Check(!H.Commands(player).Any(cmd => cmd.StartsWith("news.vote")) && H.Texts(player).Contains("VOTING CLOSED"), "closed poll: no vote buttons");
+        H.Console(player, $"news.vote {H.Id(pl)} 1");
+        Check(newVotes[player.userID] == 0, "closed poll rejects votes");
+
+        // editor: new poll validation + creation
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.input title Poll from editor");
+        H.Console(admin, "news.editor.toggle poll");
+        H.Console(admin, "news.editor.input poll3 Only");
+        H.Console(admin, "news.editor.save");
+        Check(LastChat(admin) == "A poll needs at least 2 options." && H.AnnByTitle("Poll from editor") == null, "editor rejects a 1-option poll");
+        H.Console(admin, "news.editor.input poll1 Yes");
+        H.Console(admin, "news.editor.preview");
+        Check(H.HasElement(admin, "NewsBroadcasterUI.Poll") && !H.Commands(admin).Any(cmd => cmd.StartsWith("news.vote")), "preview shows the poll without vote buttons");
+        H.Console(admin, "news.editor.back");
+        H.Console(admin, "news.editor.save");
+        var ep = H.AnnByTitle("Poll from editor");
+        Check(ep != null && string.Join(",", (List<string>)H.AGet(ep, "PollOptions")) == "Yes,Only", "editor poll created from filled slots");
+        H.Console(admin, $"news.admin.edit {H.Id(ep)}");
+        H.Console(admin, "news.editor.toggle poll");
+        H.Console(admin, "news.editor.save");
+        Check(((List<string>)H.AGet(ep, "PollOptions")).Count == 0, "turning the poll off removes it");
+
+        // archive + admin + discord + hook payload
+        H.Chat(player, "news");
+        Check(H.Texts(player).Any(t => t != null && t.Contains("POLL · 2 VOTES")), "archive row shows poll + vote count");
+        H.Chat(admin, "news", "admin");
+        Check(H.Texts(admin).Any(t => t != null && t.Contains("2 VOTES")) && H.Texts(admin).Any(t => t != null && t.StartsWith("2 POSTS")), "admin row shows votes; header stats line");
+        H.CfgSet("Discord.Enabled", true);
+        H.CfgSet("Discord.WebhookUrl", "https://discord.com/api/webhooks/1/abc");
+        H.Console(null, "news.poll \"Discord poll\" \"Pick\" \"A|B\"");
+        var dp = JObject.Parse(Sim.WebRequests.Last().Body);
+        Check(dp["embeds"][0]["fields"][0]["value"].ToString().Contains("A") && dp["embeds"][0]["fields"][0]["value"].ToString().Contains("B"), "Discord embed lists poll options");
+        var hook = (Dictionary<string, object>)Sim.Hooks.Last(h => h.Key == "OnNewsBroadcast").Value[0];
+        Check(((string[])hook["pollOptions"]).Length == 2 && hook.ContainsKey("title"), "hook payload has pollOptions, old keys unchanged");
 
         // ---------------------------------------------------------------
         Section("ImageLibrary integration");

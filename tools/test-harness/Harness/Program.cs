@@ -49,6 +49,14 @@ static class Previews
             var dt = DateTime.ParseExact(post.date, "yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture);
             H.ASet(a, "Timestamp", dt.Ticks);
         }
+        H.Console(null, "news.poll \"Next Wipe: Pick The Map Size\" \"Vote for the map size of the next wipe! The winning size is announced on Thursday.\" \"3500 - small and fast|4250 - the classic|4500 - big, more monuments|Custom map\" Event");
+        var poll = H.AnnByTitle("Next Wipe: Pick The Map Size");
+        H.ASet(poll, "Date", "2026-11-05 20:30");
+        H.ASet(poll, "Timestamp", new DateTime(2026, 11, 5, 20, 30, 0).Ticks);
+        var pollVotes = (Dictionary<ulong, int>)H.AGet(poll, "PollVotes");
+        int[] dist = { 9, 21, 11, 3 };
+        ulong voter = 76561198200000000;
+        for (int o = 0; o < dist.Length; o++) for (int k = 0; k < dist[o]; k++) pollVotes[voter++] = o;
         var welcome = H.AnnByTitle("Welcome to Frontier Rust");
         var wipe = H.AnnByTitle("Wipe Day - Fresh Map Is Live");
         var maint = H.AnnByTitle("Server Maintenance Tonight");
@@ -122,6 +130,24 @@ static class Previews
             H.CfgSet("Discord.Enabled", false);
         }
 
+        // 7c) Editor with a poll
+        if (H.HasConsole("news.vote"))
+        {
+            H.Console(admin, "news.admin.create");
+            H.Console(admin, "news.editor.input title Next Wipe: Pick The Map Size");
+            H.Console(admin, "news.editor.input text Vote for the map size of the next wipe! The winning size is announced on Thursday.");
+            H.Console(admin, "news.editor.settype event");
+            H.Console(admin, "news.editor.toggle poll");
+            H.Console(admin, "news.editor.input poll1 3500 - small and fast");
+            H.Console(admin, "news.editor.input poll2 4250 - the classic");
+            H.Console(admin, "news.editor.input poll3 4500 - big, more monuments");
+            H.Console(admin, "news.editor.input poll4 Custom map");
+            H.Console(admin, "news.editor.toggle notify");
+            H.Console(admin, "news.editor.toggle notify");
+            H.Save(admin, outDir, "07c_editor_poll");
+            H.Console(admin, "news.editor.cancel");
+        }
+
         // 8) Themes
         H.Console(admin, "news.admin.themes");
         H.Save(admin, outDir, "08_themes");
@@ -133,6 +159,15 @@ static class Previews
             H.Console(admin, "news.editor.preview");
             H.Save(admin, outDir, "09_editor_preview");
             H.Console(admin, "news.editor.cancel");
+        }
+
+        if (H.HasConsole("news.vote"))
+        {
+            H.Console(admin, "news.close");
+            H.Console(player, $"news.view {H.Id(poll)}");
+            H.Save(player, outDir, "10a_popup_poll_vote");
+            H.Console(player, $"news.vote {H.Id(poll)} 1");
+            H.Save(player, outDir, "10b_popup_poll_results");
         }
 
         Console.WriteLine($"previews done. data writes={Sim.DataWrites} hooks={Sim.Hooks.Count} webreq={Sim.WebRequests.Count}");

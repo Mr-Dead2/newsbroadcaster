@@ -1,7 +1,7 @@
 # NewsBroadcaster — Plugin Documentation
 
 **Plugin:** NewsBroadcaster  
-**Version:** 2.0.0  
+**Version:** 2.1.0  
 **Author:** DEDA  
 **Framework:** Oxide / uMod (Rust)
 
@@ -12,6 +12,15 @@
 NewsBroadcaster is a Rust server plugin that lets admins post rich in-game news announcements with a modern CUI (Client UI). Announcements have a title, an optional image, body text and a coloured type badge. Players get a notification toast when news is posted and can browse the archive at any time with `/news`.
 
 Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party notification style), **ServerRewards** / **Economics** (read & like rewards) and **Discord webhooks**.
+
+---
+
+## What's new in 2.1.0
+
+- **Polls** — any announcement can carry a 2–4 option poll. Players vote with one click and see live result bars after voting; admins always see results. Votes can be changed (configurable), admins can close voting, and polls show up in the archive, the admin list and Discord. Create one in the editor (**ADD POLL**) or with `news.poll`.
+- **Mark all read** — a **MARK ALL READ** button in the archive header (shown while something is unread) and `/news read`.
+- **Visual polish** — blurred background behind every screen, soft shadows around panels, a coloured type pill (plus a **POLL** chip) in the popup header, a thin type-coloured line along the popup's top edge, a stats line in the admin header (posts / pinned / reads / likes), and evenly spaced option toggles in the editor. The layout and colours of 2.0.0 are unchanged.
+- New hook `OnNewsPollVote`; hook payloads gained `pollOptions` and `pollVotes` (existing keys unchanged).
 
 ---
 
@@ -86,6 +95,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 |---|---|---|
 | `/news` | viewers | Open the news archive |
 | `/news latest` | viewers | Open the newest announcement |
+| `/news read` | viewers | Mark every announcement as read |
 | `/news help` | everyone | List the commands |
 | `/news admin` | admins | Open news management |
 
@@ -96,6 +106,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | Command | Permission | Description |
 |---|---|---|
 | `news.show "Title" "ImageURL" "Body" [Type]` | Admin | Post a new announcement (notifies players, posts to Discord) |
+| `news.poll "Title" "Text" "Option 1\|Option 2\|..." [Type]` | Admin | Post an announcement with a poll (2–4 options separated by `\|`) |
 | `news.list` | Admin | List stored announcements with index, id, reads and likes |
 | `news.delete <index\|id>` | Admin | Delete an announcement |
 | `news.resend <index\|id>` | Admin | Re-send the notification for an announcement to online players |
@@ -138,6 +149,7 @@ news.show "Alert!" "-" "PvP zone closing in 10 minutes." Alert
 | **PIN TO TOP** | Pin the post (same as the PIN button in the list) |
 | **NOTIFY ONLINE PLAYERS** | New posts: send the toast/popup to everyone online (on by default). Edits: **RE-NOTIFY PLAYERS**, off by default |
 | **POST TO DISCORD** | New posts only, shown when the Discord webhook is configured |
+| **ADD POLL** | Shows four poll option fields under the body. Fill 2–4 of them; empty ones are skipped. When editing a poll, **CLOSE VOTING** stops new votes and shows the results to everyone. Turning **ADD POLL** off removes the poll and its votes |
 | **PREVIEW** | Shows the popup exactly as players will see it. Nothing is published; **BACK TO EDITOR** returns with your draft intact |
 | **PUBLISH / SAVE CHANGES** | A title is required |
 
@@ -154,6 +166,8 @@ These are run by CUI buttons. They address announcements by their stable id, not
 | `news.page <page>` | Archive page |
 | `news.view <id> [archive\|direct]` | Open a post (`archive` = "back to archive" button) |
 | `news.like <id>` | Toggle like |
+| `news.vote <id> <option>` | Vote in a poll (option index from 0) |
+| `news.markread` | Mark all read (archive button) |
 | `news.close` / `news.close.notif` | Close the UI / the toast |
 | `news.admin.page <page>` | Admin list page |
 | `news.admin.create` / `news.admin.edit <id>` | Open the editor |
@@ -163,9 +177,9 @@ These are run by CUI buttons. They address announcements by their stable id, not
 | `news.admin.toggleselect <id> [page]`, `news.admin.selectpage <page>`, `news.admin.clearsel [page]` | Bulk selection |
 | `news.admin.bulkpin <0\|1> [page]`, `news.admin.bulkdelconfirm [page]`, `news.admin.bulkdel [page]` | Bulk actions |
 | `news.admin.themes [page]` / `news.admin.settheme "Name" [page]` | Theme picker |
-| `news.editor.input <title\|image\|text> <value>` | Editor field |
+| `news.editor.input <title\|image\|text\|poll1-poll4> <value>` | Editor field |
 | `news.editor.settype <Type>` / `news.editor.type` | Set / cycle the type |
-| `news.editor.toggle <pin\|notify\|discord>` | Editor options |
+| `news.editor.toggle <pin\|notify\|discord\|poll\|pollclosed>` | Editor options |
 | `news.editor.preview` / `news.editor.back` | Preview and return |
 | `news.editor.save` / `news.editor.cancel` | Save / cancel |
 | `news.confirm.close` | Close a confirmation dialog |
@@ -215,6 +229,10 @@ Existing configs are upgraded in place: your values and themes are kept and new 
     "NotifyOnReward": true,
     "PointsLabel": "RP",
     "CurrencyLabel": "coins"
+  },
+  "Polls": {
+    "AllowVoteChange": true,
+    "ShowResultsBeforeVoting": false
   },
   "SelectedTheme": "Default",
   "Themes": { "Default": { }, "Dark": { }, "Ocean": { }, "Rust": { }, "Midnight": { }, "Forest": { } }
@@ -274,6 +292,13 @@ The embed has a type-coloured side bar, a `TYPE • SERVER NAME` header, the tit
 
 Each bundle can combine **Items** (any shortname, optional `SkinId`), **Points** (ServerRewards) and **Currency** (Economics). Rewards are paid at most once per player per post. Full inventory → items drop at the player's feet. If a needed plugin is missing, the reward is skipped with a console warning and **not** recorded, so it can be paid later. Old configs with bare item arrays are migrated automatically.
 
+### Polls
+
+| Key | Default | Description |
+|---|---|---|
+| `AllowVoteChange` | `true` | Players can switch their vote by clicking another option |
+| `ShowResultsBeforeVoting` | `false` | Show result bars to players who haven't voted yet (admins always see them) |
+
 ### Theme colours
 
 Each theme has these `"R G B A"` (0–1) fields: `PanelBg`, `HeaderBg`, `ContentBg`, `ButtonPrimary`, `ButtonSecondary`, `TextTitle`, `TextNormal`, `TextMuted`. Add your own themes to the `Themes` list; the picker pages through them 8 at a time.
@@ -292,6 +317,14 @@ Tick the checkbox on admin rows (or **SELECT PAGE**) and a toolbar appears: **DE
 
 A post counts as **read** for a player after its popup has stayed open for `ReadDelaySeconds`. That drives the archive's `NEW` badges, the unread counter, the admin list's read counts, the read reward and the `OnNewsRead` hook.
 
+**Mark all read** (archive button or `/news read`) clears a player's `NEW` badges for every current post. It is stored as one timestamp per player, so it does not inflate the per-post read counts, pay read rewards or fire `OnNewsRead`. Posts published afterwards show as unread again.
+
+## Polls
+
+A poll is part of an announcement: the options appear in a block under the text in the popup. Before voting, players see the options as buttons; after voting they see each option's share and count, with their own choice ticked. Voting only redraws the poll block, so the reader keeps their scroll position. Each player has one vote per poll (index stored in `PollVotes`).
+
+Editing a poll keeps existing votes: options keep their votes when you clear an empty slot in between, and votes for an option you delete are dropped. Discord posts list the poll options in an embed field.
+
 ---
 
 ## API Hooks
@@ -305,8 +338,9 @@ Other plugins can subscribe to these hooks. Payloads use plain types, so consume
 | `OnNewsDeleted` | `void OnNewsDeleted(Dictionary<string, object> ann)` | An announcement is deleted (single, bulk, console) or trimmed by `MaxStoredAnnouncements` |
 | `OnNewsRead` | `void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)` | First time a player reads a post |
 | `OnNewsLiked` | `void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)` | A player likes (`true`) or un-likes (`false`) a post |
+| `OnNewsPollVote` | `void OnNewsPollVote(BasePlayer player, Dictionary<string, object> ann, int option)` | A player votes (or changes their vote) in a poll; `option` is the 0-based index |
 
-Payload keys: `id` (string), `title`, `author`, `type` (`Info`/`Warning`/`Alert`/`Event`/`Update`), `timestamp` (UTC ticks), `date` (`yyyy-MM-dd HH:mm`), `text`, `imageUrl`, `likes` (int), `pinned` (bool). Unchanged from 1.2.0.
+Payload keys: `id` (string), `title`, `author`, `type` (`Info`/`Warning`/`Alert`/`Event`/`Update`), `timestamp` (UTC ticks), `date` (`yyyy-MM-dd HH:mm`), `text`, `imageUrl`, `likes` (int), `pinned` (bool) — unchanged from 1.2.0 — plus `pollOptions` (string[], empty when there is no poll) and `pollVotes` (int, total votes) since 2.1.0.
 
 ```csharp
 void OnNewsBroadcast(Dictionary<string, object> ann)
@@ -324,7 +358,7 @@ void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)
 
 ## Data file (`oxide/data/NewsBroadcaster_Data.json`)
 
-Stores announcements and each player's last-seen marker. 1.2.0 data loads unchanged.
+Stores announcements, each player's last-seen marker and each player's "mark all read" marker (`ReadAllUpTo`). 1.2.0 and 2.0.0 data load unchanged.
 
 | Field | Type | Description |
 |---|---|---|
@@ -338,6 +372,9 @@ Stores announcements and each player's last-seen marker. 1.2.0 data loads unchan
 | `Pinned` | bool | Keeps the post on top |
 | `LikedPlayers`, `ReadByPlayers` | Steam IDs | Likes and reads |
 | `ReadRewardedPlayers`, `LikeRewardedPlayers` | Steam IDs | Players already paid each reward |
+| `PollOptions` | list of strings | Poll options (empty = no poll) |
+| `PollVotes` | Steam ID → option index | One vote per player |
+| `PollClosed` | bool | Voting closed |
 
 ---
 
@@ -358,3 +395,4 @@ The repository includes `tools/test-harness/`, which compiles the plugin against
 - The toast position is `Left` or `Right` only.
 - The popup body's scroll height is estimated from a characters-per-line guess. On very narrow (4:3) screens the last line of a very long post may sit close to the bottom edge.
 - Scheduling, drafts and per-post audiences are not part of this version.
+- Polls are single-choice and have no end time; close them from the editor.
