@@ -122,16 +122,17 @@ Updating from an older version keeps your config, themes and announcements — n
 
 ---
 
-## Optional dependencies
+## Requirements
 
-| Plugin | Purpose |
+| Plugin | When you need it |
 |---|---|
-| [ImageLibrary](https://umod.org/plugins/image-library) | Cache remote images |
-| [Notify](https://umod.org/plugins/notify) | Third-party notification style |
-| [ServerRewards](https://umod.org/plugins/server-rewards) | RP rewards |
-| [Economics](https://umod.org/plugins/economics) | Currency rewards |
+| [Oxide (uMod)](https://umod.org/games/rust) | Always. NewsBroadcaster is an Oxide plugin |
+| [ServerRewards](https://umod.org/plugins/server-rewards) | For RP rewards (`Points` in the read or like reward) |
+| [Economics](https://umod.org/plugins/economics) | For currency rewards (`Currency` in the read or like reward) |
+| [Notify](https://umod.org/plugins/notify) | Only if you turn on `UseNotifyPlugin`; otherwise the plugin's own notification is used |
+| [ImageLibrary](https://umod.org/plugins/image-library) | Not required. If it's installed, post pictures are cached through it so they load faster |
 
-All optional — the plugin works fully without them.
+A reward that includes RP or currency isn't paid while its plugin is missing, including any items in the same reward; the server console says why. It isn't marked as paid, so it can still be paid after you install the plugin. Everything else, including item rewards, rounded corners, polls, countdowns and Discord posts, needs only Oxide.
 
 ---
 

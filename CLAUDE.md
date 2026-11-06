@@ -14,6 +14,7 @@ Repo contents:
 - `CHANGELOG.md` — release notes (2.0.0 = everything since the author's 1.2.0).
 - `CODEFLING_DESCRIPTION.md` — marketing copy for the store listing.
 - `previews/` — rendered screenshots of every screen (from the test harness).
+- `site/` — the product page as a static website (`index.html`, `favicon.svg`, `shots/` = WebP copies of `previews/`, `media/animations.mp4`). No build step: it is uploaded as-is to Cloudflare Pages (drag and drop the folder or a zip of its contents, or `npx wrangler pages deploy site`). Keep its feature list, requirements and screenshots in step with the plugin.
 - `tools/test-harness/` — compile checks, functional tests and the screenshot renderer (see below).
 - `new-joiner-architecture.tour` — CodeTour walkthrough of the code; update line numbers when code moves.
 
