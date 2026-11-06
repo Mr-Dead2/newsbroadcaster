@@ -17,6 +17,12 @@
     },
     {
       "file": "NewsBroadcaster.cs",
+      "line": 790,
+      "title": "Who Sees What: CanSee",
+      "description": "One rule decides what a player may see: the post is published (not a `Draft`), not past its auto-delete time, and meant for everyone or for one of the player's Oxide groups (admins see every group).\n\nEverything player-facing goes through it: the archive (`VisibleOrder`, `ArchiveOrder` with the filter chips and search), `NewestFor` (use it instead of `announcements[0]`), `CountUnread(player)`, `NotifyPlayers`, and the `news.view` / `news.like` / `news.vote` commands. Only the admin list shows everything."
+    },
+    {
+      "file": "NewsBroadcaster.cs",
       "selection": {
         "start": {
           "line": 48,
@@ -77,7 +83,7 @@
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 1173,
+      "line": 1561,
       "title": "Cleanup Mirrors the State Dictionaries",
       "description": "`OnPlayerDisconnected` is the teardown checklist for the dictionaries from the Fields step. `Init()` (line 934) is the mirror image at startup: register permissions, then `LoadAnnouncements()` repairs old data (null sets, duplicate ids) and sorts newest-first so index 0 is always the latest post.\n\n`OnPlayerSleepEnded` (line 1100) shows the newest unseen post and sends the 'N unread' reminder once per session."
     },
@@ -98,31 +104,31 @@
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 1441,
+      "line": 1907,
       "title": "Player Entry Point: /news",
       "description": "The chat command dispatches `latest`, `read` (mark all read), `admin` (admins only), `help`, and otherwise opens the archive (`ShowHistory`). Everything else players do is a console command bound to a CUI button (`news.view`, `news.like`, `news.vote`, `news.page`, `news.markread`)."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 2742,
+      "line": 3475,
       "title": "CUI Is Built Fresh, Every Time",
-      "description": "`ShowPopup` is representative: tear down (`DestroyUI`), then build a `CuiElementContainer` with hand-computed anchors — always via `Anchor()`/`F()` so floats are culture-invariant.\n\nTwo exceptions avoid rebuilds: `AddLikeButton` (line 2614) swaps just the heart and `AddPollBlock` (line 2860) just the poll so the reader keeps their scroll position, and editor text input doesn't rebuild the editor so fields keep focus.\n\n`PopupOrigin` decides the footer button (archive / back to archive / back to editor), auto-close (broadcasts only) and read tracking (never for previews).\n\nStyle helpers: `AddSurface` (line 2563) builds rounded cards/buttons from corner textures generated in `GenerateCornerTextures` (line 2342); corner pieces are always opaque (translucent colours are blended onto the surface below, see `ColorUnder`); plus `AddPill`, `AddPrimaryButton`, `AddGhostButton`, `AddPanelShadow`, `AddCornerMasks`, `AddBackdrop` — reuse them so new screens match.\n\nAnimation: every view starts with `OpenScreen` (line 2286) and ends with `ApplyFadeRamp` (line 2300), which gives each element a FadeIn that grows with its position in the container, so screens reveal top-to-bottom. Redraws of the same admin screen pass 0 and are instant."
+      "description": "`ShowPopup` is representative: tear down (`DestroyUI`), then build a `CuiElementContainer` with hand-computed anchors — always via `Anchor()`/`F()` so floats are culture-invariant.\n\nTwo exceptions avoid rebuilds: `AddLikeButton` (line 2614) swaps just the heart and `AddPollBlock` (line 2860) just the poll so the reader keeps their scroll position, and editor text input doesn't rebuild the editor so fields keep focus.\n\n`PopupOrigin` decides the footer button (archive / back to archive / back to editor), auto-close (broadcasts only) and read tracking (never for previews).\n\nStyle helpers: `AddSurface` (line 3296) builds rounded cards/buttons from corner textures generated in `GenerateCornerTextures` (line 3075); corner pieces are always opaque (translucent colours are blended onto the surface below, see `ColorUnder`); plus `AddPill`, `AddPrimaryButton`, `AddGhostButton`, `AddPanelShadow`, `AddCornerMasks`, `AddBackdrop` — reuse them so new screens match.\n\nAnimation: every view starts with `OpenScreen` (line 2286) and ends with `ApplyFadeRamp` (line 2300), which gives each element a FadeIn that grows with its position in the container, so screens reveal top-to-bottom. Redraws of the same admin screen pass 0 and are instant."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3301,
+      "line": 4171,
       "title": "Admin Screens",
       "description": "`ShowAdminList` (rows with RESEND / PIN / EDIT / DEL and bulk selection), `ShowEditor` (line 3434: type chips, option toggles incl. ADD POLL, poll option fields, preview) and `ShowThemeSelection` share the same admin colours (`AdminSurface`, `AdminSurfaceRaised`, …). Admin button commands get the caller through `AdminPlayer(arg)`, which returns null for non-admins."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3890,
+      "line": 4987,
       "title": "Rewards: Optional Plugins, Once Per Player",
       "description": "`GiveRewards` creates items directly (dropping them at the player's feet when the inventory is full), adds ServerRewards points with a plain `ulong` id (newer Rust wraps `userID`, which ServerRewards can't read), and deposits Economics currency.\n\n`CanGrantRewardBundle` checks everything first; if a needed plugin is missing nothing is paid and nothing is recorded, so the reward can be paid later."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 4008,
+      "line": 5105,
       "title": "Discord Is Fire-and-Forget",
       "description": "`SendToDiscord` is a no-op unless the webhook is configured. `webrequest.Enqueue` posts asynchronously and only logs failures — a bad webhook never breaks a broadcast. `allowed_mentions` lets only the configured `RoleMention` ping (`@everyone`/`@here` are allowed only when that setting contains them)."
     },

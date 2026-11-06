@@ -77,6 +77,37 @@ static class Previews
         foreach (var a in new[] { welcome, H.AnnByTitle("Discord Giveaway Winners") })
             ((HashSet<ulong>)H.AGet(a, "ReadByPlayers")).Add(player.userID);
 
+        // Newer features: a VIP-only post, a live countdown, a timed poll, an auto-deleting post and a draft.
+        if (H.HasConsole("news.filter"))
+        {
+            Sim.Permission.CreateGroup("vip", "VIP", 0);
+            Sim.Permission.AddUserGroup(player.UserIDString, "vip");
+            long now = DateTime.UtcNow.Ticks;
+            H.Console(null, "news.show \"VIP Weekend Kit Drop\" \"-\" \"VIPs: your weekend kit is ready. Type /kit vip to claim it before Sunday night.\" Info");
+            var vipPost = H.AnnByTitle("VIP Weekend Kit Drop");
+            H.ASet(vipPost, "Group", "vip");
+            H.ASet(vipPost, "Date", "2026-11-05 12:00");
+            H.ASet(vipPost, "Timestamp", new DateTime(2026, 11, 5, 12, 0, 0).Ticks);
+            H.Console(null, "news.show \"Raid Base Event This Saturday\" \"-\" \"Join the community raid event this Saturday at 20:00!\\n\\nTeams of up to 4. The first team to break into the event base wins 5000 scrap.\\n\\nThe event base spawns next to the Launch Site. Bring explosives and meds!\" Event");
+            var raid = H.AnnByTitle("Raid Base Event This Saturday");
+            H.ASet(raid, "Date", "2026-11-05 21:15");
+            H.ASet(raid, "Timestamp", new DateTime(2026, 11, 5, 21, 15, 0).Ticks);
+            H.ASet(raid, "CountdownLabel", "Event starts in");
+            H.ASet(raid, "CountdownTo", now + 2 * TimeSpan.TicksPerDay + 4 * TimeSpan.TicksPerHour + 30 * TimeSpan.TicksPerMinute + 12 * TimeSpan.TicksPerSecond);
+            H.ASet(poll, "PollHours", 72);
+            H.ASet(poll, "PollEndsAt", now + 30 * TimeSpan.TicksPerHour + 5 * TimeSpan.TicksPerMinute);
+            H.ASet(maint, "ExpireDays", 1);
+            H.ASet(maint, "ExpiresAt", now + 20 * TimeSpan.TicksPerHour + 5 * TimeSpan.TicksPerMinute);
+            ((HashSet<ulong>)H.AGet(raid, "ReadByPlayers")).Add(player.userID);
+            ((HashSet<ulong>)H.AGet(vipPost, "ReadByPlayers")).Add(player.userID);
+
+            H.Console(admin, "news.admin.create");
+            H.Console(admin, "news.editor.input title Halloween Event Recap");
+            H.Console(admin, "news.editor.input text Thanks to everyone who joined the Halloween event! Winners and screenshots coming soon.");
+            H.Console(admin, "news.editor.settype event");
+            H.Console(admin, "news.editor.savedraft");
+        }
+
         H.Console(player, "news.close");
         H.Console(admin, "news.close");
         Sim.Advance(30);
@@ -127,6 +158,13 @@ static class Previews
             H.Console(admin, "news.editor.input text Join the community raid event this Saturday at 20:00!\\n\\nTeams of up to 4. The first team to break into the event base wins 5000 scrap.");
             H.Console(admin, "news.editor.settype event");
             H.Console(admin, "news.editor.toggle pin");
+            if (H.HasConsole("news.filter"))
+            {
+                H.Console(admin, "news.editor.input image https://i.imgur.com/raid-event.png");
+                H.Console(admin, "news.editor.input cdlabel Event starts in");
+                H.Console(admin, "news.editor.input cdtime 2d 4h");
+                for (int k = 0; k < 3; k++) H.Console(admin, "news.editor.toggle expire");
+            }
             H.Save(admin, outDir, "07b_editor_new");
             H.Console(admin, "news.editor.cancel");
             H.CfgSet("Discord.Enabled", false);
@@ -146,6 +184,8 @@ static class Previews
             H.Console(admin, "news.editor.input poll4 Custom map");
             H.Console(admin, "news.editor.toggle notify");
             H.Console(admin, "news.editor.toggle notify");
+            if (H.HasConsole("news.filter"))
+                for (int k = 0; k < 4; k++) H.Console(admin, "news.editor.toggle polltimer");
             H.Save(admin, outDir, "07c_editor_poll");
             H.Console(admin, "news.editor.cancel");
         }
@@ -170,6 +210,27 @@ static class Previews
             H.Save(player, outDir, "10a_popup_poll_vote");
             H.Console(player, $"news.vote {H.Id(poll)} 1");
             H.Save(player, outDir, "10b_popup_poll_results");
+        }
+
+        if (H.HasConsole("news.filter"))
+        {
+            // 11) Archive filtered to events
+            H.Console(player, "news.close");
+            H.Chat(player, "news");
+            H.Console(player, "news.filter event");
+            H.Save(player, outDir, "11_archive_filtered");
+
+            // 12) Player settings over the archive
+            H.Console(player, "news.search.clear");
+            H.Console(player, "news.settings");
+            H.Console(player, "news.settings.toggle sound");
+            H.Save(player, outDir, "12_settings");
+            H.Console(player, "news.settings.toggle sound");
+            H.Console(player, "news.confirm.close");
+
+            // 13) Popup with a live countdown
+            H.Console(player, $"news.view {H.Id(H.AnnByTitle("Raid Base Event This Saturday"))}");
+            H.Save(player, outDir, "13_popup_countdown");
         }
 
         Console.WriteLine($"previews done. data writes={Sim.DataWrites} hooks={Sim.Hooks.Count} webreq={Sim.WebRequests.Count}");

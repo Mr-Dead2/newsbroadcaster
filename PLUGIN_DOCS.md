@@ -33,10 +33,22 @@ Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party
 - **Popup navigation.** Prev/next arrows with a `2 / 7` counter; "back to archive" returns to the same page.
 - **Live countdown.** Popups that close by themselves show "CLOSES IN 12S"; liking or voting keeps them open.
 - **Smoother likes and votes.** Only the button or poll redraws, so the scroll position is kept.
-- **New chat commands:** `/news latest`, `/news read`, `/news help` and `/news admin`.
+- **Archive filters and search.** Chips for All, Info, Warning, Alert, Event, Update and Polls, plus a search box that looks through titles and text.
+- **Event countdowns.** A post can show a live timer such as "EVENT STARTS IN 2 DAYS 04:12:33"; the archive shows it too.
+- **Timed polls.** Polls can close on their own; the popup shows "CLOSES IN 5H 12M" and everyone gets the result in chat.
+- **News settings** (`/news settings` or the SETTINGS button): turn off the notification sound, the pop-ups (a short chat line instead) or the post shown when joining.
+- **New chat commands:** `/news latest`, `/news read`, `/news settings`, `/news help` and `/news admin`.
 
 ### New for admins
-- **Better editor.** One-click type chips; **Pin to top**, **Notify online players**, **Post to Discord** and **Add poll** toggles; **Preview** before publishing. Fields no longer lose focus while you type.
+- **Better editor.** Content on the left, settings on the right: one-click type chips; **Pin to top**, **Notify online players**, **Post to Discord** and **Add poll** toggles; **Preview** before publishing. Fields no longer lose focus while you type.
+- **Drafts.** **SAVE DRAFT** keeps a post unpublished (only admins see it). Publish it later from the editor, the **PUBLISH** button in News Management, or `news.publish`.
+- **Copy post.** **COPY** opens the editor with a post's content and settings as a new post, handy for weekly wipe posts.
+- **Posts for one group.** **WHO CAN SEE IT** limits a post to an Oxide group (VIP, staff...). Others don't see it anywhere; admins see it with a `VIP ONLY` badge.
+- **Auto-delete.** Remove a post automatically 1, 3, 7, 14 or 30 days after publishing.
+- **Poll timer and results.** Close a poll after 1 hour to 7 days; the result goes to chat and Discord when it closes (also when you close voting yourself).
+- **Image link check.** The editor warns about links that won't show in game: imgur pages, Discord links (they expire), GIF / WEBP, web pages instead of pictures.
+- **Character counters** next to the title and the text.
+- **Notification position.** Six spots (top or bottom, left / centre / right) plus fine X / Y offsets.
 - **RESEND** re-notifies everyone online about an existing post (button or `news.resend`).
 - **Admin overview.** A stats line (posts, pinned, reads, likes) plus reads, likes and votes on every row, and an `EDITED` marker.
 - **Theme picker** with colour swatches and pages for extra themes.
@@ -58,7 +70,7 @@ Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party
 - The data file was rewritten on every like or read; saves are now batched and flushed on server save and unload.
 
 ### New config options
-`UnreadReminderOnConnect`, `RequireViewPermission`, `StripLinksFromBody`, `PopupImageFrame` (`Tall` / `Wide`), `ArchiveThumbnails`, `RoundedCorners`, `Discord.AvatarUrl`, `Polls.AllowVoteChange`, `Polls.ShowResultsBeforeVoting`. All are added to your config with their defaults on first load.
+`UnreadReminderOnConnect`, `RequireViewPermission`, `StripLinksFromBody`, `PopupImageFrame` (`Tall` / `Wide`), `ArchiveThumbnails`, `RoundedCorners`, `Notification.Position` (now six positions), `Notification.OffsetX` / `OffsetY`, `Discord.AvatarUrl`, `Discord.PostGroupOnlyPosts`, `Discord.PostPollResults`, `Polls.AllowVoteChange`, `Polls.ShowResultsBeforeVoting`, `Polls.AnnounceResults`. All are added to your config with their defaults on first load.
 
 ---
 
@@ -94,6 +106,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | `/news` | viewers | Open the news archive |
 | `/news latest` | viewers | Open the newest announcement |
 | `/news read` | viewers | Mark every announcement as read |
+| `/news settings` | viewers | Sound, pop-up and join settings |
 | `/news help` | everyone | List the commands |
 | `/news admin` | admins | Open news management |
 
@@ -105,7 +118,8 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 |---|---|---|
 | `news.show "Title" "ImageURL" "Body" [Type]` | Admin | Post a new announcement (notifies players, posts to Discord) |
 | `news.poll "Title" "Text" "Option 1\|Option 2\|..." [Type]` | Admin | Post an announcement with a poll (2–4 options separated by `\|`) |
-| `news.list` | Admin | List stored announcements with index, id, reads and likes |
+| `news.list` | Admin | List stored announcements with index, id, reads and likes (plus `[DRAFT]`, `[GROUP vip]`, delete and poll times) |
+| `news.publish <index\|id>` | Admin | Publish a draft (notifies players, posts to Discord) |
 | `news.delete <index\|id>` | Admin | Delete an announcement |
 | `news.resend <index\|id>` | Admin | Re-send the notification for an announcement to online players |
 | `news.trigger <SteamID/Name> [index]` | Admin | Force-show a popup to one player |
@@ -123,6 +137,7 @@ news.show "Alert!" "-" "PvP zone closing in 10 minutes." Alert
 - Use `"-"` as the image URL to post without an image.
 - Types: `Info`, `Warning`, `Alert`, `Event`, `Update` (case-insensitive, default `Info`). The type is only read when it is the last, unquoted word.
 - Use `\n` for a new line.
+- If the image link looks wrong (an imgur page, a Discord link, a GIF...), the console prints a warning after posting.
 
 ### Announcement types
 
@@ -138,20 +153,27 @@ news.show "Alert!" "-" "PvP zone closing in 10 minutes." Alert
 
 ## The editor
 
-`/news admin` → **NEW ANNOUNCEMENT** (or **EDIT** on a row).
+`/news admin` → **NEW ANNOUNCEMENT** (or **EDIT** / **COPY** on a row). The content is on the left, the settings on the right.
 
 | Control | What it does |
 |---|---|
 | Title / Image URL / Content body | Text fields. Enter (or `\n`) makes a new line in the body. An invalid image URL is rejected with a chat message |
+| Counters | `23 / 120` next to the title (yellow when the title starts to shrink, red at the limit) and the body's character count (yellow when players will need to scroll) |
+| Image link check | Under the image field: `✓ Direct image link`, or a warning for imgur pages, Discord links (they expire), GIF / WEBP, or links that don't end in `.png` / `.jpg` |
 | Type chips | Pick one of the five types |
 | **PIN TO TOP** | Pin the post (same as the PIN button in the list) |
-| **NOTIFY ONLINE PLAYERS** | New posts: send the toast/popup to everyone online (on by default). Edits: **RE-NOTIFY PLAYERS**, off by default |
-| **POST TO DISCORD** | New posts only, shown when the Discord webhook is configured |
-| **ADD POLL** | Shows four poll option fields under the body. Fill 2–4 of them; empty ones are skipped. When editing a poll, **CLOSE VOTING** stops new votes and shows the results to everyone. Turning **ADD POLL** off removes the poll and its votes |
+| **NOTIFY ONLINE PLAYERS** | New posts and drafts: send the toast/popup to everyone who can see it (on by default). Edits: **RE-NOTIFY PLAYERS**, off by default |
+| **POST TO DISCORD** | New posts and drafts, shown when the Discord webhook is configured |
+| **ADD POLL** | Shows four poll option fields under the body. Fill 2–4 of them; empty ones are skipped. When editing a published poll, **CLOSE VOTING** stops new votes and announces the result. Turning **ADD POLL** off removes the poll and its votes |
+| **WHO CAN SEE IT** | Click to step through `EVERYONE` and your Oxide groups (e.g. `VIP ONLY`) |
+| **AUTO-DELETE** | `NEVER`, or delete 1 / 3 / 7 / 14 / 30 days after publishing. When editing a live post, a new choice counts from now |
+| **COUNTDOWN TITLE / COUNTS DOWN TO** | A live timer in the popup, e.g. `WIPE IN` + `2d 4h`, `90m`, `19:00` (next time the server clock shows it) or `2026-11-12 19:00`. Times are server time; the line under the field shows when it ends |
+| **POLL CLOSES** | `MANUALLY`, or close the poll 1 / 6 / 12 hours or 1 / 3 / 7 days after publishing |
 | **PREVIEW** | Shows the popup exactly as players will see it. Nothing is published; **BACK TO EDITOR** returns with your draft intact |
+| **SAVE DRAFT** | New posts and drafts: save without publishing |
 | **PUBLISH / SAVE CHANGES** | A title is required |
 
-Editing keeps likes, reads and reward history, and adds an `EDITED` marker.
+Editing keeps likes, reads and reward history, and adds an `EDITED` marker. A published post can't be turned back into a draft.
 
 ---
 
@@ -161,25 +183,29 @@ These are run by CUI buttons. They address announcements by their stable id, not
 
 | Command | Description |
 |---|---|
-| `news.page <page>` | Archive page |
+| `news.page <page> [reset]` | Archive page (`reset` clears the filter, used by VIEW ARCHIVE) |
+| `news.filter <all\|polls\|Type>` / `news.search <text>` / `news.search.clear` | Archive filter chips and search |
+| `news.settings` / `news.settings.toggle <sound\|popups\|join>` | Player settings |
+| `news.countdown <id>` | Sent by the client when a popup countdown runs out (redraws it) |
 | `news.view <id> [archive\|direct]` | Open a post (`archive` = "back to archive" button) |
 | `news.like <id>` | Toggle like |
 | `news.vote <id> <option>` | Vote in a poll (option index from 0) |
 | `news.markread` | Mark all read (archive button) |
 | `news.close` / `news.close.notif` | Close the UI / the toast |
 | `news.admin.page <page>` | Admin list page |
-| `news.admin.create` / `news.admin.edit <id>` | Open the editor |
+| `news.admin.create` / `news.admin.edit <id>` / `news.admin.copy <id>` | Open the editor (new, edit, copy) |
+| `news.admin.publish <id> [page]` | Publish a draft |
 | `news.admin.togglepin <id> [page]` | Pin / unpin |
 | `news.admin.resend <id> [page]` | Re-notify online players |
 | `news.admin.delconfirm <id> [page]` / `news.admin.del <id> [page]` | Delete with confirmation |
 | `news.admin.toggleselect <id> [page]`, `news.admin.selectpage <page>`, `news.admin.clearsel [page]` | Bulk selection |
 | `news.admin.bulkpin <0\|1> [page]`, `news.admin.bulkdelconfirm [page]`, `news.admin.bulkdel [page]` | Bulk actions |
 | `news.admin.themes [page]` / `news.admin.settheme "Name" [page]` | Theme picker |
-| `news.editor.input <title\|image\|text\|poll1-poll4> <value>` | Editor field |
+| `news.editor.input <title\|image\|text\|poll1-poll4\|cdlabel\|cdtime> <value>` | Editor field |
 | `news.editor.settype <Type>` / `news.editor.type` | Set / cycle the type |
-| `news.editor.toggle <pin\|notify\|discord\|poll\|pollclosed>` | Editor options |
+| `news.editor.toggle <pin\|notify\|discord\|poll\|pollclosed\|audience\|expire\|polltimer>` | Editor options (the last three step through their choices) |
 | `news.editor.preview` / `news.editor.back` | Preview and return |
-| `news.editor.save` / `news.editor.cancel` | Save / cancel |
+| `news.editor.save` / `news.editor.savedraft` / `news.editor.cancel` | Publish or save changes / save as draft / cancel |
 | `news.confirm.close` | Close a confirmation dialog |
 
 ---
@@ -208,7 +234,9 @@ Existing configs are upgraded in place: your values and themes are kept and new 
     "Enabled": true,
     "UseNotifyPlugin": false,
     "NotifyType": 0,
-    "Position": "Right",
+    "Position": "TopRight",
+    "OffsetX": 0.0,
+    "OffsetY": 0.0,
     "Duration": 8,
     "NotificationSound": "assets/bundled/prefabs/fx/notice/loot.drag.fx.prefab"
   },
@@ -217,7 +245,9 @@ Existing configs are upgraded in place: your values and themes are kept and new 
     "WebhookUrl": "",
     "BotName": "Server News",
     "AvatarUrl": "",
-    "RoleMention": ""
+    "RoleMention": "",
+    "PostGroupOnlyPosts": false,
+    "PostPollResults": true
   },
   "Rewards": {
     "EnableReadReward": false,
@@ -231,7 +261,8 @@ Existing configs are upgraded in place: your values and themes are kept and new 
   },
   "Polls": {
     "AllowVoteChange": true,
-    "ShowResultsBeforeVoting": false
+    "ShowResultsBeforeVoting": false,
+    "AnnounceResults": true
   },
   "SelectedTheme": "Default",
   "Themes": { "Default": { }, "Dark": { }, "Ocean": { }, "Rust": { }, "Midnight": { }, "Forest": { } }
@@ -262,7 +293,8 @@ Existing configs are upgraded in place: your values and themes are kept and new 
 | `Enabled` | `true` | Show the toast for new posts. `false` = open the popup directly instead |
 | `UseNotifyPlugin` | `false` | Send the notification through the Notify plugin |
 | `NotifyType` | `0` | Notify plugin type index |
-| `Position` | `"Right"` | Toast position: `"Right"` or `"Left"` |
+| `Position` | `"TopRight"` | Toast position: `TopRight`, `TopLeft`, `TopCenter`, `BottomRight`, `BottomLeft` or `BottomCenter`. The bottom ones sit above the hotbar and health bars. The 1.x values `Right` / `Left` mean the top corners |
+| `OffsetX` / `OffsetY` | `0` | Nudge the toast (1280×720 reference units: +X right, +Y up), e.g. to clear another plugin's HUD |
 | `Duration` | `8` | Seconds the toast stays visible |
 | `NotificationSound` | loot drag fx | Sound prefab, played only for the receiving player. Empty = no sound |
 
@@ -275,6 +307,8 @@ Existing configs are upgraded in place: your values and themes are kept and new 
 | `BotName` | `"Server News"` | Webhook display name (empty = webhook default) |
 | `AvatarUrl` | `""` | Optional webhook avatar image URL |
 | `RoleMention` | `""` | Sent above the embed, e.g. `<@&123456789>`, `@here` or `@everyone` |
+| `PostGroupOnlyPosts` | `false` | Also post announcements meant for one group (e.g. VIP) to Discord |
+| `PostPollResults` | `true` | Post the result when a poll closes |
 
 The embed has a type-coloured side bar, a `TYPE • SERVER NAME` header, the title, body (truncated at 4000 characters), image, "Posted by" footer and Discord's timestamp. Only the configured `RoleMention` can ping — text inside titles and bodies never does.
 
@@ -298,6 +332,7 @@ Each bundle can combine **Items** (any shortname, optional `SkinId`), **Points**
 |---|---|---|
 | `AllowVoteChange` | `true` | Players can switch their vote by clicking another option |
 | `ShowResultsBeforeVoting` | `false` | Show result bars to players who haven't voted yet (admins always see them) |
+| `AnnounceResults` | `true` | When a poll closes (timer or CLOSE VOTING): the result in chat for everyone who can see the post, and on Discord (`Discord.PostPollResults`) |
 
 ### Theme colours
 
@@ -312,6 +347,40 @@ Pinned posts always sit at the top of the archive and admin list, with a gold ti
 ## Bulk admin operations
 
 Tick the checkbox on admin rows (or **SELECT PAGE**) and a toolbar appears: **DELETE** (with confirmation), **PIN ALL**, **UNPIN ALL**, **CLEAR**. The selection is per admin, survives paging, and is dropped on disconnect.
+
+## Drafts and copies
+
+**SAVE DRAFT** in the editor saves a post without publishing it. Drafts appear in News Management with a `DRAFT` badge and a **PUBLISH** button; players never see them (archive, popups, `/news latest`, unread counts), and they fire no hooks and post nothing to Discord until published. Publishing (editor, **PUBLISH** button or `news.publish`) works like a new post: it moves to the top, players are notified and the auto-delete / poll timers start. Drafts are never trimmed by `MaxStoredAnnouncements` and never auto-deleted.
+
+**COPY** opens the editor with the content and settings of any post (title, image, text, type, audience, auto-delete, countdown, poll options without votes). Saving creates a new post; the original is untouched.
+
+## Posts for one group
+
+**WHO CAN SEE IT** steps through `EVERYONE` and every Oxide group except `default` (which is everyone). A group-only post is shown only to members of that group (`oxide.usergroup add <player> vip`) and to admins, who see a `VIP ONLY` badge. Players outside the group don't see it in the archive, popups, toasts, unread counts or `/news latest`, and can't open, like or vote on it by id. Group-only posts stay off Discord unless `Discord.PostGroupOnlyPosts` is on.
+
+## Auto-delete
+
+A post with **AUTO-DELETE** set is removed that many days after it was published, exactly like a delete (`OnNewsDeleted` fires). The plugin checks every 30 seconds; an expired post is hidden immediately. News Management shows `DELETES IN 2D 4H` on the row, and `news.list` prints the time.
+
+## Countdowns
+
+A post with **COUNTS DOWN TO** set shows a card above its text: the countdown title on the left (default `STARTS IN`) and the time on the right, e.g. `2 DAYS  04:12:33`. The player's game counts the seconds itself; when a day runs out it asks the server for the next one, and at the end the card says `STARTED`. Archive rows show the countdown as `WIPE IN 2D 4H`.
+
+## Player settings
+
+`/news settings` (or **SETTINGS** in the archive) lets each player turn off:
+
+| Setting | When off |
+|---|---|
+| Notification sound | No sound for new posts |
+| Pop-up notifications | No toast or popup; a one-line chat message instead |
+| Show new posts when I join | No popup when waking up (the unread reminder still shows) |
+
+Choices are saved per player in the data file (`PlayerSettings`).
+
+## Archive filters and search
+
+Under the archive header: **ALL**, one chip per type and **POLLS**, then a search box (press Enter). The filter and search combine, the page count follows them, and prev / next in a post opened from the archive stays inside the filtered list. `/news` and **VIEW ARCHIVE** open the full archive again.
 
 ## Rounded corners
 
@@ -343,6 +412,8 @@ A poll is part of an announcement: the options appear in a block under the text 
 
 Editing a poll keeps existing votes: options keep their votes when you clear an empty slot in between, and votes for an option you delete are dropped. Discord posts list the poll options in an embed field.
 
+With **POLL CLOSES** set, the poll closes on its own after that time; the popup shows `CLOSES IN 5H 12M`. When a poll closes (by its timer or with **CLOSE VOTING**), `OnNewsPollClosed` fires and, with `Polls.AnnounceResults`, everyone online who can see the post gets the result in chat (`Poll closed: Map size - winner: 4250 (48%, 21 votes).`) and Discord gets a results embed.
+
 ---
 
 ## API Hooks
@@ -357,8 +428,11 @@ Other plugins can subscribe to these hooks. Payloads use plain types, so consume
 | `OnNewsRead` | `void OnNewsRead(BasePlayer player, Dictionary<string, object> ann)` | First time a player reads a post |
 | `OnNewsLiked` | `void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)` | A player likes (`true`) or un-likes (`false`) a post |
 | `OnNewsPollVote` | `void OnNewsPollVote(BasePlayer player, Dictionary<string, object> ann, int option)` | A player votes (or changes their vote) in a poll; `option` is the 0-based index |
+| `OnNewsPollClosed` | `void OnNewsPollClosed(Dictionary<string, object> ann)` | A poll closes: its timer ran out, or an admin closed voting in the editor |
 
-Payload keys: `id` (string), `title`, `author`, `type` (`Info`/`Warning`/`Alert`/`Event`/`Update`), `timestamp` (UTC ticks), `date` (`yyyy-MM-dd HH:mm`), `text`, `imageUrl`, `likes` (int), `pinned` (bool) — unchanged from 1.2.0 — plus `pollOptions` (string[], empty when there is no poll) and `pollVotes` (int, total votes) since 2.0.0.
+`OnNewsBroadcast` fires when a post goes live, so for a draft that is when it is published (saving a draft fires nothing). `OnNewsDeleted` also fires for auto-deleted posts.
+
+Payload keys: `id` (string), `title`, `author`, `type` (`Info`/`Warning`/`Alert`/`Event`/`Update`), `timestamp` (UTC ticks), `date` (`yyyy-MM-dd HH:mm`), `text`, `imageUrl`, `likes` (int), `pinned` (bool) — unchanged from 1.2.0 — plus, since 2.0.0, `pollOptions` (string[], empty when there is no poll), `pollVotes` (int, total votes), `group` (string, empty = everyone), `expiresAt`, `pollEndsAt` and `countdownTo` (UTC ticks, 0 = not set).
 
 ```csharp
 void OnNewsBroadcast(Dictionary<string, object> ann)
@@ -376,7 +450,7 @@ void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)
 
 ## Data file (`oxide/data/NewsBroadcaster_Data.json`)
 
-Stores announcements, each player's last-seen marker and each player's "mark all read" marker (`ReadAllUpTo`). 1.2.0 and 2.0.0 data load unchanged.
+Stores announcements, each player's last-seen marker, each player's "mark all read" marker (`ReadAllUpTo`) and each player's `/news settings` (`PlayerSettings`: `Sound`, `Popups`, `JoinPopup`). 1.2.0 and 2.0.0 data load unchanged.
 
 | Field | Type | Description |
 |---|---|---|
@@ -393,12 +467,17 @@ Stores announcements, each player's last-seen marker and each player's "mark all
 | `PollOptions` | list of strings | Poll options (empty = no poll) |
 | `PollVotes` | Steam ID → option index | One vote per player |
 | `PollClosed` | bool | Voting closed |
+| `Draft` | bool | Saved but not published |
+| `Group` | string | Oxide group that can see it (empty = everyone) |
+| `ExpireDays`, `ExpiresAt` | int, long | Auto-delete after N days, and when (UTC ticks, 0 = never) |
+| `PollHours`, `PollEndsAt` | int, long | Poll closes after N hours, and when (UTC ticks, 0 = manually) |
+| `CountdownTo`, `CountdownLabel` | long, string | Countdown end (UTC ticks, 0 = none) and its title |
 
 ---
 
 ## Localization
 
-All player-facing text is in Oxide's lang system (`oxide/lang/<lang>/NewsBroadcaster.json`). New keys are added to your existing lang file automatically. Keys whose meaning changed in 2.0.0 were renamed so the new text shows up (`TypeLabel`, `BodyHint`, `NoPostsYet`, `PublishedNoNotify`, `ActiveBadge`); the old keys can be deleted from your lang file.
+All player-facing text is in Oxide's lang system (`oxide/lang/<lang>/NewsBroadcaster.json`). New keys are added to your existing lang file automatically. Keys whose meaning changed in 2.0.0 were renamed so the new text shows up (`TypeLabel`, `BodyHint`, `NoPostsYet`, `PublishedNoNotify`, `ActiveBadge`); the old keys can be deleted from your lang file. The editor now uses `BodyHintShort`, and `/news help` adds `ChatHelpSettings`.
 
 ---
 
@@ -410,7 +489,7 @@ The repository includes `tools/test-harness/`, which compiles the plugin against
 
 ## Known limitations
 
-- The toast position is `Left` or `Right` only.
 - The popup body's scroll height is estimated from a characters-per-line guess. On very narrow (4:3) screens the last line of a very long post may sit close to the bottom edge.
-- Scheduling, drafts and per-post audiences are not part of this version.
-- Polls are single-choice and have no end time; close them from the editor.
+- Publishing at a set time (scheduled posts) is not part of this version; save a draft and publish it when it's time.
+- Polls are single-choice.
+- A countdown's day count is drawn when the popup opens and redrawn when a day runs out; the seconds are counted by the player's game.

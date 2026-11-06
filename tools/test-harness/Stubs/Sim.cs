@@ -189,6 +189,7 @@ namespace HarnessRuntime
             DataFiles.Clear(); ConfigFiles.Clear(); Hooks.Clear(); WebRequests.Clear(); Timers.Clear(); NextTicks.Clear();
             LogLines.Clear(); ChatLog.Clear(); ConsoleReplies.Clear(); Clients.Clear(); MissingLangKeys.Clear();
             Permission.UserPerms.Clear(); Permission.DefaultGroupPerms.Clear();
+            Permission.GroupMembers.Clear(); Permission.CreateGroup("default", "default", 0); Permission.CreateGroup("admin", "admin", 1);
             BasePlayer.activePlayerList.Clear();
             FileStorage.server.Files.Clear();
             CommunityEntity.ServerInstance = new CommunityEntity();

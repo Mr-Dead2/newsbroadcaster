@@ -148,7 +148,28 @@ namespace Oxide.Core.Libraries
         public void RevokeUserPermission(string id, string perm) { if (UserPerms.TryGetValue(id, out var s)) s.Remove(perm); }
         public bool GroupHasPermission(string name, string perm) => name == "default" && DefaultGroupPerms.Contains(perm);
         public void GrantGroupPermission(string name, string perm, Plugins.Plugin owner) { if (name == "default") DefaultGroupPerms.Add(perm); }
-        public bool UserHasGroup(string id, string name) => name == "default";
+
+        // Groups (real signatures from Oxide.Core Permission). Every player is in "default", as on a server.
+        public readonly Dictionary<string, HashSet<string>> GroupMembers = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["default"] = new HashSet<string>(), ["admin"] = new HashSet<string>()
+        };
+        public bool CreateGroup(string groupName, string groupTitle, int groupRank)
+        {
+            if (string.IsNullOrEmpty(groupName) || GroupMembers.ContainsKey(groupName)) return false;
+            GroupMembers[groupName] = new HashSet<string>();
+            return true;
+        }
+        public bool GroupExists(string groupName) => !string.IsNullOrEmpty(groupName) && (groupName.Equals("*") || GroupMembers.ContainsKey(groupName));
+        public string[] GetGroups() => GroupMembers.Keys.ToArray();
+        public string[] GetUserGroups(string playerId) => GroupMembers.Where(g => g.Key == "default" || g.Value.Contains(playerId)).Select(g => g.Key).ToArray();
+        public void AddUserGroup(string playerId, string groupName) { if (GroupMembers.TryGetValue(groupName, out var m)) m.Add(playerId); }
+        public void RemoveUserGroup(string playerId, string groupName) { if (GroupMembers.TryGetValue(groupName, out var m)) m.Remove(playerId); }
+        public bool UserHasGroup(string playerId, string groupName)
+        {
+            if (!GroupExists(groupName)) return false;
+            return groupName.Equals("default", StringComparison.OrdinalIgnoreCase) || GroupMembers[groupName].Contains(playerId);
+        }
     }
 
     public class Lang : Library
