@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NewsBroadcaster</title>
+<meta name="description" content="In-game news for Rust servers: posts with pictures, polls, countdowns, likes, rewards and Discord, run from an in-game editor. Oxide plugin by DEDA.">
+<meta name="theme-color" content="#0a0c10">
+<meta property="og:type" content="website">
+<meta property="og:title" content="NewsBroadcaster for Rust">
+<meta property="og:description" content="In-game news for Rust servers: posts with pictures, polls, countdowns, likes, rewards and Discord, run from an in-game editor. Oxide plugin by DEDA.">
+<!-- For a picture in Discord / social link previews, add your site's full address once it is live:
+<meta property="og:image" content="https://YOUR-SITE.pages.dev/shots/thumb_02_popup_image.webp"> -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&family=Roboto+Condensed:wght@500;700&display=swap">
+<style>
+/* Layout: a product page read like the plugin's own menus. A sticky bar, a two-column hero
+   (pitch + the live in-game popup), then reference sections on one 1180px column.
+   Deliberately dark only: it mirrors the in-game CUI that every screenshot shows. */
+:root {
+  color-scheme: dark;
+  /* colour: the plugin's own theme values */
+  --ground: #0a0c10;      /* page */
+  --panel: #12141a;       /* PanelBg 0.07 0.08 0.10 */
+  --raised: #191c24;      /* raised cards and code */
+  --hair: #232733;        /* dividers */
+  --ink: #eff1f5;         /* TextTitle */
+  --text: #c6cad3;        /* TextNormal, a touch dimmer for long reading */
+  --muted: #8a909c;       /* TextMuted */
+  --accent: #5cb5ff;      /* ButtonPrimary 0.36 0.71 1.00 */
+  --accent-ink: #061322;
+  --accent-soft: #15283b;
+  --info: #6699cc; --warning: #e6991a; --alert: #d94040; --event: #994dcc; --update: #33b3e6; --pin: #f2b333;
+  /* type */
+  --f-display: "Roboto Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --f-body: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* scale */
+  --t-xs: 0.78rem; --t-sm: 0.9rem; --t-md: 1.06rem; --t-lg: 1.3rem; --t-xl: 1.75rem; --t-2xl: 2.4rem; --t-3xl: clamp(2.5rem, 5.6vw, 4.1rem);
+  /* corners, like the plugin: panel 12, card 8, button 6, pill 4 */
+  --r-panel: 14px; --r-card: 10px; --r-btn: 7px; --r-pill: 5px;
+  --gutter-l: max(16px, env(safe-area-inset-left, 0px));
+  --gutter-r: max(16px, env(safe-area-inset-right, 0px));
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: calc(72px + env(safe-area-inset-top, 0px)); }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  background: var(--ground);
+  color: var(--text);
+  font: 400 var(--t-md)/1.62 var(--f-body);
+  -webkit-font-smoothing: antialiased;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--ground); }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+h1, h2, h3, h4 { font-family: var(--f-display); color: var(--ink); line-height: 1.08; margin: 0; text-wrap: balance; font-weight: 700; overflow-wrap: break-word; }
+p { margin: 0; }
+code, kbd { font-family: var(--f-mono); font-size: 0.86em; }
+:not(pre) > code { background: var(--raised); color: var(--ink); padding: 0.1em 0.38em; border-radius: 4px; border: 1px solid var(--hair); white-space: nowrap; }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding-left: var(--gutter-l); padding-right: var(--gutter-r); }
+.eyebrow { font: 700 var(--t-xs)/1 var(--f-display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+.lead { font-size: var(--t-lg); line-height: 1.55; color: var(--text); max-width: 34em; }
+.muted { color: var(--muted); }
+
+/* ---- header ---- */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: rgba(10, 12, 16, 0.9); background: color-mix(in srgb, var(--ground) 86%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--hair); }
+.top .wrap { display: flex; align-items: center; gap: 20px; padding-block: 12px; }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); flex-shrink: 0; }
+.brand b { font: 700 1.05rem/1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.brand .ver { font: 700 0.7rem/1 var(--f-display); letter-spacing: 0.06em; color: var(--accent-ink); background: var(--accent); padding: 4px 6px; border-radius: var(--r-pill); }
+.nav { display: flex; gap: 4px; margin-left: auto; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.nav::-webkit-scrollbar { display: none; }
+.nav a { font: 700 var(--t-xs)/1 var(--f-display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); text-decoration: none; padding: 9px 10px; border-radius: var(--r-btn); white-space: nowrap; }
+.nav a:hover { color: var(--ink); background: var(--raised); }
+
+/* ---- hero ---- */
+.hero .wrap { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: clamp(28px, 5vw, 64px); align-items: center; padding-block: clamp(40px, 7vw, 88px) clamp(36px, 6vw, 72px); }
+.hero h1 { font-size: var(--t-3xl); text-transform: uppercase; letter-spacing: -0.005em; margin-block: 16px 20px; }
+.hero h1 em { font-style: normal; color: var(--accent); }
+.ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font: 700 var(--t-sm)/1 var(--f-display); letter-spacing: 0.08em; text-transform: uppercase; text-decoration: none; padding: 15px 22px; border-radius: var(--r-btn); border: 1px solid transparent; cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+.btn-primary { background: var(--accent); color: var(--accent-ink); }
+.btn-primary:hover { background: var(--ink); color: var(--accent-ink); }
+.btn-ghost { background: var(--raised); color: var(--ink); border-color: var(--hair); }
+.btn-ghost:hover { background: var(--hair); color: var(--ink); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 26px; font-size: var(--t-sm); color: var(--muted); }
+.meta span { display: inline-flex; align-items: center; gap: 8px; }
+.meta span + span::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--hair); margin-right: 10px; }
+
+.stage { position: relative; padding: 28px 22px 46px 10px; }
+.screen { margin: 0; border-radius: var(--r-panel); overflow: hidden; border: 1px solid var(--hair); box-shadow: 0 30px 80px -24px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(0, 0, 0, 0.4); aspect-ratio: 16 / 9; max-width: 100%; background: var(--panel); }
+.screen img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* replica of the in-game toast */
+.toast { position: absolute; top: 0; right: 0; width: min(330px, 62%); display: grid; grid-template-columns: 4px 1fr auto; gap: 12px; align-items: stretch; padding: 13px 14px 13px 13px; background: #0f1116; border: 1px solid #2b303b; border-radius: 12px; box-shadow: 0 18px 40px -12px rgba(0, 0, 0, 0.8); animation: toast-in 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.35s both; }
+.toast-bar { background: var(--event); border-radius: 3px; }
+.toast-kicker { font: 700 0.72rem/1.2 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
+.toast-kicker .t { color: var(--event); }
+.toast-title { font: 700 1.08rem/1.2 var(--f-display); color: var(--ink); margin-top: 3px; }
+.toast-cta { font: 500 0.7rem/1.2 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin-top: 5px; }
+.toast-x { color: var(--muted); font: 700 0.8rem/1 var(--f-display); padding-top: 1px; }
+@keyframes toast-in { from { transform: translate(34px, -6px); } to { transform: none; } }
+
+/* replica of the in-game countdown card */
+.cd { position: absolute; left: 0; bottom: 0; width: min(380px, 74%); }
+.cd-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; background: #10202f; border: 1px solid #2a4a68; border-radius: 9px; box-shadow: 0 18px 40px -14px rgba(0, 0, 0, 0.8); }
+.cd-label { font: 700 0.8rem/1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
+.cd-time { font: 700 1.25rem/1 var(--f-display); color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cd-note { font-size: var(--t-xs); color: var(--muted); margin-top: 7px; padding-left: 2px; }
+
+/* ---- facts ---- */
+.facts { border-block: 1px solid var(--hair); background: var(--panel); }
+.facts .wrap { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding-block: 0; }
+.fact { padding: 22px 22px 24px; border-left: 1px solid var(--hair); }
+.fact:first-child { border-left: 0; padding-left: 0; }
+.fact h3 { font-size: var(--t-sm); text-transform: uppercase; letter-spacing: 0.08em; }
+.fact p { font-size: var(--t-sm); color: var(--muted); margin-top: 6px; line-height: 1.5; }
+
+/* ---- sections ---- */
+section.block { padding-block: clamp(56px, 8vw, 96px) 0; }
+.head { display: grid; gap: 12px; margin-bottom: 34px; max-width: 46rem; min-width: 0; }
+.head h2 { font-size: var(--t-2xl); text-transform: uppercase; }
+.head p { color: var(--muted); }
+
+/* feature lists: two columns of name + one line, divided by hairlines */
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 56px; }
+.cols h3 { font-size: var(--t-lg); text-transform: uppercase; letter-spacing: 0.02em; padding-bottom: 14px; border-bottom: 1px solid var(--accent); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cols h3 small { font: 500 var(--t-xs)/1 var(--f-body); letter-spacing: 0; text-transform: none; color: var(--muted); }
+.flist { list-style: none; margin: 0; padding: 0; }
+.flist li { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: 16px; padding-block: 16px; border-bottom: 1px solid var(--hair); }
+.flist b { font: 700 var(--t-sm)/1.35 var(--f-display); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink); padding-top: 2px; }
+.flist span { font-size: var(--t-md); line-height: 1.55; min-width: 0; }
+
+/* the look */
+.look { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
+.tile { background: var(--panel); border: 1px solid var(--hair); border-radius: var(--r-panel); padding: 24px; display: grid; gap: 14px; align-content: start; min-width: 0; }
+.tile h3 { font-size: var(--t-lg); text-transform: uppercase; }
+.tile p { font-size: var(--t-md); }
+.corner-demo { display: flex; gap: 14px; align-items: center; }
+.corner-demo div { height: 54px; flex: 1; display: grid; place-items: center; font: 700 var(--t-xs)/1 var(--f-display); letter-spacing: 0.1em; text-transform: uppercase; }
+.corner-demo .sq { background: #1d212b; color: var(--muted); border-radius: 0; }
+.corner-demo .rd { background: var(--accent); color: var(--accent-ink); border-radius: 9px; }
+.rows-demo { display: grid; gap: 7px; }
+.rows-demo i { display: block; height: 14px; border-radius: 5px; background: #1d212b; transform-origin: left center; animation: row-in 2.6s ease-in-out infinite; }
+.rows-demo i:nth-child(2) { animation-delay: 0.12s; width: 86%; }
+.rows-demo i:nth-child(3) { animation-delay: 0.24s; width: 72%; }
+.rows-demo i:nth-child(4) { animation-delay: 0.36s; width: 60%; }
+@keyframes row-in { 0%, 18% { opacity: 0.35; transform: translateX(-6px); } 40%, 100% { opacity: 1; transform: none; } }
+
+.themes { display: grid; gap: 8px; }
+.theme { display: grid; grid-template-columns: 5.5rem 22px minmax(0, 1fr) 22px minmax(0, 1fr); gap: 10px; align-items: center; font-size: var(--t-sm); }
+.theme b { font: 700 var(--t-sm)/1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink); }
+.sw { width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.14); }
+.theme code { font-size: 0.74rem; color: var(--muted); background: none; border: 0; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.theme-head { font: 700 0.68rem/1 var(--f-display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+.pos-demo { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1.6fr 1fr; gap: 8px; aspect-ratio: 16 / 9; max-width: 100%; background: linear-gradient(180deg, #55606d 0%, #8b8676 70%, #5f644f 100%); border-radius: 10px; padding: 10px; border: 1px solid var(--hair); }
+.pos-demo span { border-radius: 5px; background: rgba(10, 12, 16, 0.55); border: 1px dashed rgba(255, 255, 255, 0.35); display: grid; place-items: center; font: 700 0.6rem/1 var(--f-display); letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255, 255, 255, 0.85); }
+.pos-demo span.on { background: #0f1116; border: 1px solid var(--accent); color: var(--accent); }
+.pos-demo .gap { visibility: hidden; }
+
+/* types */
+.types { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.type { display: inline-flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; border-radius: var(--r-btn); background: var(--panel); border: 1px solid var(--hair); }
+.pill { font: 700 0.7rem/1 var(--f-display); letter-spacing: 0.08em; text-transform: uppercase; color: #fff; padding: 6px 9px; border-radius: var(--r-pill); }
+.type code { background: none; border: 0; padding: 0; color: var(--muted); font-size: 0.78rem; }
+
+/* ---- gallery ---- */
+.gal-group { margin-top: 10px; }
+.gal-group + .gal-group { margin-top: 44px; }
+.gal-group h3 { font-size: var(--t-lg); text-transform: uppercase; margin-bottom: 18px; display: flex; gap: 12px; align-items: baseline; }
+.gal-group h3 small { font: 500 var(--t-sm)/1 var(--f-body); color: var(--muted); text-transform: none; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 22px 18px; }
+.shot { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.shot button { all: unset; cursor: zoom-in; display: block; border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--hair); aspect-ratio: 16 / 9; max-width: 100%; background: var(--panel); transition: border-color 0.15s, transform 0.2s; }
+.shot button:hover { border-color: var(--accent); transform: translateY(-2px); }
+.shot button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.shot figcaption b { display: block; font: 700 var(--t-sm)/1.3 var(--f-display); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink); }
+.shot figcaption span { font-size: var(--t-sm); color: var(--muted); line-height: 1.45; }
+
+dialog.lightbox { border: 0; padding: 0; background: transparent; max-width: min(1280px, 94vw); width: 100%; color: var(--text); }
+dialog.lightbox::backdrop { background: rgba(4, 5, 8, 0.86); backdrop-filter: blur(4px); }
+.lb-frame { border-radius: var(--r-panel); overflow: hidden; border: 1px solid var(--hair); background: var(--panel); }
+.lb-frame img { display: block; width: 100%; height: auto; }
+.lb-bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.lb-bar p { flex: 1; min-width: 0; font-size: var(--t-sm); }
+.lb-bar p b { color: var(--ink); font-family: var(--f-display); text-transform: uppercase; letter-spacing: 0.05em; margin-right: 8px; }
+.icon-btn { all: unset; cursor: pointer; display: grid; place-items: center; width: 42px; height: 42px; border-radius: var(--r-btn); background: var(--raised); border: 1px solid var(--hair); color: var(--ink); font: 700 1rem/1 var(--f-display); flex-shrink: 0; }
+.icon-btn:hover { border-color: var(--accent); }
+.icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- motion ---- */
+.motion { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr); gap: clamp(24px, 4vw, 48px); align-items: center; }
+.motion video { display: block; width: 100%; max-width: 100%; aspect-ratio: 16 / 9; border-radius: var(--r-panel); border: 1px solid var(--hair); background: var(--panel); }
+.motion ul { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.motion li { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 12px; font-size: var(--t-sm); padding-bottom: 10px; border-bottom: 1px solid var(--hair); }
+.motion li b { font: 700 var(--t-sm)/1.35 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink); }
+
+/* ---- install ---- */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; counter-reset: step; }
+.steps li { counter-increment: step; background: var(--panel); border: 1px solid var(--hair); border-radius: var(--r-panel); padding: 22px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.steps li::before { content: counter(step); font: 700 0.85rem/1 var(--f-display); color: var(--accent-ink); background: var(--accent); width: 28px; height: 28px; border-radius: var(--r-btn); display: grid; place-items: center; }
+.steps h3 { font-size: var(--t-lg); text-transform: uppercase; }
+.steps p { font-size: var(--t-sm); }
+
+.code { position: relative; background: #0d0f14; border: 1px solid var(--hair); border-radius: var(--r-card); min-width: 0; }
+.code pre { margin: 0; padding: 14px 78px 14px 16px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 0.82rem/1.65 var(--f-mono); color: #dfe6ef; }
+.code pre .c { color: var(--muted); }
+.code pre .k { color: var(--accent); }
+.code pre .s { color: #9ccf8b; }
+.copy { position: absolute; top: 8px; right: 8px; font: 700 0.68rem/1 var(--f-display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink); background: var(--raised); border: 1px solid var(--hair); border-radius: 6px; padding: 7px 9px; cursor: pointer; }
+.copy:hover { border-color: var(--accent); }
+.copy.done { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.extra { margin-top: 18px; display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 18px; align-items: center; background: var(--panel); border: 1px solid var(--hair); border-radius: var(--r-panel); padding: 22px; }
+.extra h3 { font-size: var(--t-lg); text-transform: uppercase; margin-bottom: 8px; }
+.extra p { font-size: var(--t-sm); }
+
+/* ---- tables ---- */
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 32px; align-items: start; }
+.tbl-title { font-size: var(--t-lg); text-transform: uppercase; margin-bottom: 12px; display: flex; gap: 10px; align-items: baseline; }
+.tbl-title small { font: 500 var(--t-sm)/1 var(--f-body); color: var(--muted); text-transform: none; }
+.scroll { overflow-x: auto; border: 1px solid var(--hair); border-radius: var(--r-card); background: var(--panel); min-width: 0; }
+table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font: 700 0.7rem/1.2 var(--f-display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); background: #0f1116; }
+td code { white-space: nowrap; }
+td.def { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.wide { grid-column: 1 / -1; }
+.note { font-size: var(--t-sm); color: var(--muted); margin-top: 12px; }
+
+.keys { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.keys code { font-size: 0.76rem; }
+
+/* ---- faq ---- */
+.faq { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; }
+.faq div { padding-block: 18px; border-bottom: 1px solid var(--hair); min-width: 0; }
+.faq h3 { font: 700 var(--t-md)/1.35 var(--f-display); letter-spacing: 0.02em; color: var(--ink); text-transform: none; }
+.faq p { font-size: var(--t-md); margin-top: 6px; }
+
+/* ---- changelog ---- */
+.log { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.log div { background: var(--panel); border: 1px solid var(--hair); border-radius: var(--r-panel); padding: 22px; min-width: 0; }
+.log h3 { font-size: var(--t-md); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+.log ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; font-size: var(--t-sm); }
+.log li::marker { color: var(--accent); }
+
+footer { margin-top: clamp(64px, 9vw, 110px); border-top: 1px solid var(--hair); background: var(--panel); }
+footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; padding-block: 28px 34px; font-size: var(--t-sm); color: var(--muted); }
+footer b { font-family: var(--f-display); color: var(--ink); text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* ---- responsive ---- */
+@media (max-width: 980px) {
+  .hero .wrap { grid-template-columns: minmax(0, 1fr); }
+  .stage { padding: 0; display: grid; gap: 14px; }
+  .toast, .cd { position: static; width: 100%; animation: none; }
+  .toast { order: -1; }
+  .facts .wrap { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fact { border-left: 0; padding-left: 0; border-top: 1px solid var(--hair); }
+  .fact:nth-child(-n+2) { border-top: 0; }
+  .cols, .grid2, .faq, .log, .look { grid-template-columns: minmax(0, 1fr); }
+  .cols { gap: 36px; }
+  .motion { grid-template-columns: minmax(0, 1fr); }
+  .steps { grid-template-columns: minmax(0, 1fr); }
+  .extra { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .facts .wrap { grid-template-columns: minmax(0, 1fr); }
+  .fact:nth-child(2) { border-top: 1px solid var(--hair); }
+  .flist li, .motion li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .theme { grid-template-columns: 4.4rem 20px minmax(0, 1fr) 20px minmax(0, 1fr); gap: 7px; }
+  .brand .by { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast, .rows-demo i { animation: none; }
+  .shot button { transition: none; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><b>NewsBroadcaster</b><span class="ver">2.0.0</span></a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#features">Features</a>
+      <a href="#screens">Screens</a>
+      <a href="#install">Install</a>
+      <a href="#commands">Commands</a>
+      <a href="#config">Config</a>
+      <a href="#api">API</a>
+      <a href="#faq">FAQ</a>
+      <a href="#changelog">Changelog</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <p class="eyebrow">Oxide / uMod plugin for Rust</p>
+        <h1>In-game news your players <em>actually read</em></h1>
+        <p class="lead">Post an announcement and everyone online gets a toast. Players read it in a clean popup, vote in polls, watch the wipe countdown and catch up on everything they missed with <code>/news</code>. You run it all from an in-game editor.</p>
+        <div class="ctas">
+          <a class="btn btn-primary" href="#screens">See every screen</a>
+          <a class="btn btn-ghost" href="#install">Install in 3 steps</a>
+        </div>
+        <p class="meta"><span>Version 2.0.0</span><span>by DEDA</span><span>Needs Oxide (uMod)</span></p>
+      </div>
+
+      <div class="stage">
+        <figure class="screen"><img src="shots/thumb_02_popup_image.webp" width="1600" height="900" alt="The NewsBroadcaster popup in game: a wipe announcement with a picture on the left and the text on the right."></figure>
+        <div class="toast" aria-hidden="true">
+          <span class="toast-bar"></span>
+          <div>
+            <div class="toast-kicker">New announcement &nbsp;•&nbsp; <span class="t">Event</span></div>
+            <div class="toast-title">Wipe Day - Fresh Map Is Live</div>
+            <div class="toast-cta">Click to read</div>
+          </div>
+          <span class="toast-x">✕</span>
+        </div>
+        <div class="cd">
+          <div class="cd-card" role="timer" aria-label="Example countdown to the next Thursday 19:00">
+            <span class="cd-label">Wipe in</span>
+            <span class="cd-time" id="cd-time">2 DAYS&nbsp; 04:12:33</span>
+          </div>
+          <p class="cd-note">Live example: a weekly wipe on Thursday at 19:00, in your time.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="facts">
+    <div class="wrap">
+      <div class="fact"><h3>What it needs</h3><p>Oxide (uMod). RP rewards need ServerRewards and currency rewards need Economics.</p></div>
+      <div class="fact"><h3>Drop-in update</h3><p>Your 1.x config, themes, language file and posts carry over on the first load.</p></div>
+      <div class="fact"><h3>Current Rust</h3><p>Built for the November 2026 Rust update and its new file storage.</p></div>
+      <div class="fact"><h3>Tested on every build</h3><p>276 automated checks, and it compiles as C# 6 and C# 7.</p></div>
+    </div>
+  </div>
+
+  <section class="block" id="features">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">Features</p>
+        <h2>One plugin for all your server news</h2>
+        <p>Most of it works with Oxide alone. RP rewards, currency rewards and Notify-style notifications need another plugin; see <a href="#plugins">Plugins it uses</a>.</p>
+      </div>
+
+      <div class="cols">
+        <div>
+          <h3>For players <small>what everyone on the server sees</small></h3>
+          <ul class="flist">
+            <li><b>Toasts and popups</b><span>New posts arrive as a toast in the corner or straight as a popup, with a title, picture, text and a coloured type badge.</span></li>
+            <li><b>The archive</b><span><code>/news</code> lists every post with thumbnails, NEW badges, an unread counter and Mark all read. Players who were offline get one chat reminder.</span></li>
+            <li><b>Filters and search</b><span>Chips for Info, Warning, Alert, Event, Update and Polls, plus a search box that looks through titles and text.</span></li>
+            <li><b>Polls</b><span>Two to four options, one-click voting and live result bars. Players can change their vote until the poll closes.</span></li>
+            <li><b>Countdowns</b><span>A live timer inside the post, such as WIPE IN 2 DAYS 04:12:33, counted by the player's own game.</span></li>
+            <li><b>Likes and rewards</b><span>Pay items, RP (needs ServerRewards) or currency (needs Economics) for reading or liking a post, once per player per post.</span></li>
+            <li><b>Their own settings</b><span><code>/news settings</code> turns off the sound, swaps pop-ups for a chat line, or skips the post shown when joining.</span></li>
+          </ul>
+        </div>
+        <div>
+          <h3>For admins <small>everything happens in game</small></h3>
+          <ul class="flist">
+            <li><b>In-game editor</b><span>Content on the left, settings on the right, a live preview, character counters and a check that warns about image links that won't show.</span></li>
+            <li><b>Drafts and copies</b><span>Save a post as a draft and publish it later, or copy last week's wipe post and change the date.</span></li>
+            <li><b>Posts for one group</b><span>Limit a post to an Oxide group such as VIP or staff. Nobody else sees it, anywhere.</span></li>
+            <li><b>Auto-delete</b><span>Event posts remove themselves 1, 3, 7, 14 or 30 days after publishing.</span></li>
+            <li><b>Timed polls</b><span>Close a poll after 1 hour to 7 days. The result goes to chat and Discord when it closes.</span></li>
+            <li><b>Pin, resend, bulk</b><span>Keep the rules on top in a gold frame, re-notify everyone online, or pin and delete many posts at once.</span></li>
+            <li><b>Discord</b><span>Type-coloured embeds with the picture, an optional role or @here ping, and poll results.</span></li>
+            <li><b>Console and API</b><span>Post, list, publish, resend and delete from RCON, and seven hooks for other plugins.</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="look">
+        <div class="tile">
+          <h3>Rounded, premium UI</h3>
+          <p>Panels, buttons and even pictures get smooth, anti-aliased corners. The plugin draws the corner images in code when the server starts, so no image plugin is needed.</p>
+          <div class="corner-demo" aria-hidden="true"><div class="sq">Plain CUI</div><div class="rd">NewsBroadcaster</div></div>
+        </div>
+        <div class="tile">
+          <h3>Smooth animation</h3>
+          <p>Screens reveal top to bottom, archive rows cascade in and likes pop. The player's game runs every fade, so it costs your server nothing.</p>
+          <div class="rows-demo" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="tile">
+          <h3>Six themes, and yours</h3>
+          <p>Pick one in game or add your own. Colours are Rust CUI strings, red green blue alpha from 0 to 1.</p>
+          <div class="themes">
+            <div class="theme theme-head"><span>Theme</span><span></span><span>Panel</span><span></span><span>Accent</span></div>
+            <div class="theme"><b>Default</b><span class="sw" style="background:#12141a"></span><code>0.07 0.08 0.10 0.97</code><span class="sw" style="background:#5cb5ff"></span><code>0.36 0.71 1.00 0.95</code></div>
+            <div class="theme"><b>Dark</b><span class="sw" style="background:#0a0a0d"></span><code>0.04 0.04 0.05 0.98</code><span class="sw" style="background:#d9d9e0"></span><code>0.85 0.85 0.88 0.95</code></div>
+            <div class="theme"><b>Ocean</b><span class="sw" style="background:#0d171f"></span><code>0.05 0.09 0.12 0.97</code><span class="sw" style="background:#33c7f2"></span><code>0.20 0.78 0.95 0.95</code></div>
+            <div class="theme"><b>Rust</b><span class="sw" style="background:#1a1412"></span><code>0.10 0.08 0.07 0.97</code><span class="sw" style="background:#f2662e"></span><code>0.95 0.40 0.18 0.95</code></div>
+            <div class="theme"><b>Midnight</b><span class="sw" style="background:#0f0d1a"></span><code>0.06 0.05 0.10 0.97</code><span class="sw" style="background:#9e66fa"></span><code>0.62 0.40 0.98 0.95</code></div>
+            <div class="theme"><b>Forest</b><span class="sw" style="background:#0f1712"></span><code>0.06 0.09 0.07 0.97</code><span class="sw" style="background:#66d98c"></span><code>0.40 0.85 0.55 0.95</code></div>
+          </div>
+        </div>
+        <div class="tile">
+          <h3>Six notification spots</h3>
+          <p>Top or bottom, left, centre or right, plus fine X and Y offsets so the toast never covers another plugin's HUD.</p>
+          <div class="pos-demo" aria-hidden="true">
+            <span>Top left</span><span>Top center</span><span class="on">Top right</span>
+            <span class="gap"></span><span class="gap"></span><span class="gap"></span>
+            <span>Bottom left</span><span>Bottom center</span><span>Bottom right</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="head" style="margin-top: 48px; margin-bottom: 14px;">
+        <h3 class="tbl-title" style="margin: 0;">Five announcement types <small>each with its own colour, in game and on Discord</small></h3>
+      </div>
+      <div class="types">
+        <span class="type"><span class="pill" style="background:var(--info)">Info</span><code>Info</code></span>
+        <span class="type"><span class="pill" style="background:var(--warning)">Warning</span><code>Warning</code></span>
+        <span class="type"><span class="pill" style="background:var(--alert)">Alert</span><code>Alert</code></span>
+        <span class="type"><span class="pill" style="background:var(--event)">Event</span><code>Event</code></span>
+        <span class="type"><span class="pill" style="background:var(--update)">Update</span><code>Update</code></span>
+        <span class="type"><span class="pill" style="background:var(--pin); color:#0b0b0b">Pinned</span><code>gold frame</code></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="screens">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">Screens</p>
+        <h2>Every screen, as players see it</h2>
+        <p>Rendered from the plugin itself at 1920 × 1080. Click any screen to see it full size.</p>
+      </div>
+
+      <div class="gal-group">
+        <h3>Players <small>notification, popup, polls, archive, settings</small></h3>
+        <div class="gallery" data-gallery>
+          <figure class="shot"><button type="button" data-full="shots/01_notification.webp"><img src="shots/thumb_01_notification.webp" width="1600" height="900" alt="A new-announcement toast in the top-right corner of the game screen."></button><figcaption><b>Notification</b><span>The toast for a new post. Click it to read.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/02_popup_image.webp"><img src="shots/thumb_02_popup_image.webp" width="1600" height="900" alt="Popup with a picture, title, author line and text."></button><figcaption><b>Popup with a picture</b><span>Title, author, date and text. Long posts scroll.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/13_popup_countdown.webp"><img src="shots/thumb_13_popup_countdown.webp" width="1600" height="900" alt="Popup with a live countdown card reading EVENT STARTS IN 2 DAYS 04:30:10."></button><figcaption><b>Live countdown</b><span>A countdown card above the text, ticking every second.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/10a_popup_poll_vote.webp"><img src="shots/thumb_10a_popup_poll_vote.webp" width="1600" height="900" alt="Poll with four map-size options and CLOSES IN 1D 6H."></button><figcaption><b>Poll</b><span>Click an option to vote. A timed poll shows when it closes.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/10b_popup_poll_results.webp"><img src="shots/thumb_10b_popup_poll_results.webp" width="1600" height="900" alt="Poll results with percentage bars after voting."></button><figcaption><b>Poll results</b><span>Result bars after voting. The vote can still be changed.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/03_popup_text.webp"><img src="shots/thumb_03_popup_text.webp" width="1600" height="900" alt="Popup without a picture, text across the full width."></button><figcaption><b>Text-only popup</b><span>Posts without a picture use the full width.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/04_archive.webp"><img src="shots/thumb_04_archive.webp" width="1600" height="900" alt="Archive with filter chips, search box, NEW and VIP ONLY badges."></button><figcaption><b>Archive</b><span>Thumbnails, NEW badges, filter chips and search.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/11_archive_filtered.webp"><img src="shots/thumb_11_archive_filtered.webp" width="1600" height="900" alt="Archive filtered to events only."></button><figcaption><b>Filtered archive</b><span>The EVENT chip shows events only.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/12_settings.webp"><img src="shots/thumb_12_settings.webp" width="1600" height="900" alt="News settings dialog with three on/off switches."></button><figcaption><b>Player settings</b><span>Sound, pop-ups and the join popup, saved per player.</span></figcaption></figure>
+        </div>
+      </div>
+
+      <div class="gal-group">
+        <h3>Admins <small>News Management, the editor, preview, themes</small></h3>
+        <div class="gallery" data-gallery>
+          <figure class="shot"><button type="button" data-full="shots/05_admin.webp"><img src="shots/thumb_05_admin.webp" width="1600" height="900" alt="News Management list with a draft, PUBLISH, PIN, COPY, EDIT and DEL buttons and a bulk toolbar."></button><figcaption><b>News Management</b><span>Reads, likes and votes per post, drafts, and bulk tools.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/07b_editor_new.webp"><img src="shots/thumb_07b_editor_new.webp" width="1600" height="900" alt="Editor with content on the left and settings on the right, including auto-delete and a countdown."></button><figcaption><b>Editor</b><span>Content on the left, settings on the right.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/07c_editor_poll.webp"><img src="shots/thumb_07c_editor_poll.webp" width="1600" height="900" alt="Editor with four poll options and a poll timer."></button><figcaption><b>Editor with a poll</b><span>Two to four options and a timer that closes the poll.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/07_editor.webp"><img src="shots/thumb_07_editor.webp" width="1600" height="900" alt="Editing a live post, with RE-NOTIFY PLAYERS and SAVE CHANGES."></button><figcaption><b>Editing a live post</b><span>Re-notify players, or just save the changes.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/09_editor_preview.webp"><img src="shots/thumb_09_editor_preview.webp" width="1600" height="900" alt="Preview of a post with a PREVIEW badge and BACK TO EDITOR."></button><figcaption><b>Preview</b><span>The exact popup players will get, before you publish.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/06_delete_confirm.webp"><img src="shots/thumb_06_delete_confirm.webp" width="1600" height="900" alt="Delete confirmation dialog."></button><figcaption><b>Delete confirmation</b><span>Single and bulk deletes always ask first.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/08_themes.webp"><img src="shots/thumb_08_themes.webp" width="1600" height="900" alt="Theme picker with colour swatches."></button><figcaption><b>Themes</b><span>Pick a theme; swatches show its colours.</span></figcaption></figure>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="motion">
+    <div class="wrap motion">
+      <video id="anim" src="media/animations.mp4" poster="shots/04_archive.webp" muted loop playsinline preload="metadata" controls aria-label="Recording of the plugin's screen animations"></video>
+      <div>
+        <p class="eyebrow">Motion</p>
+        <h2 style="font-size: var(--t-2xl); text-transform: uppercase; margin-top: 12px;">Moves like a game menu</h2>
+        <p style="margin-top: 14px;">Rust's client runs every fade itself, so the animation is smooth for players and free for your server.</p>
+        <ul>
+          <li><b>Opening a screen</b><span>The background fades in, then the content builds up top to bottom.</span></li>
+          <li><b>Clicking around</b><span>Filters, pages and buttons redraw instantly. The menu never blinks and the mouse stays where you clicked.</span></li>
+          <li><b>Archive</b><span>Rows cascade in one after another.</span></li>
+          <li><b>Toast</b><span>Fades in, and fades out on its own or when clicked.</span></li>
+          <li><b>Like and vote</b><span>The button pops and result bars fade in. The rest stays still.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="install">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">Install</p>
+        <h2>Up and running in three steps</h2>
+        <p>Works on any Oxide server on the current Rust version. Updating from 1.x is the same: replace the file.</p>
+      </div>
+      <ol class="steps">
+        <li>
+          <h3>Add the file</h3>
+          <p>Put the plugin in your plugins folder. Keep the exact file name: Oxide only loads it when the name matches.</p>
+          <div class="code"><pre>oxide/plugins/NewsBroadcaster.cs</pre><button class="copy" type="button">Copy</button></div>
+        </li>
+        <li>
+          <h3>Give permissions</h3>
+          <p>Everyone can read the news; you get the admin panel. Use your 17-digit SteamID.</p>
+          <div class="code"><pre>oxide.grant group default newsbroadcaster.view
+oxide.grant user &lt;SteamID&gt; newsbroadcaster.admin</pre><button class="copy" type="button">Copy</button></div>
+        </li>
+        <li>
+          <h3>Post your first news</h3>
+          <p>Open the admin panel in game, press NEW ANNOUNCEMENT, write your post and press PUBLISH.</p>
+          <div class="code"><pre>/news admin</pre><button class="copy" type="button">Copy</button></div>
+        </li>
+      </ol>
+      <div class="extra">
+        <div>
+          <h3>Posts for VIPs only</h3>
+          <p>Create the group, add players, then pick <b>VIP ONLY</b> under WHO CAN SEE IT in the editor.</p>
+        </div>
+        <div class="code"><pre>oxide.group add vip
+oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">Copy</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="commands">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">Commands</p>
+        <h2>Chat, console and RCON</h2>
+        <p>Console commands take the list index from <code>news.list</code> (0 is the newest) or a post's id.</p>
+      </div>
+      <div class="grid2">
+        <div>
+          <h3 class="tbl-title">Chat</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Command</th><th>Who</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>/news</code></td><td>Players</td><td>Open the news archive</td></tr>
+              <tr><td><code>/news latest</code></td><td>Players</td><td>Open the newest post</td></tr>
+              <tr><td><code>/news read</code></td><td>Players</td><td>Mark everything as read</td></tr>
+              <tr><td><code>/news settings</code></td><td>Players</td><td>Sound, pop-up and join settings</td></tr>
+              <tr><td><code>/news help</code></td><td>Everyone</td><td>List the commands</td></tr>
+              <tr><td><code>/news admin</code></td><td>Admins</td><td>Open News Management</td></tr>
+            </tbody>
+          </table></div>
+          <h3 class="tbl-title" style="margin-top: 28px;">Permissions</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Permission</th><th>What it allows</th></tr></thead>
+            <tbody>
+              <tr><td><code>newsbroadcaster.view</code></td><td>See news: archive, popups and toasts. Not needed when <code>RequireViewPermission</code> is false.</td></tr>
+              <tr><td><code>newsbroadcaster.admin</code></td><td>Create, edit, publish, pin, resend and delete posts, and change the theme.</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div>
+          <h3 class="tbl-title">Console / RCON</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>news.show "Title" "Image" "Text" [Type]</code></td><td>Post an announcement</td></tr>
+              <tr><td><code>news.poll "Title" "Text" "A|B|C" [Type]</code></td><td>Post an announcement with a poll</td></tr>
+              <tr><td><code>news.list</code></td><td>List posts with index, id, reads and likes</td></tr>
+              <tr><td><code>news.publish &lt;index|id&gt;</code></td><td>Publish a draft</td></tr>
+              <tr><td><code>news.resend &lt;index|id&gt;</code></td><td>Notify everyone online again</td></tr>
+              <tr><td><code>news.delete &lt;index|id&gt;</code></td><td>Delete a post</td></tr>
+              <tr><td><code>news.trigger &lt;player&gt; [index]</code></td><td>Show a popup to one player</td></tr>
+              <tr><td><code>news.admin</code></td><td>Open the admin panel in game</td></tr>
+            </tbody>
+          </table></div>
+          <div class="code" style="margin-top: 16px;"><pre><span class="k">news.show</span> <span class="s">"Server Update"</span> <span class="s">"https://i.imgur.com/abc123.png"</span> <span class="s">"The server has been updated!"</span> Update
+<span class="k">news.show</span> <span class="s">"Alert!"</span> <span class="s">"-"</span> <span class="s">"PvP zone closing in 10 minutes."</span> Alert
+<span class="k">news.poll</span> <span class="s">"Map size"</span> <span class="s">"Pick the next map"</span> <span class="s">"3500|4250|4500"</span> Event</pre><button class="copy" type="button">Copy</button></div>
+          <p class="note">Use <code>"-"</code> for no image and <code>\n</code> for a new line. The type is read only when it is the last, unquoted word.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="config">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">Configuration</p>
+        <h2>Options you can change</h2>
+        <p>Edit <code>oxide/config/NewsBroadcaster.json</code>, then run <code>oxide.reload NewsBroadcaster</code>. Updating from an older version keeps your values and themes; new options appear with their defaults.</p>
+      </div>
+      <div class="grid2">
+        <div>
+          <h3 class="tbl-title">General</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>ShowNewsOnConnect</code></td><td class="def">true</td><td>Show the newest unseen post when a player wakes up</td></tr>
+              <tr><td><code>UnreadReminderOnConnect</code></td><td class="def">true</td><td>One chat line about posts missed since the last visit</td></tr>
+              <tr><td><code>RequireViewPermission</code></td><td class="def">true</td><td>false lets everyone see news</td></tr>
+              <tr><td><code>AutoCloseSeconds</code></td><td class="def">15</td><td>Broadcast popups close after this, with a live countdown</td></tr>
+              <tr><td><code>AnnouncementsPerPage</code></td><td class="def">5</td><td>Rows per archive and admin page (1 to 8)</td></tr>
+              <tr><td><code>MaxStoredAnnouncements</code></td><td class="def">50</td><td>Oldest posts go first; pinned posts and drafts are kept</td></tr>
+              <tr><td><code>StripLinksFromBody</code></td><td class="def">true</td><td>Remove links from new post bodies</td></tr>
+              <tr><td><code>PopupImageFrame</code></td><td class="def">"Tall"</td><td>"Wide" uses a 16:9 frame for widescreen pictures</td></tr>
+              <tr><td><code>ArchiveThumbnails</code></td><td class="def">true</td><td>Picture thumbnails in the archive</td></tr>
+              <tr><td><code>RoundedCorners</code></td><td class="def">true</td><td>false draws the classic square corners</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div>
+          <h3 class="tbl-title">Notification</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>Enabled</code></td><td class="def">true</td><td>Toast for new posts; false opens the popup directly</td></tr>
+              <tr><td><code>Position</code></td><td class="def">"TopRight"</td><td>TopRight, TopLeft, TopCenter, BottomRight, BottomLeft or BottomCenter</td></tr>
+              <tr><td><code>OffsetX</code> / <code>OffsetY</code></td><td class="def">0</td><td>Nudge the toast, in 1280 × 720 reference units</td></tr>
+              <tr><td><code>Duration</code></td><td class="def">8</td><td>Seconds the toast stays</td></tr>
+              <tr><td><code>NotificationSound</code></td><td class="def">loot.drag</td><td>Sound prefab, heard only by the receiving player</td></tr>
+              <tr><td><code>UseNotifyPlugin</code></td><td class="def">false</td><td>Send it through the Notify plugin instead</td></tr>
+            </tbody>
+          </table></div>
+          <h3 class="tbl-title" style="margin-top: 28px;">Polls</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>AllowVoteChange</code></td><td class="def">true</td><td>Players can switch their vote</td></tr>
+              <tr><td><code>ShowResultsBeforeVoting</code></td><td class="def">false</td><td>Show the bars before a player votes</td></tr>
+              <tr><td><code>AnnounceResults</code></td><td class="def">true</td><td>Result in chat and on Discord when a poll closes</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div>
+          <h3 class="tbl-title">Discord</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>Enabled</code> / <code>WebhookUrl</code></td><td class="def">false / ""</td><td>Post new announcements to a channel webhook</td></tr>
+              <tr><td><code>BotName</code> / <code>AvatarUrl</code></td><td class="def">"Server News"</td><td>How the webhook appears</td></tr>
+              <tr><td><code>RoleMention</code></td><td class="def">""</td><td>A role, @here or @everyone ping above the embed</td></tr>
+              <tr><td><code>PostGroupOnlyPosts</code></td><td class="def">false</td><td>Also post announcements meant for one group</td></tr>
+              <tr><td><code>PostPollResults</code></td><td class="def">true</td><td>Post the result when a poll closes</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div>
+          <h3 class="tbl-title">Rewards <small>items, RP and currency</small></h3>
+          <p style="font-size: var(--t-sm); margin-bottom: 12px;">One bundle for reading a post (popup open for <code>ReadDelaySeconds</code>) and one for liking it. Each pays at most once per player per post, and can mix items (any shortname, optional skin), ServerRewards points and Economics currency.</p>
+          <div class="code"><pre>"EnableReadReward": true,
+"ReadDelaySeconds": 5,
+"ReadRewards": {
+  "Items":    [ { "Shortname": "scrap", "Amount": 5, "SkinId": 0 } ],
+  "Points":   25,
+  "Currency": 100.0
+}</pre><button class="copy" type="button">Copy</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="api">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">API</p>
+        <h2>Hooks for other plugins</h2>
+        <p>Every hook gets a plain <code>Dictionary&lt;string, object&gt;</code>, so your plugin doesn't need NewsBroadcaster's classes.</p>
+      </div>
+      <div class="grid2">
+        <div>
+          <div class="scroll"><table>
+            <thead><tr><th>Hook</th><th>When it fires</th></tr></thead>
+            <tbody>
+              <tr><td><code>OnNewsBroadcast(ann)</code></td><td>A post goes live (console, editor or a published draft)</td></tr>
+              <tr><td><code>OnNewsEdited(ann)</code></td><td>A post is edited, pinned or unpinned</td></tr>
+              <tr><td><code>OnNewsDeleted(ann)</code></td><td>Deleted, trimmed, or auto-deleted</td></tr>
+              <tr><td><code>OnNewsRead(player, ann)</code></td><td>A player reads a post for the first time</td></tr>
+              <tr><td><code>OnNewsLiked(player, ann, added)</code></td><td>A like or an un-like</td></tr>
+              <tr><td><code>OnNewsPollVote(player, ann, option)</code></td><td>A vote, with the 0-based option</td></tr>
+              <tr><td><code>OnNewsPollClosed(ann)</code></td><td>A poll closes by its timer or by an admin</td></tr>
+            </tbody>
+          </table></div>
+          <p class="note">Payload keys</p>
+          <div class="keys"><code>id</code><code>title</code><code>author</code><code>type</code><code>timestamp</code><code>date</code><code>text</code><code>imageUrl</code><code>likes</code><code>pinned</code><code>pollOptions</code><code>pollVotes</code><code>group</code><code>expiresAt</code><code>pollEndsAt</code><code>countdownTo</code></div>
+        </div>
+        <div class="code"><pre><span class="k">void</span> OnNewsBroadcast(Dictionary&lt;<span class="k">string</span>, <span class="k">object</span>&gt; ann)
+{
+    Puts($<span class="s">"[News] {ann["author"]} posted '{ann["title"]}' ({ann["type"]})"</span>);
+}
+
+<span class="k">void</span> OnNewsPollClosed(Dictionary&lt;<span class="k">string</span>, <span class="k">object</span>&gt; ann)
+{
+    <span class="c">// options and total votes travel with every payload</span>
+    <span class="k">var</span> options = (<span class="k">string</span>[])ann[<span class="s">"pollOptions"</span>];
+    Puts($<span class="s">"Poll '{ann["title"]}' closed with {ann["pollVotes"]} votes"</span>);
+}</pre><button class="copy" type="button">Copy</button></div>
+      </div>
+
+      <h3 class="tbl-title" id="plugins" style="margin-top: 40px;">Plugins it uses <small>what each one is needed for</small></h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Plugin</th><th>When you need it</th></tr></thead>
+        <tbody>
+          <tr><td><a href="https://umod.org/games/rust">Oxide (uMod)</a></td><td>Always. NewsBroadcaster is an Oxide plugin.</td></tr>
+          <tr><td><a href="https://umod.org/plugins/server-rewards">ServerRewards</a></td><td>For RP rewards (<code>Points</code> in the read or like reward)</td></tr>
+          <tr><td><a href="https://umod.org/plugins/economics">Economics</a></td><td>For currency rewards (<code>Currency</code> in the read or like reward)</td></tr>
+          <tr><td><a href="https://umod.org/plugins/notify">Notify</a></td><td>Only with <code>UseNotifyPlugin</code> on. Otherwise the plugin's own toast is used.</td></tr>
+          <tr><td><a href="https://umod.org/plugins/image-library">ImageLibrary</a></td><td>Not required. It caches post pictures so they load faster.</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">A reward that includes RP or currency isn't paid while its plugin is missing; the server console says why. Everything else, including rounded corners, polls, countdowns and Discord, needs only Oxide.</p>
+    </div>
+  </section>
+
+  <section class="block" id="faq">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">FAQ</p>
+        <h2>Questions server owners ask</h2>
+      </div>
+      <div class="faq">
+        <div><h3>Which other plugins do I need?</h3><p>Only Oxide to run it. Add ServerRewards for RP rewards, Economics for currency rewards and Notify for Notify-style notifications. ImageLibrary is optional and only makes pictures load faster.</p></div>
+        <div><h3>Do I need another plugin for the rounded corners?</h3><p>No. NewsBroadcaster draws the corner images itself when the server starts. ImageLibrary is optional and only caches post pictures.</p></div>
+        <div><h3>Will my old posts and config survive the update?</h3><p>Yes. Config, themes, the language file and posts from 1.x load as they are, and new options are added with their defaults.</p></div>
+        <div><h3>Why doesn't my picture show in game?</h3><p>Rust needs a direct link to a PNG or JPG. The editor warns about imgur pages, Discord links, which stop working after about a day, and GIFs.</p></div>
+        <div><h3>How do I make a post only VIPs can see?</h3><p>Create the group with <code>oxide.group add vip</code>, add players with <code>oxide.usergroup add</code>, then pick VIP ONLY under WHO CAN SEE IT.</p></div>
+        <div><h3>Can players turn the notifications off?</h3><p>Yes, with <code>/news settings</code>: the sound, the pop-ups (they get a chat line instead) and the post shown when joining.</p></div>
+        <div><h3>Does it work after the November 2026 Rust update?</h3><p>Yes. 2.0.0 uses the new file storage that update introduced, so it compiles and loads on current servers.</p></div>
+        <div><h3>Can I schedule a post for later?</h3><p>Save it as a draft and press PUBLISH when it's time, from News Management or with <code>news.publish</code> over RCON.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="changelog">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">Changelog</p>
+        <h2>What's new in 2.0.0</h2>
+        <p>A big update of 1.2.0. Replace the file; everything you have carries over.</p>
+      </div>
+      <div class="log">
+        <div>
+          <h3>A premium new look</h3>
+          <ul>
+            <li>Rounded, anti-aliased corners on panels, buttons and pictures</li>
+            <li>Soft layered shadows, a blurred background and a glass highlight</li>
+            <li>Article-style popup; long titles shrink to fit</li>
+            <li>Smooth client-side animations on every screen</li>
+          </ul>
+        </div>
+        <div>
+          <h3>New for players</h3>
+          <ul>
+            <li>Polls with live results, a timer and announced winners</li>
+            <li>Unread tracking, NEW badges and Mark all read</li>
+            <li>Archive filters, search and thumbnails</li>
+            <li>Event countdowns, prev / next navigation and <code>/news settings</code></li>
+          </ul>
+        </div>
+        <div>
+          <h3>New for admins</h3>
+          <ul>
+            <li>Two-column editor with preview, counters and an image link check</li>
+            <li>Drafts, copy post, posts for one group and auto-delete</li>
+            <li>RESEND, bulk pin and delete, a theme picker with swatches</li>
+            <li>Six notification positions, Discord poll results, <code>OnNewsPollClosed</code></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Fixes</h3>
+          <ul>
+            <li>Clicking a button made the menu blink and the mouse jump to the centre; now it stays put</li>
+            <li>Long titles were cut off at the top of the popup</li>
+            <li>The notification sound played for everyone nearby; now only the player hears it</li>
+            <li>ServerRewards points failed on current Rust builds</li>
+            <li>Layout broke on servers whose language uses a decimal comma</li>
+            <li>Pinned posts could be removed by the storage limit</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><b>NewsBroadcaster</b> 2.0.0 by DEDA</span>
+    <span>Oxide / uMod plugin for Rust</span>
+  </div>
+</footer>
+
+<dialog class="lightbox" id="lightbox" aria-label="Screenshot">
+  <div class="lb-frame"><img id="lb-img" src="" alt=""></div>
+  <div class="lb-bar">
+    <button class="icon-btn" type="button" id="lb-prev" aria-label="Previous screen">‹</button>
+    <p id="lb-cap"></p>
+    <button class="icon-btn" type="button" id="lb-next" aria-label="Next screen">›</button>
+    <button class="icon-btn" type="button" id="lb-close" aria-label="Close">✕</button>
+  </div>
+</dialog>
+
+<script>
+(function () {
+  // Live example countdown: the next Thursday 19:00 in the viewer's time, drawn like the in-game card.
+  var timeEl = document.getElementById('cd-time');
+  function nextWipe(now) {
+    var t = new Date(now.getTime());
+    t.setHours(19, 0, 0, 0);
+    t.setDate(t.getDate() + ((4 - t.getDay() + 7) % 7));
+    if (t <= now) t.setDate(t.getDate() + 7);
+    return t;
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function tick() {
+    var now = new Date();
+    var s = Math.max(0, Math.floor((nextWipe(now) - now) / 1000));
+    var d = Math.floor(s / 86400); s %= 86400;
+    var text = (d === 0 ? '' : d === 1 ? '1 DAY  ' : d + ' DAYS  ') + pad(Math.floor(s / 3600)) + ':' + pad(Math.floor(s / 60) % 60) + ':' + pad(s % 60);
+    if (timeEl) timeEl.textContent = text;
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  // Copy buttons: copy the code block's text.
+  document.querySelectorAll('.code').forEach(function (block) {
+    var btn = block.querySelector('.copy');
+    var pre = block.querySelector('pre');
+    if (!btn || !pre) return;
+    btn.addEventListener('click', function () {
+      var text = pre.innerText;
+      function done() { btn.textContent = 'Copied'; btn.classList.add('done'); setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1600); }
+      function fallback() {
+        var range = document.createRange(); range.selectNodeContents(pre);
+        var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+        btn.textContent = 'Selected';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+        else fallback();
+      } catch (e) { fallback(); }
+    });
+  });
+
+  // Screenshot lightbox with previous / next.
+  var shots = Array.prototype.slice.call(document.querySelectorAll('.shot'));
+  var dlg = document.getElementById('lightbox');
+  var img = document.getElementById('lb-img');
+  var cap = document.getElementById('lb-cap');
+  var current = 0;
+  function show(i) {
+    current = (i + shots.length) % shots.length;
+    var fig = shots[current];
+    var btn = fig.querySelector('button');
+    var im = fig.querySelector('img');
+    img.src = (btn && btn.dataset.full) || im.getAttribute('src');
+    img.alt = im.alt;
+    var title = fig.querySelector('figcaption b').textContent;
+    var line = fig.querySelector('figcaption span').textContent;
+    cap.innerHTML = '';
+    var b = document.createElement('b'); b.textContent = title;
+    cap.appendChild(b); cap.appendChild(document.createTextNode(line));
+  }
+  function open(i) {
+    show(i);
+    if (typeof dlg.showModal === 'function') { try { dlg.showModal(); return; } catch (e) {} }
+    dlg.setAttribute('open', '');
+  }
+  function close() { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
+  shots.forEach(function (fig, i) { fig.querySelector('button').addEventListener('click', function () { open(i); }); });
+  document.getElementById('lb-prev').addEventListener('click', function () { show(current - 1); });
+  document.getElementById('lb-next').addEventListener('click', function () { show(current + 1); });
+  document.getElementById('lb-close').addEventListener('click', close);
+  dlg.addEventListener('click', function (e) { if (e.target === dlg) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (!dlg.open) return;
+    if (e.key === 'ArrowLeft') show(current - 1);
+    else if (e.key === 'ArrowRight') show(current + 1);
+  });
+
+  // The recording plays by itself unless the viewer prefers less motion.
+  var video = document.getElementById('anim');
+  var calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (video && !calm) {
+    video.autoplay = true;
+    var p = video.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+})();
+</script>
+</body>
+</html>

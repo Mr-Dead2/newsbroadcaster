@@ -11,7 +11,7 @@
 
 NewsBroadcaster is a Rust server plugin that lets admins post rich in-game news announcements with a modern CUI (Client UI). Announcements have a title, an optional image, body text and a coloured type badge. Players get a notification toast when news is posted and can browse the archive at any time with `/news`.
 
-Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party notification style), **ServerRewards** / **Economics** (read & like rewards) and **Discord webhooks**.
+Requires **Oxide (uMod)**. Other plugins are only needed for the features that use them: **ServerRewards** for RP rewards, **Economics** for currency rewards and **Notify** if `UseNotifyPlugin` is on. **ImageLibrary** is optional (it caches post pictures). Discord posts only need a webhook URL. See [Requirements](#requirements).
 
 ---
 
@@ -75,14 +75,17 @@ Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party
 
 ---
 
-## Dependencies
+## Requirements
 
-| Plugin | Required | Purpose |
+| Plugin | Needed | What for |
 |---|---|---|
-| ImageLibrary | Optional | Cache remote images for faster display |
-| Notify | Optional | Use a third-party notification popup style |
-| ServerRewards | Optional | Grant RP (reward points) on read / like |
-| Economics | Optional | Grant currency on read / like |
+| Oxide (uMod) | **Always** | NewsBroadcaster is an Oxide plugin |
+| ServerRewards | For RP rewards | Pays `Points` in the read / like rewards |
+| Economics | For currency rewards | Pays `Currency` in the read / like rewards |
+| Notify | Only with `UseNotifyPlugin: true` | Shows the new-post notification in Notify's style. If Notify isn't loaded, the plugin's own toast is shown |
+| ImageLibrary | No | If installed, post pictures are cached through it so they load faster; otherwise the game loads the image link directly |
+
+A reward that includes `Points` or `Currency` isn't paid while its plugin is missing, including any items in the same reward. The console prints a warning, and the reward isn't marked as paid, so it can still be paid after you install the plugin. Item rewards, polls, countdowns, rounded corners and Discord webhooks need nothing but Oxide.
 
 ---
 
