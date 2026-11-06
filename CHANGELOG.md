@@ -33,6 +33,7 @@
 - The 6th theme button spilled outside the theme panel.
 - The notification sound played at the player's position for everyone nearby; it is now private.
 - ServerRewards points failed to pay on current Rust builds (wrapped player id).
+- Compiles on the November 2026 Rust update (new `FileStorage` API for the rounded-corner images, `StringView` console arguments).
 - `/n` broke normal words such as `w/new`.
 - An admin's editor was replaced by a forced popup when news was posted.
 - Players saw a post again as a popup after respawning even though they had already got it live.

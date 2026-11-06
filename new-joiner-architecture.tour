@@ -104,25 +104,25 @@
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 2632,
+      "line": 2635,
       "title": "CUI Is Built Fresh, Every Time",
       "description": "`ShowPopup` is representative: tear down (`DestroyUI`), then build a `CuiElementContainer` with hand-computed anchors — always via `Anchor()`/`F()` so floats are culture-invariant.\n\nTwo exceptions avoid rebuilds: `AddLikeButton` (line 2614) swaps just the heart and `AddPollBlock` (line 2860) just the poll so the reader keeps their scroll position, and editor text input doesn't rebuild the editor so fields keep focus.\n\n`PopupOrigin` decides the footer button (archive / back to archive / back to editor), auto-close (broadcasts only) and read tracking (never for previews).\n\nStyle helpers: `AddSurface` (line 2509) builds rounded cards/buttons from corner textures generated in `GenerateCornerTextures` (line 2340); plus `AddPill`, `AddPrimaryButton`, `AddGhostButton`, `AddPanelShadow`, `AddCornerMasks`, `AddBackdrop` — reuse them so new screens match.\n\nAnimation: every view starts with `OpenScreen` (line 2286) and ends with `ApplyFadeRamp` (line 2300), which gives each element a FadeIn that grows with its position in the container, so screens reveal top-to-bottom. Redraws of the same admin screen pass 0 and are instant."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3190,
+      "line": 3193,
       "title": "Admin Screens",
       "description": "`ShowAdminList` (rows with RESEND / PIN / EDIT / DEL and bulk selection), `ShowEditor` (line 3434: type chips, option toggles incl. ADD POLL, poll option fields, preview) and `ShowThemeSelection` share the same admin colours (`AdminSurface`, `AdminSurfaceRaised`, …). Admin button commands get the caller through `AdminPlayer(arg)`, which returns null for non-admins."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3779,
+      "line": 3782,
       "title": "Rewards: Optional Plugins, Once Per Player",
       "description": "`GiveRewards` creates items directly (dropping them at the player's feet when the inventory is full), adds ServerRewards points with a plain `ulong` id (newer Rust wraps `userID`, which ServerRewards can't read), and deposits Economics currency.\n\n`CanGrantRewardBundle` checks everything first; if a needed plugin is missing nothing is paid and nothing is recorded, so the reward can be paid later."
     },
     {
       "file": "NewsBroadcaster.cs",
-      "line": 3897,
+      "line": 3900,
       "title": "Discord Is Fire-and-Forget",
       "description": "`SendToDiscord` is a no-op unless the webhook is configured. `webrequest.Enqueue` posts asynchronously and only logs failures — a bad webhook never breaks a broadcast. `allowed_mentions` lets only the configured `RoleMention` ping (`@everyone`/`@here` are allowed only when that setting contains them)."
     },

@@ -152,4 +152,5 @@ See `CHANGELOG.md` for the full list. Highlights:
 - Better editor (type chips, pin / notify / Discord / poll toggles, live preview) and RESEND
 - Popup navigation, live auto-close countdown, archive thumbnails
 - Many fixes (cut-off titles, theme overflow, private sound, ServerRewards on current Rust, comma-locale servers)
+- Built for the November 2026 Rust update
 - Drop-in update: config, themes and posts carry over

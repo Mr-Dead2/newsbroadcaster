@@ -38,20 +38,26 @@ public struct NetworkableId
 }
 
 // Server-side file store used for CUI images (ImageLibrary stores its pictures here too).
+// Mirrors the API from the November 2026 Rust update, which replaced Store(data, type, entityID[, numID])
+// with StoreByCrc(entityId, type, data); the old 3-argument Store call no longer compiles on a server.
 public class FileStorage
 {
     public enum Type { png, jpg, ogg }
     public static FileStorage server = new FileStorage();
     public readonly Dictionary<uint, byte[]> Files = new Dictionary<uint, byte[]>();
 
-    public uint Store(byte[] data, Type type, NetworkableId entityID, uint numID = 0u)
+    public uint StoreByCrc(NetworkableId entityId, Type type, byte[] data)
     {
-        uint crc = Crc32(data);
+        uint crc = ComputeCrc(data);
         Files[crc] = data;
         return crc;
     }
 
-    public byte[] Get(uint crc, Type type, NetworkableId entityID, uint numID = 0u) => Files.TryGetValue(crc, out var d) ? d : null;
+    public byte[] Get(NetworkableId entityId, uint part, uint crc) => Files.TryGetValue(crc, out var d) ? d : null;
+
+    public void Remove(NetworkableId entityId, uint part) => Files.Remove(part);
+
+    public static uint ComputeCrc(byte[] data) => Crc32(data);
 
     private static uint Crc32(byte[] data)
     {

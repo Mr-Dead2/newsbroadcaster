@@ -2350,8 +2350,11 @@ namespace Oxide.Plugins
                 var mask = new string[4];
                 for (int corner = 0; corner < 4; corner++)
                 {
-                    fill[corner] = FileStorage.server.Store(BuildCornerPng(corner, false), FileStorage.Type.png, entity.net.ID).ToString();
-                    mask[corner] = FileStorage.server.Store(BuildCornerPng(corner, true), FileStorage.Type.png, entity.net.ID).ToString();
+                    // Rust (Nov 2026+) API: StoreByCrc(entity id, type, bytes) returns the CRC used as the CUI Png id.
+                    uint fillId = FileStorage.server.StoreByCrc(entity.net.ID, FileStorage.Type.png, BuildCornerPng(corner, false));
+                    uint maskId = FileStorage.server.StoreByCrc(entity.net.ID, FileStorage.Type.png, BuildCornerPng(corner, true));
+                    fill[corner] = fillId.ToString();
+                    mask[corner] = maskId.ToString();
                 }
                 cornerFill = fill;
                 cornerMask = mask;
