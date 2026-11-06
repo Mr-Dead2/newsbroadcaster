@@ -54,6 +54,7 @@ Everything lives in `public class NewsBroadcaster : RustPlugin` inside `namespac
 - **Optional integrations** are `[PluginReference] private Plugin ImageLibrary, Notify, ServerRewards, Economics;` — always null-check and `IsLoaded`-check; the plugin must work without them.
 - **API hooks** fired via `Interface.CallHook`: `OnNewsBroadcast`, `OnNewsEdited`, `OnNewsDeleted`, `OnNewsRead`, `OnNewsLiked`, `OnNewsPollVote`, with payloads from `BuildHookData(ann)`. These are a documented public contract — don't rename or drop keys.
 - **Per-player cleanup**: every SteamID-keyed collection must be cleared in `OnPlayerDisconnected` and `Unload` (the test suite checks this by name; add new collections to that test).
+- **`ConsoleSystem.Arg.FullString` is a `StringView` on current Rust**, not a string: always write `arg.FullString.ToString()` (never `arg.FullString ?? ...`). The stub mirrors this.
 - **Oxide sandbox / compatibility**: stay within C# 6/7 features and .NET Framework 4.x APIs; no `System.IO`, `System.Net`, `System.Reflection` or threading. Only `Oxide.*`, `UnityEngine`, `Newtonsoft.Json` and the game assemblies are available.
 - **Version** lives in `[Info("NewsBroadcaster", "DEDA", "x.y.z")]`; bump it and the version in `PLUGIN_DOCS.md` together.
 

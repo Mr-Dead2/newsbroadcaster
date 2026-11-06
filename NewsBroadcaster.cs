@@ -1247,7 +1247,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            string fullCommand = arg.FullString ?? string.Empty;
+            string fullCommand = arg.FullString.ToString() ?? string.Empty;
             var rawMatches = CommandSplitRegex.Matches(fullCommand).Cast<Match>().ToList();
             var values = rawMatches.Select(m => m.Value.Trim('"')).ToList();
 
@@ -1292,7 +1292,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            var rawMatches = CommandSplitRegex.Matches(arg.FullString ?? string.Empty).Cast<Match>().ToList();
+            var rawMatches = CommandSplitRegex.Matches(arg.FullString.ToString() ?? string.Empty).Cast<Match>().ToList();
             var values = rawMatches.Select(m => m.Value.Trim('"')).ToList();
             if (values.Count < 3)
             {
@@ -1969,7 +1969,7 @@ namespace Oxide.Plugins
 
             string field = arg.GetString(0).ToLowerInvariant();
 
-            string fullStr = arg.FullString ?? string.Empty;
+            string fullStr = arg.FullString.ToString() ?? string.Empty;
             string value;
             if (fullStr.StartsWith(field, StringComparison.OrdinalIgnoreCase))
             {

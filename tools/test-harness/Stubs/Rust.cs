@@ -258,6 +258,16 @@ public static class EffectNetwork
         => Sim.Log($"[effect -> {target?.username}] {effect.pooledString}");
 }
 
+// Facepunch's lightweight string slice (ConsoleSystem.Arg.FullString). Deliberately no implicit
+// conversion to string, so "arg.FullString ?? ..." or passing it as a string fails here like on a real server.
+public struct StringView
+{
+    private readonly string value;
+    public StringView(string value) { this.value = value ?? string.Empty; }
+    public int Length => (value ?? string.Empty).Length;
+    public override string ToString() => value ?? string.Empty;
+}
+
 public class ConsoleSystem
 {
     public class Arg
@@ -276,7 +286,8 @@ public class ConsoleSystem
             IsRcon = rcon;
         }
 
-        public string FullString => fullString;
+        // Current Rust returns a StringView here, not a string: only .ToString() works on it.
+        public StringView FullString => new StringView(fullString);
         public bool IsAdmin => Connection == null || Connection.authLevel > 0;
         public bool IsServerside => true;
         public bool IsClientside => false;
