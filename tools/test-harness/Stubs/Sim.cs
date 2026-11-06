@@ -16,6 +16,9 @@ namespace HarnessRuntime
             public readonly List<JObject> Elements = new List<JObject>();   // live elements in creation order
             public readonly List<string> Warnings = new List<string>();
             public int AddCalls, DestroyCalls;
+            // How often the mouse cursor was grabbed afresh: Rust recentres the cursor each time an element
+            // with NeedsCursor appears while no other one is open (what players see as the mouse "jumping").
+            public int CursorGrabs;
         }
 
         public static readonly JsonSerializerSettings OxideJsonSettings = new JsonSerializerSettings();
@@ -84,6 +87,9 @@ namespace HarnessRuntime
                 var raw = ((JArray)el["components"])?.OfType<JObject>().FirstOrDefault(c => (string)c["type"] == "UnityEngine.UI.RawImage");
                 if (raw != null && uint.TryParse((string)raw["png"], out var png) && FileStorage.server.Files.ContainsKey(png) && Alpha((string)raw["color"]) < 0.999f)
                     ui.Warnings.Add($"translucent corner piece '{name}' (colour '{(string)raw["color"]}'): blend it onto the surface below so it is opaque");
+                bool wantsCursor = ((JArray)el["components"])?.OfType<JObject>().Any(c => (string)c["type"] == "NeedsCursor") == true;
+                if (wantsCursor && !ui.Elements.Any(e => ((JArray)e["components"])?.OfType<JObject>().Any(c => (string)c["type"] == "NeedsCursor") == true))
+                    ui.CursorGrabs++;
                 el["name"] = name;
                 el["parent"] = parent;
                 el["__id"] = ++ElementIds;
