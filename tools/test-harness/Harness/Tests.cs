@@ -42,6 +42,31 @@ static class Tests
     static string LastChat(BasePlayer p) => H.ChatOf(p).LastOrDefault() ?? "";
     static List<string> CuiWarnings() => Sim.Clients.Values.SelectMany(c => c.Warnings).ToList();
     static object Ann0 => H.Ann(0);
+    static float Alpha(string rgba)
+    {
+        var p = (rgba ?? "1 1 1 1").Trim().Split(' ');
+        return p.Length >= 4 ? float.Parse(p[3], System.Globalization.CultureInfo.InvariantCulture) : 1f;
+    }
+
+    // Decodes the plugin's PNGs (8-bit RGBA, filter 0, zlib) back to raw pixels.
+    static byte[] DecodePng(byte[] png, out int width, out int height)
+    {
+        int Be(int o) => (png[o] << 24) | (png[o + 1] << 16) | (png[o + 2] << 8) | png[o + 3];
+        width = Be(16); height = Be(20);
+        var idat = new System.IO.MemoryStream();
+        for (int o = 8; o < png.Length;)
+        {
+            int len = Be(o); string type = System.Text.Encoding.ASCII.GetString(png, o + 4, 4);
+            if (type == "IDAT") idat.Write(png, o + 8, len);
+            o += 12 + len;
+        }
+        idat.Position = 0;
+        var raw = new System.IO.MemoryStream();
+        using (var z = new System.IO.Compression.ZLibStream(idat, System.IO.Compression.CompressionMode.Decompress)) z.CopyTo(raw);
+        var bytes = raw.ToArray(); var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++) Array.Copy(bytes, y * (width * 4 + 1) + 1, rgba, y * width * 4, width * 4);
+        return rgba;
+    }
     static HashSet<ulong> Set(object ann, string f) => (HashSet<ulong>)H.AGet(ann, f);
 
     static void Post(string title, string text = "Body text", string type = "Info", string img = "-")
@@ -608,7 +633,31 @@ static class Tests
         Post("Round", "x", "Info", "https://img.example/wipe-day.png");
         H.Console(player, $"news.view {H.Id(Ann0)}");
         var cornerPieces = H.Live(player).Where(e => e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.RawImage" && cornerIds.Contains((string)cc["png"]))).ToList();
-        Check(cornerPieces.Count >= 40 && cornerPieces.Count % 4 == 0, $"popup uses rounded corner pieces ({cornerPieces.Count})");
+        Check(cornerPieces.Count >= 28 && cornerPieces.Count % 4 == 0, $"popup uses rounded corner pieces ({cornerPieces.Count})");
+        // In game a translucent corner texture is blended differently from a translucent panel (light squares),
+        // so every corner piece must be opaque: translucent colours are blended onto the surface below.
+        Func<JObject, string> rawColor = e => (string)e["components"].First(cc => (string)cc["type"] == "UnityEngine.UI.RawImage")["color"];
+        Check(cornerPieces.All(e => Alpha(rawColor(e)) >= 0.999f), "every corner piece is opaque");
+        var pieceColors = cornerPieces.Select(rawColor).Distinct().ToList();
+        Check(pieceColors.Count >= 4, $"translucent buttons and tags are blended to their own opaque shades ({pieceColors.Count} colours)");
+        // Shadows sit over the game view (no known colour below): plain stepped panels, no corner textures.
+        var black = H.Live(player).Where(e => e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.Image" && ((string)cc["color"] ?? "").StartsWith("0 0 0 0.") && (string)cc["color"] != "0 0 0 0")).ToList();
+        Check(black.Count >= 20, $"shadow is drawn with stepped panels ({black.Count})");
+        // In game a texture's bottom row can pick up its top row (wrapping). Fill corners are covered there by
+        // the bands; picture masks carry a transparent row at the top and bottom so no line crosses the picture.
+        int fills = 0, masks = 0;
+        foreach (var file in FileStorage.server.Files.Values)
+        {
+            var px = DecodePng(file, out int tw, out int th);
+            Func<int, bool> clearRow = y => Enumerable.Range(0, tw).All(x => px[(y * tw + x) * 4 + 3] == 0);
+            if (tw == 32 && th == 32 && !clearRow(0) && !clearRow(31)) fills++;
+            if (tw == 32 && th == 34 && clearRow(0) && clearRow(33) && !(clearRow(1) && clearRow(32))) masks++;
+        }
+        Check(fills == 4 && masks == 4, $"corner textures: 4 fills, 4 masks with clear top/bottom rows ({fills}, {masks})");
+        // The like button is redrawn on its own: it still knows the popup colour below it.
+        H.Console(player, $"news.like {H.Id(Ann0)}");
+        var likePieces = H.Live(player).Where(e => cornerIds.Contains((string)e["components"].FirstOrDefault(cc => (string)cc["type"] == "UnityEngine.UI.RawImage")?["png"] ?? "")).ToList();
+        Check(likePieces.Count == cornerPieces.Count && likePieces.All(e => Alpha(rawColor(e)) >= 0.999f), "like button redrawn in place keeps opaque corners");
         Check(H.Live(player).Count() < 260, $"popup stays a reasonable size ({H.Live(player).Count()} elements)");
         H.Chat(admin, "news", "admin");
         Check(H.Live(admin).Count() < 600, $"admin list element count ok ({H.Live(admin).Count()})");

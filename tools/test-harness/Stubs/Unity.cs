@@ -64,6 +64,9 @@ namespace UnityEngine
         public static int FloorToInt(float f) => (int)Math.Floor(f);
         public static float Lerp(float a, float b, float t) => a + (b - a) * Clamp01(t);
         public static float Abs(float f) => Math.Abs(f);
+        public static float Sqrt(float f) => (float)Math.Sqrt(f);
+        public static float Sin(float f) => (float)Math.Sin(f);
+        public static float Cos(float f) => (float)Math.Cos(f);
         public static int Abs(int f) => Math.Abs(f);
     }
 

@@ -79,11 +79,22 @@ namespace HarnessRuntime
                 }
                 if (existing != null && name != "AddUI CreatedPanel")
                     ui.Warnings.Add($"duplicate element name '{name}' (parent '{parent}')");
+                // The game client blends a translucent RawImage (in linear colour space) differently from a
+                // translucent panel, so a translucent rounded-corner piece shows up as a light square in game.
+                var raw = ((JArray)el["components"])?.OfType<JObject>().FirstOrDefault(c => (string)c["type"] == "UnityEngine.UI.RawImage");
+                if (raw != null && uint.TryParse((string)raw["png"], out var png) && FileStorage.server.Files.ContainsKey(png) && Alpha((string)raw["color"]) < 0.999f)
+                    ui.Warnings.Add($"translucent corner piece '{name}' (colour '{(string)raw["color"]}'): blend it onto the surface below so it is opaque");
                 el["name"] = name;
                 el["parent"] = parent;
                 el["__id"] = ++ElementIds;
                 ui.Elements.Add(el);
             }
+        }
+
+        private static float Alpha(string rgba)
+        {
+            var parts = (rgba ?? "1 1 1 1").Trim().Split(' ');
+            return parts.Length >= 4 && float.TryParse(parts[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : 1f;
         }
 
         private static JArray MergeComponents(JArray a, JArray b)

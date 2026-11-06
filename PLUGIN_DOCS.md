@@ -315,7 +315,7 @@ Tick the checkbox on admin rows (or **SELECT PAGE**) and a toolbar appears: **DE
 
 ## Rounded corners
 
-Rust's UI has no rounded rectangles, so at server start the plugin draws small anti-aliased quarter-circle images in code and stores them in the server's file store, the same place ImageLibrary keeps its pictures. ImageLibrary isn't required. Each rounded panel, card or button is built from three straight pieces plus four corner pieces, so translucent colours stay even. Picture corners are rounded by covering them with the background colour. If the images can't be stored, or `RoundedCorners` is `false`, everything is drawn with square corners. The first time a player opens the menu, the corner images download in a fraction of a second.
+Rust's UI has no rounded rectangles, so at server start the plugin draws small anti-aliased quarter-circle images in code and stores them in the server's file store, the same place ImageLibrary keeps its pictures. ImageLibrary isn't required. Each rounded panel, card or button is built from three straight pieces plus four corner pieces, all in solid colours: a see-through colour is first mixed with the panel behind it, because the game draws see-through corner images differently from see-through panels (they would show as light squares). Shadows sit over the game view, so they are built from thin stepped strips instead. Picture corners are rounded by covering them with the background colour. If the images can't be stored, or `RoundedCorners` is `false`, everything is drawn with square corners. The first time a player opens the menu, the corner images download in a fraction of a second.
 
 ## Animations
 

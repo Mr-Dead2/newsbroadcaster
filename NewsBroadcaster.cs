@@ -106,6 +106,7 @@ namespace Oxide.Plugins
         private const float RadiusButton = 6f;
         private const float RadiusPill = 4f;
         private const int CornerTextureSize = 32;
+        private const float SeamOverlap = 1f;   // units the side bands of a rounded rect reach into its corner pieces
         private const float BodyTop = 0.71f;
         private const float BodyBottomDefault = 0.135f;
         private const string FontBold = "robotocondensed-bold.ttf";
@@ -1162,6 +1163,7 @@ namespace Oxide.Plugins
             remindedPlayers.Clear();
             currentScreens.Clear();
             toastNames.Clear();
+            surfaceColors.Clear();
 
             if (dataDirty && storedData != null) SaveAnnouncements();
             saveTimer?.Destroy();
@@ -2369,16 +2371,25 @@ namespace Oxide.Plugins
 
         // Quarter circle for corner 0=TL, 1=TR, 2=BL, 3=BR: white with 4x4 supersampled alpha.
         // inverse = white outside the circle (used to round off the corners of pictures).
+        // In game the texture's bottom row can pick up its top row (texture wrapping). On a fill corner the
+        // bands of the rounded rect cover that edge; a picture mask instead gets a transparent row at the top
+        // and bottom (AddCorners makes the piece one texel taller at each end to match), so the bleed
+        // can't draw a line across the picture.
         private static byte[] BuildCornerPng(int corner, bool inverse)
         {
-            int n = CornerTextureSize;
-            float cx = corner == 0 || corner == 2 ? n : 0f;
-            float cy = corner == 0 || corner == 1 ? n : 0f;   // image rows run top to bottom
-            var rgba = new byte[n * n * 4];
-            for (int y = 0; y < n; y++)
+            int n = CornerTextureSize, height = inverse ? n + 2 : n, oy = inverse ? 1 : 0;
+            bool right = corner == 1 || corner == 3, bottom = corner == 2 || corner == 3;
+            float cx = right ? 0f : n;
+            float cy = bottom ? 0f : n;   // image rows run top to bottom
+            var rgba = new byte[n * height * 4];
+            for (int py = 0; py < height; py++)
             {
                 for (int x = 0; x < n; x++)
                 {
+                    int k = (py * n + x) * 4;
+                    rgba[k] = 255; rgba[k + 1] = 255; rgba[k + 2] = 255;
+                    int y = py - oy;
+                    if (y < 0 || y >= n) continue;   // mask border rows: transparent
                     int inside = 0;
                     for (int sy = 0; sy < 4; sy++)
                         for (int sx = 0; sx < 4; sx++)
@@ -2388,12 +2399,10 @@ namespace Oxide.Plugins
                         }
                     float alpha = inside / 16f;
                     if (inverse) alpha = 1f - alpha;
-                    int k = (y * n + x) * 4;
-                    rgba[k] = 255; rgba[k + 1] = 255; rgba[k + 2] = 255;
                     rgba[k + 3] = (byte)Mathf.RoundToInt(alpha * 255f);
                 }
             }
-            return EncodePng(n, n, rgba);
+            return EncodePng(n, height, rgba);
         }
 
         // Minimal PNG writer (RGBA, zlib "stored" blocks). Plugins can't use System.IO, so it works on byte lists.
@@ -2465,27 +2474,68 @@ namespace Oxide.Plugins
         }
 
         // Rounded rectangle filling its parent, inset by `inset` units (negative = larger than the parent).
+        // Corner pieces are always drawn opaque: the game client blends a translucent corner texture
+        // differently from a translucent panel, so it would show up as a light square. A translucent
+        // colour is therefore blended onto the opaque surface below it first. Over the game view (shadows)
+        // there is no known colour below, so the shape is built from stepped panels instead.
         private void AddRoundedFill(CuiElementContainer container, string parent, string color, float radius, float inset = 0f, float fade = 0f)
         {
+            if (!IsOpaque(color)) color = SolidOn(color, ColorUnder(container, parent));
             string a = F(inset), na = F(-inset);
             if (!Rounded || radius < 0.5f)
             {
                 container.Add(Piece(color, "0 0", "1 1", $"{a} {a}", $"{na} {na}", fade), parent);
+                if (inset <= 0f) SetSurface(container, parent, color);
+                return;
+            }
+            if (!IsOpaque(color))
+            {
+                AddSteppedFill(container, parent, color, radius, inset, fade);
                 return;
             }
 
+            // Corners first, then the bands on top of them. The side bands reach a little into the corners,
+            // over the edge where a seam showed in game; the bands themselves don't overlap each other, so
+            // nothing doubles up while a shape fades in.
+            AddCorners(container, parent, cornerFill, color, inset, radius, fade);
+            float overlap = radius < 2f ? 0f : Math.Min(SeamOverlap, radius * 0.25f);
             string b = F(inset + radius), nb = F(-(inset + radius));
+            string bo = F(inset + radius - overlap), nbo = F(-(inset + radius - overlap));
             container.Add(Piece(color, "0 0", "1 1", $"{b} {a}", $"{nb} {na}", fade), parent);
-            container.Add(Piece(color, "0 0", "0 1", $"{a} {b}", $"{b} {nb}", fade), parent);
-            container.Add(Piece(color, "1 0", "1 1", $"{nb} {b}", $"{na} {nb}", fade), parent);
-            AddCorners(container, parent, cornerFill, color, a, na, b, nb, fade);
+            container.Add(Piece(color, "0 0", "0 1", $"{a} {bo}", $"{b} {nbo}", fade), parent);
+            container.Add(Piece(color, "1 0", "1 1", $"{nb} {bo}", $"{na} {nbo}", fade), parent);
+            if (inset <= 0f) SetSurface(container, parent, color);
         }
 
-        private static void AddCorners(CuiElementContainer container, string parent, string[] textures, string color, string a, string na, string b, string nb, float fade)
+        // Rounded rectangle made of plain panels only: horizontal slices that step in towards the corners,
+        // without overlapping, so a translucent colour stays even. Used where nothing opaque is below
+        // (shadows over the game view). The slices are spaced evenly around the curve, and larger or
+        // darker shapes get more of them, so the steps stay too small to see.
+        private static void AddSteppedFill(CuiElementContainer container, string parent, string color, float radius, float inset, float fade)
         {
+            int steps = Mathf.Clamp(Mathf.RoundToInt(radius * ParseColor(color)[3] * 4f), 3, 10);
+            string a = F(inset), na = F(-inset);
+            container.Add(Piece(color, "0 0", "1 1", $"{a} {F(inset + radius)}", $"{na} {F(-(inset + radius))}", fade), parent);
+            for (int i = 0; i < steps; i++)
+            {
+                float t0 = Mathf.PI / 2f * i / steps, t1 = Mathf.PI / 2f * (i + 1) / steps;
+                float y0 = radius * Mathf.Sin(t0), y1 = radius * Mathf.Sin(t1);       // height above the straight part
+                float x = inset + radius * (1f - Mathf.Cos((t0 + t1) / 2f));          // how far the curve is in there
+                container.Add(Piece(color, "0 1", "1 1", $"{F(x)} {F(-(inset + radius) + y0)}", $"{F(-x)} {F(-(inset + radius) + y1)}", fade), parent);
+                container.Add(Piece(color, "0 0", "1 0", $"{F(x)} {F(inset + radius - y1)}", $"{F(-x)} {F(inset + radius - y0)}", fade), parent);
+            }
+        }
+
+        // Corner pieces for a rounded rectangle inset by `inset`. Mask pieces are one texel taller at the top
+        // and bottom, where their textures have a transparent row.
+        private static void AddCorners(CuiElementContainer container, string parent, string[] textures, string color, float inset, float radius, float fade, bool mask = false)
+        {
+            float texel = mask ? radius / CornerTextureSize : 0f;
+            string a = F(inset), na = F(-inset), b = F(inset + radius), nb = F(-(inset + radius));
+            string ay = F(inset - texel), nay = F(-(inset - texel)), by = F(inset + radius + texel), nby = F(-(inset + radius + texel));
             string[] anchors = { "0 1", "1 1", "0 0", "1 0" };
-            string[] mins = { $"{a} {nb}", $"{nb} {nb}", $"{a} {a}", $"{nb} {a}" };
-            string[] maxs = { $"{b} {na}", $"{na} {na}", $"{b} {b}", $"{na} {b}" };
+            string[] mins = { $"{a} {nby}", $"{nb} {nby}", $"{a} {ay}", $"{nb} {ay}" };
+            string[] maxs = { $"{b} {nay}", $"{na} {nay}", $"{b} {by}", $"{na} {by}" };
             for (int k = 0; k < 4; k++)
             {
                 container.Add(new CuiElement
@@ -2500,29 +2550,85 @@ namespace Oxide.Plugins
             }
         }
 
-        // Rounds off the corners of a picture by covering them with the colour behind it.
+        // Rounds off the corners of a picture by covering them with the (opaque) colour behind it.
         private void AddCornerMasks(CuiElementContainer container, string parent, string backgroundColor, float radius)
         {
             if (!Rounded) return;
-            AddCorners(container, parent, cornerMask, backgroundColor, "0", "0", F(radius), F(-radius), 0f);
+            AddCorners(container, parent, cornerMask, Opaque(backgroundColor), 0f, radius, 0f, true);
         }
 
         // Rounded card / button. Content added to the returned element draws on top of the fill.
-        // rim: a border colour drawn just outside the fill (use with opaque fills).
+        // rim: a border colour drawn just outside the fill. Translucent colours are blended onto the surface
+        // below; a rim over the game view is blended onto the fill itself (a slightly lighter edge).
         private string AddSurface(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, float radius, string command = null, string name = null, string rim = null, float rimWidth = 1f)
         {
+            string under = ColorUnder(container, parent);
+            string fill = SolidOn(color, under);
             string holder = command != null
                 ? container.Add(new CuiButton { Button = { Color = "0 0 0 0", Command = command }, Text = { Text = "" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name)
                 : container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name);
-            if (rim != null) AddRoundedFill(container, holder, rim, radius + rimWidth, -rimWidth);
-            AddRoundedFill(container, holder, color, radius);
+            if (rim != null) AddRoundedFill(container, holder, SolidOn(rim, under ?? (IsOpaque(fill) ? fill : null)), radius + rimWidth, -rimWidth);
+            AddRoundedFill(container, holder, fill, radius);
             return holder;
         }
+
+        // ---- Surface colours ----------------------------------------------------------------
+        // Opaque colour of each rounded surface in the containers being built, so translucent shapes drawn
+        // on top can be blended onto it (see ColorUnder). Only the last few containers are kept.
+        private readonly List<KeyValuePair<CuiElementContainer, Dictionary<string, string>>> surfaceColors = new List<KeyValuePair<CuiElementContainer, Dictionary<string, string>>>();
+
+        private Dictionary<string, string> SurfacesOf(CuiElementContainer container)
+        {
+            for (int i = surfaceColors.Count - 1; i >= 0; i--)
+                if (ReferenceEquals(surfaceColors[i].Key, container)) return surfaceColors[i].Value;
+            var surfaces = new Dictionary<string, string>();
+            surfaceColors.Add(new KeyValuePair<CuiElementContainer, Dictionary<string, string>>(container, surfaces));
+            if (surfaceColors.Count > 4) surfaceColors.RemoveAt(0);
+            return surfaces;
+        }
+
+        // Records the opaque colour of an element that is not (re)built in this container, e.g. the popup
+        // panel when only its like button or poll is redrawn.
+        private void SetSurface(CuiElementContainer container, string name, string color)
+        {
+            if (!string.IsNullOrEmpty(name) && IsOpaque(color)) SurfacesOf(container)[name] = color;
+        }
+
+        // The opaque colour shown behind `parent`, or null when it is the game view.
+        private string ColorUnder(CuiElementContainer container, string parent)
+        {
+            var surfaces = SurfacesOf(container);
+            string name = parent;
+            for (int depth = 0; depth < 32 && !string.IsNullOrEmpty(name); depth++)
+            {
+                string color;
+                if (surfaces.TryGetValue(name, out color)) return color;
+                CuiElement element = null;
+                for (int i = container.Count - 1; i >= 0; i--)
+                    if (container[i].Name == name) { element = container[i]; break; }
+                if (element == null) return null;
+                foreach (var component in element.Components)
+                {
+                    if (component is CuiRawImageComponent) return null;   // a picture: no single colour below
+                    var image = component as CuiImageComponent;
+                    if (image != null && IsOpaque(image.Color) && string.IsNullOrEmpty(image.Png) && string.IsNullOrEmpty(image.Sprite)) return image.Color;
+                    var button = component as CuiButtonComponent;
+                    if (button != null && IsOpaque(button.Color) && string.IsNullOrEmpty(button.Sprite)) return button.Color;
+                }
+                name = element.Parent;
+            }
+            return null;
+        }
+
+        private static bool IsOpaque(string rgba) => ParseColor(rgba)[3] >= 0.999f;
+
+        // `color` as it looks on the opaque colour `under` (unchanged if it is opaque or `under` is unknown).
+        private static string SolidOn(string color, string under) => IsOpaque(color) || under == null || ParseColor(color)[3] <= 0.001f ? color : Blend(color, under);
 
         // Faint light line just inside the top edge of a panel (a "glass" highlight).
         private void AddTopSheen(CuiElementContainer container, string parent, float radius)
         {
-            container.Add(Piece("1 1 1 0.07", "0 1", "1 1", $"{F(radius)} -2", $"{F(-radius)} -1", 0f), parent);
+            container.Add(Piece(SolidOn("1 1 1 0.07", ColorUnder(container, parent)), "0 1", "1 1", $"{F(radius)} -2", $"{F(-radius)} -1", 0f), parent);
         }
 
         private string AddLabelIn(CuiElementContainer container, string parent, string text, int fontSize, string color, TextAnchor align = TextAnchor.MiddleCenter, string font = FontBold)
@@ -2595,7 +2701,7 @@ namespace Oxide.Plugins
         // 1-unit horizontal divider.
         private void AddHairline(CuiElementContainer container, string parent, float y, float left = 0f, float right = 1f)
         {
-            container.Add(new CuiPanel { Image = { Color = Hairline }, RectTransform = { AnchorMin = Anchor(left, y), AnchorMax = Anchor(right, y), OffsetMin = "0 0", OffsetMax = "0 1" } }, parent);
+            container.Add(new CuiPanel { Image = { Color = SolidOn(Hairline, ColorUnder(container, parent)) }, RectTransform = { AnchorMin = Anchor(left, y), AnchorMax = Anchor(right, y), OffsetMin = "0 0", OffsetMax = "0 1" } }, parent);
         }
 
         // Soft rounded secondary button.
@@ -2617,6 +2723,7 @@ namespace Oxide.Plugins
         private void AddLikeButton(CuiElementContainer container, BasePlayer player, Announcement ann)
         {
             bool liked = ann.LikedPlayers.Contains(player.userID);
+            SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));   // also when redrawn on its own
             string button = container.Add(new CuiButton
             {
                 Button = { Color = "0 0 0 0", Command = $"news.like {ann.Id}" },
@@ -2862,6 +2969,7 @@ namespace Oxide.Plugins
         // The poll lives in its own named panel so a vote can redraw just this block.
         private void AddPollBlock(CuiElementContainer container, BasePlayer player, Announcement ann, bool preview)
         {
+            SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));   // also when redrawn on its own
             var c = config.Colors;
             float left = string.IsNullOrEmpty(ann.ImageUrl) ? 0.03f : 0.5f;
             float h = PollBlockHeight(ann);
