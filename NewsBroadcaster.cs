@@ -30,6 +30,10 @@ namespace Oxide.Plugins
         private const string AutoCloseName = LayerName + ".AutoClose";
         private const string CountdownName = LayerName + ".Countdown";
         private const string EditorPanelName = LayerName + ".Editor";
+        // Holds the current full-screen view inside the root layer; swapped as a whole on every redraw.
+        private const string ScreenName = LayerName + ".Screen";
+        // Fade strength when moving to another view (the first open uses 1, redraws 0).
+        private const float SwitchFade = 0.3f;
         private const string BlurMaterial = "assets/content/ui/uibackgroundblur-ingamemenu.mat";
         private const string DataFile = "NewsBroadcaster_Data";
 
@@ -1909,6 +1913,8 @@ namespace Oxide.Plugins
         {
             if (player == null) return;
             string sub = args != null && args.Length > 0 ? args[0].ToLowerInvariant() : string.Empty;
+            // A typed command opens the menu from scratch (rebuilding its root), whatever state it was in.
+            if (sub != "settings" && sub != "options" && sub != "read" && sub != "help") currentScreens.Remove(player.userID);
 
             switch (sub)
             {
@@ -2093,7 +2099,7 @@ namespace Oxide.Plugins
             {
                 // Only the poll block is redrawn, so the reader keeps their scroll position.
                 var container = new CuiElementContainer();
-                AddPollBlock(container, player, ann, false);
+                AddPollBlock(container, player, ann, false, true);
                 CuiHelper.DestroyUi(player, PollPanelName);
                 CuiHelper.AddUi(player, container);
             }
@@ -2143,7 +2149,7 @@ namespace Oxide.Plugins
             {
                 // Only swap the like button so the reader keeps their scroll position.
                 var container = new CuiElementContainer();
-                AddLikeButton(container, player, ann);
+                AddLikeButton(container, player, ann, true);
                 CuiHelper.DestroyUi(player, LikeButtonName);
                 CuiHelper.AddUi(player, container);
             }
@@ -2200,7 +2206,7 @@ namespace Oxide.Plugins
                 default: return;
             }
             MarkDataDirty();
-            ShowPlayerSettings(player, false);
+            ShowPlayerSettings(player, true);
         }
 
         [ConsoleCommand("news.admin")]
@@ -2215,6 +2221,7 @@ namespace Oxide.Plugins
             var player = arg.Connection?.player as BasePlayer;
             if (player == null) return;
 
+            currentScreens.Remove(player.userID);   // typed: open from scratch
             ShowAdminList(player, 0);
         }
 
@@ -3016,17 +3023,32 @@ namespace Oxide.Plugins
         // Animation. Rust CUI fades graphics in when they appear (FadeIn) and out when destroyed (FadeOut);
         // both run on the client, so they are smooth and cost no extra network traffic.
 
-        // Opens a full-screen view. Returns the animation strength: 1 when switching to a new view,
-        // sameScreen when redrawing the view that is already open (0 = instant redraw).
-        private float OpenScreen(BasePlayer player, UiScreen screen, float sameScreen, out bool fresh)
+        // Opens a full-screen view. The root layer (dimmed, blurred backdrop and the mouse cursor) is created
+        // once and stays while the player clicks around; every view is drawn into ScreenName, which replaces
+        // the previous view inside the same UI message. So nothing blinks and the cursor never jumps back to
+        // the middle of the screen (Rust recentres it whenever the cursor element is recreated).
+        // Returns the fade strength: 1 when opening from nothing, SwitchFade when moving to another view,
+        // 0 for a redraw of the same view (instant).
+        private float OpenScreen(BasePlayer player, UiScreen screen, out bool fresh)
         {
             UiScreen previous;
             currentScreens.TryGetValue(player.userID, out previous);
-            DestroyUI(player);
+            fresh = previous == UiScreen.None;
+            CuiHelper.DestroyUi(player, ConfirmLayer);   // dialogs belong to the view they were opened from
+            openPopups.Remove(player.userID);
+            CancelAutoClose(player.userID);
+            CancelReadRewardTimer(player.userID);
             currentScreens[player.userID] = screen;
             playersWithUiOpen.Add(player.userID);
-            fresh = previous == UiScreen.None;
-            return previous == screen ? sameScreen : 1f;
+            return fresh ? 1f : previous == screen ? 0f : SwitchFade;
+        }
+
+        // First element(s) of every view: the root when the menu opens, then the view holder, which tells the
+        // client to remove the previous view in the same step (destroyUi), so there is no empty frame.
+        private void BeginScreen(CuiElementContainer container, bool fresh, string backdrop)
+        {
+            if (fresh) AddBackdrop(container, backdrop, 0.25f);
+            container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" } }, LayerName, ScreenName, ScreenName);
         }
 
         // Staggered reveal: elements added later fade in a little slower, so a screen builds up
@@ -3062,7 +3084,7 @@ namespace Oxide.Plugins
                 Image = { Color = color, Material = BlurMaterial, FadeIn = fade },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
                 CursorEnabled = true
-            }, "Overlay", LayerName);
+            }, "Overlay", LayerName, LayerName);
         }
 
         // ---- Rounded corners ---------------------------------------------------------------
@@ -3453,7 +3475,8 @@ namespace Oxide.Plugins
             return $"{parts[0]} {parts[1]} {parts[2]} {F(alpha)}";
         }
 
-        private void AddLikeButton(CuiElementContainer container, BasePlayer player, Announcement ann)
+        // pop: the button was just clicked, so it pops in; inside a whole popup it just appears with the rest.
+        private void AddLikeButton(CuiElementContainer container, BasePlayer player, Announcement ann, bool pop = false)
         {
             bool liked = ann.LikedPlayers.Contains(player.userID);
             SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));   // also when redrawn on its own
@@ -3463,11 +3486,11 @@ namespace Oxide.Plugins
                 Text = { Text = "" },
                 RectTransform = { AnchorMin = "0.03 0.028", AnchorMax = "0.135 0.082" }
             }, PopupPanel, LikeButtonName);
-            // Pops in (explicit fade) whenever it is redrawn after a like.
-            AddRoundedFill(container, button, liked ? "0.90 0.30 0.35 0.16" : Ghost, RadiusButton, 0f, 0.25f);
+            float fade = pop ? 0.25f : 0f;
+            AddRoundedFill(container, button, liked ? "0.90 0.30 0.35 0.16" : Ghost, RadiusButton, 0f, fade);
             container.Add(new CuiLabel
             {
-                Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = liked ? "0.96 0.40 0.44 1" : "0.62 0.63 0.68 1", Font = FontBold, FadeIn = 0.25f },
+                Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = liked ? "0.96 0.40 0.44 1" : "0.62 0.63 0.68 1", Font = FontBold, FadeIn = fade },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
             }, button);
         }
@@ -3479,7 +3502,7 @@ namespace Oxide.Plugins
             if (!preview && !CanSee(player, ann)) return;
 
             bool fresh;
-            float anim = OpenScreen(player, UiScreen.Popup, 0.5f, out fresh);
+            float anim = OpenScreen(player, UiScreen.Popup, out fresh);
             DestroyNotification(player);
             if (!preview) openPopups[player.userID] = new PopupState { AnnId = ann.Id, Origin = origin };
 
@@ -3488,13 +3511,13 @@ namespace Oxide.Plugins
             string accentHex = RgbaToHex(c.ButtonPrimary);
             string typeColor = GetTypeColor(ann.Type);
 
-            AddBackdrop(container, "0 0 0 0.62", fresh ? 0.25f : 0f);
+            BeginScreen(container, fresh, "0 0 0 0.62");
             int contentStart = container.Count;
-            AddPanelShadow(container, LayerName, "0.175 0.175", "0.825 0.825");
+            AddPanelShadow(container, ScreenName, "0.175 0.175", "0.825 0.825");
 
             // Rounded panel with a faint rim (gold for pinned posts) and a glass highlight along the top.
             string panelColor = Opaque(c.PanelBg);
-            string mainPanel = AddSurface(container, LayerName, "0.175 0.175", "0.825 0.825", panelColor, RadiusPanel, null, PopupPanel,
+            string mainPanel = AddSurface(container, ScreenName, "0.175 0.175", "0.825 0.825", panelColor, RadiusPanel, null, PopupPanel,
                 ann.Pinned ? PinGold : PanelRim, ann.Pinned ? 1.5f : 1f);
             AddTopSheen(container, mainPanel, RadiusPanel);
 
@@ -3761,7 +3784,8 @@ namespace Oxide.Plugins
         }
 
         // The poll lives in its own named panel so a vote can redraw just this block.
-        private void AddPollBlock(CuiElementContainer container, BasePlayer player, Announcement ann, bool preview)
+        // justVoted: the result bars fade in (only when the block is redrawn after a vote).
+        private void AddPollBlock(CuiElementContainer container, BasePlayer player, Announcement ann, bool preview, bool justVoted = false)
         {
             SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));   // also when redrawn on its own
             var c = config.Colors;
@@ -3815,7 +3839,7 @@ namespace Oxide.Plugins
                     // Rounded result bar (at least as wide as its rounded ends); fades in after voting.
                     float width = Math.Min(1f, Math.Max(share, RadiusButton * 2f / rowWidthUnits));
                     string bar = container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = "0 0", AnchorMax = Anchor(width, 1f) } }, row);
-                    AddRoundedFill(container, bar, MixAlpha(c.ButtonPrimary, mine ? 0.45f : 0.2f), RadiusButton, 0f, 0.5f);
+                    AddRoundedFill(container, bar, MixAlpha(c.ButtonPrimary, mine ? 0.45f : 0.2f), RadiusButton, 0f, justVoted ? 0.5f : 0f);
                 }
 
                 container.Add(new CuiLabel
@@ -3900,7 +3924,7 @@ namespace Oxide.Plugins
             }
 
             bool fresh;
-            float anim = OpenScreen(player, UiScreen.Archive, 0.6f, out fresh);
+            float anim = OpenScreen(player, UiScreen.Archive, out fresh);
 
             var container = new CuiElementContainer();
             var c = config.Colors;
@@ -3915,12 +3939,12 @@ namespace Oxide.Plugins
             if (page >= totalPages) page = totalPages - 1;
             archivePages[userId] = page;
 
-            AddBackdrop(container, "0 0 0 0.62", fresh ? 0.25f : 0f);
+            BeginScreen(container, fresh, "0 0 0 0.62");
             int contentStart = container.Count;
-            AddPanelShadow(container, LayerName, "0.15 0.1", "0.85 0.9");
+            AddPanelShadow(container, ScreenName, "0.15 0.1", "0.85 0.9");
 
             string panelColor = Opaque(c.PanelBg);
-            string mainPanel = AddSurface(container, LayerName, "0.15 0.1", "0.85 0.9", panelColor, RadiusPanel, null, LayerName + ".List", PanelRim);
+            string mainPanel = AddSurface(container, ScreenName, "0.15 0.1", "0.85 0.9", panelColor, RadiusPanel, null, LayerName + ".List", PanelRim);
             AddTopSheen(container, mainPanel, RadiusPanel);
 
             // Header
@@ -4171,17 +4195,17 @@ namespace Oxide.Plugins
         private void ShowAdminList(BasePlayer player, int page)
         {
             bool fresh;
-            float anim = OpenScreen(player, UiScreen.Admin, 0f, out fresh);
+            float anim = OpenScreen(player, UiScreen.Admin, out fresh);
 
             var container = new CuiElementContainer();
             var c = config.Colors;
 
-            AddBackdrop(container, AdminBackdrop, fresh ? 0.22f : 0f);
+            BeginScreen(container, fresh, AdminBackdrop);
             int contentStart = container.Count;
-            AddPanelShadow(container, LayerName, "0.16 0.12", "0.84 0.88");
+            AddPanelShadow(container, ScreenName, "0.16 0.12", "0.84 0.88");
 
             string surface = Opaque(AdminSurface);
-            string mainPanel = AddSurface(container, LayerName, "0.16 0.12", "0.84 0.88", surface, RadiusPanel, null, LayerName + ".Admin", PanelRim);
+            string mainPanel = AddSurface(container, ScreenName, "0.16 0.12", "0.84 0.88", surface, RadiusPanel, null, LayerName + ".Admin", PanelRim);
             AddTopSheen(container, mainPanel, RadiusPanel);
 
             AddHairline(container, mainPanel, 0.866f, 0.025f, 0.975f);
@@ -4522,16 +4546,16 @@ namespace Oxide.Plugins
             var ann = session.Draft;
 
             bool fresh;
-            float anim = OpenScreen(player, UiScreen.Editor, 0f, out fresh);
+            float anim = OpenScreen(player, UiScreen.Editor, out fresh);
 
             var container = new CuiElementContainer();
             var c = config.Colors;
 
-            AddBackdrop(container, AdminBackdrop, fresh ? 0.22f : 0f);
+            BeginScreen(container, fresh, AdminBackdrop);
             int contentStart = container.Count;
-            AddPanelShadow(container, LayerName, "0.13 0.1", "0.87 0.9");
+            AddPanelShadow(container, ScreenName, "0.13 0.1", "0.87 0.9");
 
-            string editorPanel = AddSurface(container, LayerName, "0.13 0.1", "0.87 0.9", Opaque(AdminSurface), RadiusPanel, null, EditorPanelName, PanelRim);
+            string editorPanel = AddSurface(container, ScreenName, "0.13 0.1", "0.87 0.9", Opaque(AdminSurface), RadiusPanel, null, EditorPanelName, PanelRim);
             AddTopSheen(container, editorPanel, RadiusPanel);
 
             // Header
@@ -4703,24 +4727,30 @@ namespace Oxide.Plugins
         }
 
         // /news settings: three switches, saved per player. Drawn over whatever is open (or on its own).
-        private void ShowPlayerSettings(BasePlayer player, bool animate = true)
+        // A click on a switch (redraw) only swaps the dialog's contents: its overlay keeps the mouse cursor,
+        // so the cursor stays where the player clicked.
+        private void ShowPlayerSettings(BasePlayer player, bool redraw = false)
         {
             var c = config.Colors;
             var prefs = GetPrefs(player.userID);
-            CuiHelper.DestroyUi(player, ConfirmLayer);
 
             var container = new CuiElementContainer();
-            container.Add(new CuiPanel
+            if (!redraw)
             {
-                Image = { Color = "0 0 0 0.45", Material = BlurMaterial },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
-                CursorEnabled = true
-            }, "Overlay", ConfirmLayer);
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = "0 0 0 0.45", Material = BlurMaterial },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+                    CursorEnabled = true
+                }, "Overlay", ConfirmLayer, ConfirmLayer);
+            }
             int contentStart = container.Count;
+            string body = ConfirmLayer + ".Body";
+            container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" } }, ConfirmLayer, body, body);
 
             const string min = "0.355 0.31", max = "0.645 0.69";
-            AddPanelShadow(container, ConfirmLayer, min, max);
-            string panel = AddSurface(container, ConfirmLayer, min, max, Opaque(c.PanelBg), RadiusPanel, null, ConfirmLayer + ".Settings", PanelRim);
+            AddPanelShadow(container, body, min, max);
+            string panel = AddSurface(container, body, min, max, Opaque(c.PanelBg), RadiusPanel, null, ConfirmLayer + ".Settings", PanelRim);
             AddTopSheen(container, panel, RadiusPanel);
 
             container.Add(new CuiLabel
@@ -4764,7 +4794,7 @@ namespace Oxide.Plugins
 
             AddPrimaryButton(container, panel, Msg("Done", player), "news.confirm.close", "0.06 0.06", "0.94 0.16", c.ButtonPrimary);
 
-            if (animate) ApplyFadeRamp(container, contentStart, 0.1f, 0.26f);
+            if (!redraw) ApplyFadeRamp(container, contentStart, 0.1f, 0.26f);
             CuiHelper.AddUi(player, container);
         }
 
@@ -4838,12 +4868,12 @@ namespace Oxide.Plugins
         private void ShowThemeSelection(BasePlayer player, int page)
         {
             bool fresh;
-            float anim = OpenScreen(player, UiScreen.Themes, 0f, out fresh);
+            float anim = OpenScreen(player, UiScreen.Themes, out fresh);
 
             var container = new CuiElementContainer();
             var c = config.Colors;
 
-            AddBackdrop(container, AdminBackdrop, fresh ? 0.22f : 0f);
+            BeginScreen(container, fresh, AdminBackdrop);
             int contentStart = container.Count;
 
             var names = config.Themes.Keys.ToList();
@@ -4858,10 +4888,10 @@ namespace Oxide.Plugins
             float padBottom = totalPages > 1 ? 0.064f : 0.026f;
             float panelH = headerH + padTop + rows * cardH + (rows - 1) * gapY + padBottom;
 
-            AddPanelShadow(container, LayerName, Anchor(0.27f, 0.5f - panelH / 2f), Anchor(0.73f, 0.5f + panelH / 2f));
+            AddPanelShadow(container, ScreenName, Anchor(0.27f, 0.5f - panelH / 2f), Anchor(0.73f, 0.5f + panelH / 2f));
 
             string surface = Opaque(AdminSurface);
-            string mainPanel = AddSurface(container, LayerName, Anchor(0.27f, 0.5f - panelH / 2f), Anchor(0.73f, 0.5f + panelH / 2f), surface, RadiusPanel, null, LayerName + ".Themes", PanelRim);
+            string mainPanel = AddSurface(container, ScreenName, Anchor(0.27f, 0.5f - panelH / 2f), Anchor(0.73f, 0.5f + panelH / 2f), surface, RadiusPanel, null, LayerName + ".Themes", PanelRim);
             AddTopSheen(container, mainPanel, RadiusPanel);
 
             float headerBottom = 1f - headerH / panelH;

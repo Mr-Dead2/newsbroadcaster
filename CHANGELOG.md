@@ -42,6 +42,7 @@
 - **API:** new `OnNewsPollClosed` hook; payloads add `group`, `expiresAt`, `pollEndsAt` and `countdownTo`.
 
 #### Fixes
+- Clicking a button rebuilt the whole menu: it blinked and the mouse jumped back to the middle of the screen. Now only the content is swapped, in one step, and the cursor stays put.
 - Long titles were cut off at the top of the popup.
 - The 6th theme button spilled outside the theme panel.
 - The notification sound played at the player's position for everyone nearby; it is now private.

@@ -590,15 +590,16 @@ static class Tests
         Check(Fade(arch.First(e => (string)e["name"] == "NewsBroadcasterUI")) == 0.25f, "opening from nothing fades the background in");
         var rows = arch.Where(e => System.Text.RegularExpressions.Regex.IsMatch((string)e["name"], @"^NewsBroadcasterUI\.List\.\d+$") && (string)e["parent"] == "NewsBroadcasterUI.List").ToList();
         Check(rows.Count == 2 && Fade(rows[0]) > 0 && Fade(rows[1]) > Fade(rows[0]), "archive rows cascade (later rows fade slower)");
+        long rootId = (long)arch.First(e => (string)e["name"] == "NewsBroadcasterUI")["__id"];
         H.Console(player, $"news.view {H.Id(Ann0)} archive");
         var pop = H.Live(player).ToList();
-        Check(Fade(pop.First(e => (string)e["name"] == "NewsBroadcasterUI")) == 0f, "switching screens does not re-fade the background (no blink)");
+        Check((long)pop.First(e => (string)e["name"] == "NewsBroadcasterUI")["__id"] == rootId, "switching screens keeps the background (no blink)");
         Check(Fade(pop.First(e => (string)e["name"] == "NewsBroadcasterUI.Main.TitleText")) > Fade(pop.First(e => (string)e["name"] == "NewsBroadcasterUI.Main")), "popup reveals panel first, then title");
         H.Console(admin, "news.close.notif");
         H.Console(admin, "news.admin");
         Check(H.Live(admin).Any(e => Fade(e) > 0f), "admin list animates on open");
         H.Console(admin, $"news.admin.toggleselect {H.Id(Ann0)} 0");
-        Check(!H.Live(admin).Any(e => Fade(e) > 0f), "admin refresh (select) is instant");
+        Check(!H.Live(admin).Any(e => (string)e["name"] != "NewsBroadcasterUI" && Fade(e) > 0f), "admin refresh (select) is instant");
         H.Console(admin, "news.close");
 
         // toast fade-out + replacement
@@ -995,6 +996,64 @@ static class Tests
         var toastRoot = H.Live(player).First(e => (string)e["parent"] == "Hud" && ((string)e["name"]).StartsWith("NewsNotificationUI."));
         var rect = toastRoot["components"].First(cc => (string)cc["type"] == "RectTransform");
         Check((string)rect["anchormin"] == "0.405 0.17" && (string)rect["offsetmin"] == "0 12", "BottomCenter + OffsetY place the toast");
+
+        // ---------------------------------------------------------------
+        Section("No blinking, the mouse stays put");
+        Fresh();
+        Post("First", "a", "Event"); Post("Second", "b", "Info"); Post("Third", "c", "Event");
+        H.Console(player, "news.close.notif");
+        H.Chat(player, "news");
+        static long IdOf(BasePlayer p, string name) => (long?)H.Live(p).FirstOrDefault(e => (string)e["name"] == name)?["__id"] ?? -1;
+        long root = IdOf(player, "NewsBroadcasterUI");
+        Check(root > 0 && Sim.Ui(player).CursorGrabs == 1, "opening the archive grabs the cursor once");
+        int destroysBefore = Sim.Ui(player).DestroyCalls;
+        H.Console(player, "news.filter event");
+        Check(!H.Live(player).Any(e => (string)e["name"] != "NewsBroadcasterUI" && Fade(e) > 0f), "a click in the same screen redraws instantly (no fade)");
+        Check(H.Live(player).Count(e => (string)e["name"] == "NewsBroadcasterUI.Screen") == 1 && !CuiWarnings().Any(), "the old view is swapped out in the same message");
+        H.Console(player, "news.search second");
+        H.Console(player, "news.search.clear");
+        H.Console(player, "news.page 0");
+        var thirdPost = H.AnnByTitle("Third");
+        H.Console(player, $"news.view {H.Id(thirdPost)} archive");
+        Check(H.Live(player).Max(e => (string)e["name"] == "NewsBroadcasterUI" ? 0f : Fade(e)) <= 0.2f, "moving to another screen only fades in briefly");
+        H.Console(player, $"news.like {H.Id(thirdPost)}");
+        H.Console(player, $"news.view {H.Id(H.AnnByTitle("Second"))} archive");
+        H.Console(player, "news.page 0");
+        H.Console(player, "news.settings");
+        H.Console(player, "news.settings.toggle sound");
+        H.Console(player, "news.settings.toggle sound");
+        H.Console(player, "news.confirm.close");
+        Check(IdOf(player, "NewsBroadcasterUI") == root && Sim.Ui(player).CursorGrabs == 1, "clicking through filters, posts, likes and settings never recreates the cursor (mouse stays put)");
+        H.Console(player, "news.close");
+        H.Chat(player, "news");
+        Check(Sim.Ui(player).CursorGrabs == 2, "closing and reopening grabs it again, as expected");
+        H.Console(player, "news.close");
+
+        H.Console(admin, "news.close.notif");
+        H.Chat(admin, "news", "admin");
+        long adminRoot = IdOf(admin, "NewsBroadcasterUI");
+        H.Console(admin, $"news.admin.toggleselect {H.Id(thirdPost)} 0");
+        H.Console(admin, "news.admin.clearsel 0");
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.toggle pin");
+        H.Console(admin, "news.editor.settype alert");
+        H.Console(admin, "news.editor.toggle expire");
+        H.Console(admin, "news.editor.preview");
+        H.Console(admin, "news.editor.back");
+        H.Console(admin, "news.editor.cancel");
+        H.Console(admin, $"news.admin.delconfirm {H.Id(thirdPost)} 0");
+        H.Console(admin, "news.confirm.close");
+        H.Console(admin, "news.admin.themes");
+        H.Console(admin, "news.admin.page 0");
+        Check(IdOf(admin, "NewsBroadcasterUI") == adminRoot && Sim.Ui(admin).CursorGrabs == 1 && !CuiWarnings().Any(), "admin: list, editor, preview, dialogs and themes keep the same cursor");
+
+        H.Chat(noperm, "news", "settings");
+        var stranger = H.MakePlayer(76561198000000077, "Viewer");
+        H.Chat(stranger, "news", "settings");
+        long dialogRoot = IdOf(stranger, "NewsConfirmUI");
+        H.Console(stranger, "news.settings.toggle popups");
+        H.Console(stranger, "news.settings.toggle popups");
+        Check(dialogRoot > 0 && IdOf(stranger, "NewsConfirmUI") == dialogRoot && Sim.Ui(stranger).CursorGrabs == 1, "settings opened from chat: switches don't recreate the cursor either");
         // ---------------------------------------------------------------
         Section("Global checks");
         var warns = CuiWarnings();

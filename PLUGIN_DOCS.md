@@ -56,6 +56,7 @@ Optional integrations: **ImageLibrary** (image caching), **Notify** (third-party
 - **Discord:** type-coloured embeds with timestamp, avatar, poll options and optional `@here` / `@everyone`.
 
 ### Fixes
+- Clicking a button rebuilt the whole menu: it blinked and the mouse jumped back to the middle of the screen. Now only the content is swapped, in one step, and the cursor stays put.
 - Long titles were cut off at the top of the popup.
 - The 6th theme button spilled outside the theme panel.
 - The notification sound played at the player's position for everyone nearby; it is now private.
@@ -393,11 +394,12 @@ Rust CUI can fade an element's graphic in when it appears (`FadeIn`) and out whe
 | Where | Animation |
 |---|---|
 | Opening any screen from nothing | Background fades in (0.25 s), then the content reveals top-to-bottom (0.15 s → 0.6 s) |
-| Switching screens (archive ↔ post, admin → editor) | Background stays, new content reveals |
-| Prev/next post, archive paging | Shorter reveal |
-| Admin list / editor / theme picker redraws | Instant |
+| Switching screens (archive ↔ post, admin → editor) | The background and the mouse cursor stay; the new screen replaces the old one in one step and fades in briefly (about 0.2 s) |
+| Any click inside the same screen (filters, paging, prev/next, toggles, selection) | Instant redraw, nothing blinks |
 | Toast | Fades in, fades out after `Notification.Duration` or when clicked |
 | Like / vote | Like button pops, result bars fade in; rest of the popup stays still |
+
+The menu's background layer, which also holds the mouse cursor, is created once when the menu opens and stays until it closes. Rust recentres the mouse whenever that layer is recreated, so keeping it means the cursor stays exactly where the player clicked.
 | Auto-closing popups | Live "CLOSES IN %TIME_LEFT%S" countdown |
 
 ## Read tracking
