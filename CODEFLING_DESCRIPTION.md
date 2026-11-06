@@ -1,6 +1,6 @@
 # NewsBroadcaster 2.0.0
 
-**A clean, modern in-game news system for Rust — popups, polls, archive with unread tracking, likes & rewards, pinned posts, Discord and themes, all managed from an in-game admin UI.**
+**A clean, modern in-game news system for Rust — popups, polls, event countdowns, drafts, VIP-only posts, archive with filters, search and unread tracking, likes & rewards, Discord and themes, all managed from an in-game admin UI.**
 
 NewsBroadcaster pushes clean, modern announcements straight to your players: title, image, body text and a coloured type badge, wrapped in a polished CUI. Players get a toast the moment something is posted and can browse the full archive any time with `/news`.
 
@@ -12,7 +12,14 @@ NewsBroadcaster pushes clean, modern announcements straight to your players: tit
 - **Smooth animations** — screens reveal top-to-bottom, archive rows cascade in, toasts fade in and out, likes pop, poll bars fade in, and auto-closing popups show a live countdown. All client-side: no lag, no extra network traffic.
 - **In-game admin panel** — create, edit, preview, pin, resend and delete announcements without leaving the game.
 - **Live preview** — see the exact popup your players will get before you hit publish.
-- **Polls** — attach a 2–4 option poll to any post. One-click voting, live result bars, change-your-vote, close voting when you're done. Results show in the archive, the admin list and on Discord.
+- **Polls** — attach a 2–4 option poll to any post. One-click voting, live result bars, change-your-vote. Close voting yourself or set a timer (1 hour – 7 days); the result is announced in chat and on Discord.
+- **Event countdowns** — a live "WIPE IN 2 DAYS 04:12:33" timer right in the post, counted by the player's game.
+- **Drafts & copy** — save posts as drafts and publish them later; copy last week's wipe post in one click.
+- **Posts for one group** — VIP news, staff notes: only that Oxide group (and admins) can see them.
+- **Auto-delete** — event posts remove themselves 1–30 days after publishing.
+- **Archive filters & search** — chips per type, a Polls filter and a search box.
+- **Player settings** — `/news settings`: players can mute the sound, swap pop-ups for a chat line, or skip the join popup.
+- **Image link check** — the editor warns about links that won't show in game (imgur pages, expiring Discord links, GIFs).
 - **One-click type chips** — Info, Warning, Alert, Event, Update, each with its own colour.
 - **Unread tracking** — `NEW` badges, an unread counter and a **Mark all read** button in the archive, plus a one-line chat reminder for posts a player missed while offline.
 - **Archive with thumbnails** — image previews, type labels and like counts on every row.
@@ -51,6 +58,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | `/news` | Open the news archive |
 | `/news latest` | Open the newest announcement |
 | `/news read` | Mark everything as read |
+| `/news settings` | Sound, pop-up and join options |
 | `/news admin` | Open news management (admins) |
 | `/news help` | List commands |
 
@@ -60,6 +68,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | `news.show "Title" "ImageURL" "Body" [Type]` | Post a new announcement |
 | `news.poll "Title" "Text" "A\|B\|C" [Type]` | Post an announcement with a poll |
 | `news.list` | List posts with index, id, reads and likes |
+| `news.publish <index\|id>` | Publish a draft |
 | `news.delete <index\|id>` | Delete a post |
 | `news.resend <index\|id>` | Re-notify online players |
 | `news.trigger <SteamID/Name> [index]` | Show a popup to one player |
@@ -102,10 +111,12 @@ Two independent bundles — one for **reading** a post (popup open for `ReadDela
 | `PopupImageFrame` | `"Tall"` | `"Wide"` = 16:9 frame so widescreen images aren't stretched |
 | `ArchiveThumbnails` | `true` | Image thumbnails in the archive |
 | `StripLinksFromBody` | `true` | Remove links from post bodies |
-| `Notification.Position` | `"Right"` | Toast on the left or right |
+| `Notification.Position` | `"TopRight"` | Six toast positions, plus `OffsetX` / `OffsetY` |
 | `Discord.RoleMention` | `""` | Role / `@here` / `@everyone` ping for Discord posts |
 | `Polls.AllowVoteChange` | `true` | Players can change their vote |
 | `Polls.ShowResultsBeforeVoting` | `false` | Show results before a player votes |
+| `Polls.AnnounceResults` | `true` | Announce the result when a poll closes |
+| `Discord.PostGroupOnlyPosts` | `false` | Also send group-only posts to Discord |
 
 Updating from an older version keeps your config, themes and announcements — new options are added automatically.
 
@@ -126,8 +137,8 @@ All optional — the plugin works fully without them.
 
 ## API hooks
 
-`OnNewsBroadcast(Dictionary<string, object> ann)`, `OnNewsEdited(...)`, `OnNewsDeleted(...)`, `OnNewsRead(BasePlayer, ...)`, `OnNewsLiked(BasePlayer, ..., bool added)`, `OnNewsPollVote(BasePlayer, ..., int option)`.
-Payload: `id`, `title`, `author`, `type`, `timestamp`, `date`, `text`, `imageUrl`, `likes`, `pinned`, `pollOptions`, `pollVotes`.
+`OnNewsBroadcast(Dictionary<string, object> ann)`, `OnNewsEdited(...)`, `OnNewsDeleted(...)`, `OnNewsRead(BasePlayer, ...)`, `OnNewsLiked(BasePlayer, ..., bool added)`, `OnNewsPollVote(BasePlayer, ..., int option)`, `OnNewsPollClosed(...)`.
+Payload: `id`, `title`, `author`, `type`, `timestamp`, `date`, `text`, `imageUrl`, `likes`, `pinned`, `pollOptions`, `pollVotes`, `group`, `expiresAt`, `pollEndsAt`, `countdownTo`.
 
 ---
 
@@ -148,8 +159,10 @@ Open an issue, leave a review, or DM me on Discord — happy to fix bugs and con
 See `CHANGELOG.md` for the full list. Highlights:
 
 - New premium look: rounded corners, soft shadows, clean flat design, smooth animations
-- Polls with live results, unread tracking and Mark all read
+- Polls with live results and timers, unread tracking and Mark all read
+- Event countdowns, drafts & copy, VIP-only posts, auto-delete, archive filters & search, player settings
 - Better editor (type chips, pin / notify / Discord / poll toggles, live preview) and RESEND
 - Popup navigation, live auto-close countdown, archive thumbnails
 - Many fixes (cut-off titles, theme overflow, private sound, ServerRewards on current Rust, comma-locale servers)
+- Built for the November 2026 Rust update
 - Drop-in update: config, themes and posts carry over

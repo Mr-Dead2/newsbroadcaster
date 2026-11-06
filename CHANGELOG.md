@@ -18,21 +18,35 @@
 - **Popup navigation.** Prev/next arrows with a `2 / 7` counter; "back to archive" returns to the same page.
 - **Live countdown.** Popups that close by themselves show "CLOSES IN 12S"; liking or voting keeps them open.
 - **Smoother likes and votes.** Only the button or poll redraws, so the scroll position is kept.
-- **New chat commands:** `/news latest`, `/news read`, `/news help` and `/news admin`.
+- **Archive filters and search.** Chips for All, Info, Warning, Alert, Event, Update and Polls, plus a search box.
+- **Event countdowns.** Posts can show a live timer such as "EVENT STARTS IN 2 DAYS 04:12:33"; the archive shows it too.
+- **Timed polls.** Polls can close on their own ("CLOSES IN 5H 12M") and the result is announced in chat.
+- **News settings** (`/news settings`): turn off the notification sound, the pop-ups (a chat line instead) or the post shown when joining.
+- **New chat commands:** `/news latest`, `/news read`, `/news settings`, `/news help` and `/news admin`.
 
 #### New for admins
-- **Better editor.** One-click type chips; **Pin to top**, **Notify online players**, **Post to Discord** and **Add poll** toggles; **Preview** before publishing. Fields no longer lose focus while you type.
+- **Better editor.** Content on the left, settings on the right: one-click type chips; **Pin to top**, **Notify online players**, **Post to Discord** and **Add poll** toggles; **Preview** before publishing. Fields no longer lose focus while you type.
+- **Drafts.** **SAVE DRAFT** keeps a post unpublished; publish it later from the editor, News Management or `news.publish`.
+- **Copy post.** **COPY** starts a new post from an existing one.
+- **Posts for one group.** Limit a post to an Oxide group (VIP, staff...); everyone else never sees it.
+- **Auto-delete** a post 1–30 days after publishing.
+- **Poll timer** (1 hour – 7 days) with results in chat and on Discord when a poll closes.
+- **Image link check** in the editor (imgur pages, expiring Discord links, GIF / WEBP, non-picture links) and in `news.show`.
+- **Character counters** for the title and the text.
+- **Notification position:** six spots plus X / Y offsets.
 - **RESEND** re-notifies everyone online about an existing post (button or `news.resend`).
 - **Admin overview.** A stats line (posts, pinned, reads, likes) plus reads, likes and votes on every row, and an `EDITED` marker.
 - **Theme picker** with colour swatches and pages for extra themes.
 - **Console:** `news.poll`, `news.resend`, and `news.delete` / `news.list` with ids.
-- **Discord:** type-coloured embeds with timestamp, avatar, poll options and optional `@here` / `@everyone`.
+- **Discord:** type-coloured embeds with timestamp, avatar, poll options and optional `@here` / `@everyone`; poll results when a poll closes.
+- **API:** new `OnNewsPollClosed` hook; payloads add `group`, `expiresAt`, `pollEndsAt` and `countdownTo`.
 
 #### Fixes
 - Long titles were cut off at the top of the popup.
 - The 6th theme button spilled outside the theme panel.
 - The notification sound played at the player's position for everyone nearby; it is now private.
 - ServerRewards points failed to pay on current Rust builds (wrapped player id).
+- Compiles on the November 2026 Rust update (new `FileStorage` API for the rounded-corner images, `StringView` console arguments).
 - `/n` broke normal words such as `w/new`.
 - An admin's editor was replaced by a forced popup when news was posted.
 - Players saw a post again as a popup after respawning even though they had already got it live.
@@ -43,7 +57,7 @@
 - The data file was rewritten on every like or read; saves are now batched and flushed on server save and unload.
 
 #### New config options
-`UnreadReminderOnConnect`, `RequireViewPermission`, `StripLinksFromBody`, `PopupImageFrame` (`Tall` / `Wide`), `ArchiveThumbnails`, `RoundedCorners`, `Discord.AvatarUrl`, `Polls.AllowVoteChange`, `Polls.ShowResultsBeforeVoting`. All are added to your config with their defaults on first load.
+`UnreadReminderOnConnect`, `RequireViewPermission`, `StripLinksFromBody`, `PopupImageFrame` (`Tall` / `Wide`), `ArchiveThumbnails`, `RoundedCorners`, `Notification.Position` (six positions; `Left` / `Right` still work), `Notification.OffsetX` / `OffsetY`, `Discord.AvatarUrl`, `Discord.PostGroupOnlyPosts`, `Discord.PostPollResults`, `Polls.AllowVoteChange`, `Polls.ShowResultsBeforeVoting`, `Polls.AnnounceResults`. All are added to your config with their defaults on first load.
 
 
 ## 1.2.0

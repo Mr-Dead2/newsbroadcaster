@@ -38,20 +38,26 @@ public struct NetworkableId
 }
 
 // Server-side file store used for CUI images (ImageLibrary stores its pictures here too).
+// Mirrors the API from the November 2026 Rust update, which replaced Store(data, type, entityID[, numID])
+// with StoreByCrc(entityId, type, data); the old 3-argument Store call no longer compiles on a server.
 public class FileStorage
 {
     public enum Type { png, jpg, ogg }
     public static FileStorage server = new FileStorage();
     public readonly Dictionary<uint, byte[]> Files = new Dictionary<uint, byte[]>();
 
-    public uint Store(byte[] data, Type type, NetworkableId entityID, uint numID = 0u)
+    public uint StoreByCrc(NetworkableId entityId, Type type, byte[] data)
     {
-        uint crc = Crc32(data);
+        uint crc = ComputeCrc(data);
         Files[crc] = data;
         return crc;
     }
 
-    public byte[] Get(uint crc, Type type, NetworkableId entityID, uint numID = 0u) => Files.TryGetValue(crc, out var d) ? d : null;
+    public byte[] Get(NetworkableId entityId, uint part, uint crc) => Files.TryGetValue(crc, out var d) ? d : null;
+
+    public void Remove(NetworkableId entityId, uint part) => Files.Remove(part);
+
+    public static uint ComputeCrc(byte[] data) => Crc32(data);
 
     private static uint Crc32(byte[] data)
     {
@@ -258,6 +264,16 @@ public static class EffectNetwork
         => Sim.Log($"[effect -> {target?.username}] {effect.pooledString}");
 }
 
+// Facepunch's lightweight string slice (ConsoleSystem.Arg.FullString). Deliberately no implicit
+// conversion to string, so "arg.FullString ?? ..." or passing it as a string fails here like on a real server.
+public struct StringView
+{
+    private readonly string value;
+    public StringView(string value) { this.value = value ?? string.Empty; }
+    public int Length => (value ?? string.Empty).Length;
+    public override string ToString() => value ?? string.Empty;
+}
+
 public class ConsoleSystem
 {
     public class Arg
@@ -276,7 +292,8 @@ public class ConsoleSystem
             IsRcon = rcon;
         }
 
-        public string FullString => fullString;
+        // Current Rust returns a StringView here, not a string: only .ToString() works on it.
+        public StringView FullString => new StringView(fullString);
         public bool IsAdmin => Connection == null || Connection.authLevel > 0;
         public bool IsServerside => true;
         public bool IsClientside => false;

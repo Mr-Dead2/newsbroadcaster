@@ -208,14 +208,35 @@ namespace Oxide.Game.Rust.Cui
     }
 
     // Older Oxide builds use int for these, newer ones float; int here so only values valid in both compile.
+    // Mirrors Oxide.Rust RustCui.cs (float times, interval, timerFormat, numberFormat, destroyIfDone).
     public class CuiCountdownComponent : ICuiComponent
     {
         public string Type => "Countdown";
-        [JsonProperty("endTime")] public int EndTime { get; set; }
-        [JsonProperty("startTime")] public int StartTime { get; set; }
-        [JsonProperty("step")] public int Step { get; set; }
+        [JsonProperty("endTime")] public float EndTime { get; set; }
+        [JsonProperty("startTime")] public float StartTime { get; set; }
+        [JsonProperty("step")] public float Step { get; set; }
+        [JsonProperty("interval")] public float Interval { get; set; }
+        [JsonConverter(typeof(StringEnumConverter))] [JsonProperty("timerFormat")] public TimerFormat TimerFormat { get; set; }
+        [JsonProperty("numberFormat")] public string NumberFormat { get; set; }
+        [JsonProperty("destroyIfDone", DefaultValueHandling = DefaultValueHandling.Include)] public bool DestroyIfDone { get; set; }
         [JsonProperty("command")] public string Command { get; set; }
         [JsonProperty("fadeIn")] public float FadeIn { get; set; }
+        public bool? Enabled { get; set; }
+    }
+
+    public enum TimerFormat
+    {
+        None,
+        SecondsHundreth,
+        MinutesSeconds,
+        MinutesSecondsHundreth,
+        HoursMinutes,
+        HoursMinutesSeconds,
+        HoursMinutesSecondsMilliseconds,
+        HoursMinutesSecondsTenths,
+        DaysHoursMinutes,
+        DaysHoursMinutesSeconds,
+        Custom
     }
 
     public class CuiNeedsCursorComponent : ICuiComponent { public string Type => "NeedsCursor"; }

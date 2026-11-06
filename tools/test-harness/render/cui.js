@@ -18,6 +18,20 @@
     const p = String(str).trim().split(/\s+/).map(Number);
     return [p[0] || 0, p[1] || 0];
   }
+  // Countdown text as the client formats it (timerFormat); plain number when there is none.
+  function formatTimer(v, fmt) {
+    v = Math.max(0, Math.floor(v));
+    const p = n => String(n).padStart(2, '0');
+    const h = Math.floor(v / 3600), m = Math.floor(v / 60) % 60, sec = v % 60;
+    switch (fmt) {
+      case 'MinutesSeconds': return `${p(Math.floor(v / 60))}:${p(sec)}`;
+      case 'HoursMinutes': return `${p(h)}:${p(m)}`;
+      case 'HoursMinutesSeconds': return `${p(h)}:${p(m)}:${p(sec)}`;
+      case 'DaysHoursMinutes': return `${Math.floor(v / 86400)}:${p(h % 24)}:${p(m)}`;
+      case 'DaysHoursMinutesSeconds': return `${Math.floor(v / 86400)}:${p(h % 24)}:${p(m)}:${p(sec)}`;
+      default: return String(v);
+    }
+  }
   function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   function richText(s) {
     if (s == null) return '';
@@ -148,7 +162,7 @@
           const start = countdown.startTime || 0, end = countdown.endTime || 0, step = countdown.step || 1;
           let left = start;
           if (anim && el.__id != null && anim.appearedAt[el.__id] != null) left = Math.max(end, start - Math.floor(anim.t - anim.appearedAt[el.__id]) * step);
-          text = text.split('%TIME_LEFT%').join(String(left));
+          text = text.split('%TIME_LEFT%').join(formatTimer(left, countdown.timerFormat));
         }
         inner.innerHTML = richText(text);
         if (outline) {
