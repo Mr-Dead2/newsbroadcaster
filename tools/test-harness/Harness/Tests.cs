@@ -307,6 +307,10 @@ static class Tests
         Check(ToastOpen(player) && LastChat(admin) == "Notification re-sent to 2 online player(s).", "resend notifies online players");
         H.Console(admin, $"news.admin.togglepin {H.Id(p3)} 0");
         Check((bool)H.AGet(p3, "Pinned"), "toggle pin");
+        H.Console(admin, "news.admin.selectpage 0");
+        Check(H.Texts(admin).Contains("5 SELECTED"), "SELECT PAGE selects every post on the page");
+        H.Console(admin, "news.admin.selectpage -1");
+        Check(!H.Texts(admin).Any(t => t.EndsWith(" SELECTED")), "a second click clears them (a bad page number counts as the first page)");
         H.Console(admin, $"news.admin.toggleselect {H.Id(H.AnnByTitle("Post 4"))} 0");
         H.Console(admin, $"news.admin.toggleselect {H.Id(H.AnnByTitle("Post 5"))} 0");
         Check(H.Texts(admin).Contains("2 SELECTED"), "bulk bar shows selection");
@@ -398,6 +402,12 @@ static class Tests
         Check(Sim.ConsoleReplies.Last() == "You do not have permission to use this command.", "news.show denied for players");
         H.Console(null, "news.show \"only title\"");
         Check(Sim.ConsoleReplies.Last().StartsWith("Usage: news.show"), "news.show usage");
+        H.Console(null, "news.show \"Wipe\" \"-\" Wipe is at 7");
+        var wipe = H.AnnByTitle("Wipe");
+        Check(H.AGet(wipe, "Type").ToString() == "Info" && (string)H.AGet(wipe, "Text") == "Wipe is at 7", "news.show: a number at the end stays in the text (not read as a type)");
+        H.Console(null, "news.show \"Typed\" \"-\" Raid night event");
+        var typed = H.AnnByTitle("Typed");
+        Check(H.AGet(typed, "Type").ToString() == "Event" && (string)H.AGet(typed, "Text") == "Raid night", "news.show: a type name at the end sets the type");
 
         // ---------------------------------------------------------------
         Section("Connect popup, unread reminder, disconnect cleanup, unload");
@@ -769,6 +779,9 @@ static class Tests
         Check((string)H.AGet(vip, "Group") == "vip", "post saved for the vip group");
         Check(Sim.WebRequests.Count == webBefore, "group-only posts stay off Discord by default");
         Check(!ToastOpen(player), "players outside the group are not notified");
+        H.Console(null, "news.trigger Survivor 0");
+        Check(H.Texts(player).Any(t => t.Contains("PUBLIC NEWS")), "news.trigger picks from the posts the player can see");
+        H.Console(player, "news.close");
         H.Chat(player, "news");
         Check(H.Texts(player).Any(t => t.Contains("PUBLIC NEWS")) && !H.Texts(player).Any(t => t.Contains("VIP CRATE")), "the archive hides posts for other groups");
         Check(H.Texts(player).Contains("1 UNREAD"), "unread count only counts visible posts");
@@ -838,6 +851,8 @@ static class Tests
         Check(H.Texts(player).Any(t => t.Contains("CLOSES IN 5H 59M")), "the poll shows when it closes");
         H.Console(player, $"news.vote {H.Id(mapPoll)} 1");
         H.ASet(mapPoll, "PollEndsAt", DateTime.UtcNow.Ticks - 1);
+        H.Console(player, $"news.view {H.Id(mapPoll)}");
+        Check(H.Texts(player).Contains("VOTING CLOSED") && !H.Commands(player).Any(c => c.StartsWith("news.vote")), "when the timer runs out the poll shows as closed right away");
         int webBeforeResults = Sim.WebRequests.Count, closedHooks = HooksNamed("OnNewsPollClosed");
         Sim.Advance(31);
         Check((bool)H.AGet(mapPoll, "PollClosed") && HooksNamed("OnNewsPollClosed") == closedHooks + 1, "the timer closes the poll (OnNewsPollClosed fired)");
@@ -845,6 +860,15 @@ static class Tests
         Check(Sim.WebRequests.Count == webBeforeResults + 1 && Sim.WebRequests.Last().Body.Contains("POLL RESULTS") && Sim.WebRequests.Last().Body.Contains("**Big"), "results are posted to Discord");
         H.Console(player, $"news.vote {H.Id(mapPoll)} 0");
         Check(((Dictionary<ulong, int>)H.AGet(mapPoll, "PollVotes"))[player.userID] == 1, "no votes after the poll closed");
+        int resultLines = H.ChatOf(player).Count(m => m.StartsWith("Poll closed: Pick a map"));
+        H.Console(admin, $"news.admin.edit {H.Id(mapPoll)}");
+        H.Console(admin, "news.editor.toggle pollclosed");
+        H.Console(admin, "news.editor.save");
+        Sim.Advance(31);
+        Check(!(bool)H.AGet(mapPoll, "PollClosed") && (long)H.AGet(mapPoll, "PollEndsAt") > DateTime.UtcNow.Ticks + 5 * TimeSpan.TicksPerHour, "reopening a poll whose timer ran out starts the timer again");
+        Check(H.ChatOf(player).Count(m => m.StartsWith("Poll closed: Pick a map")) == resultLines, "...so it is not closed and announced a second time");
+        H.Console(player, $"news.vote {H.Id(mapPoll)} 0");
+        Check(((Dictionary<ulong, int>)H.AGet(mapPoll, "PollVotes"))[player.userID] == 0, "...and players can vote again");
         H.Console(admin, "news.admin.create");
         H.Console(admin, "news.editor.input title Quick poll");
         H.Console(admin, "news.editor.toggle poll");

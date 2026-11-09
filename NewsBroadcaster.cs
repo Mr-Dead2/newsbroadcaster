@@ -80,7 +80,7 @@ namespace Oxide.Plugins
         private bool dataDirty;
         private Timer saveTimer;
 
-        private static readonly string InvariantDateFormat = "yyyy-MM-dd HH:mm";
+        private const string DateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
         private const int MaxTitleChars = 120;
         private const int MaxImageUrlChars = 2048;
@@ -110,6 +110,7 @@ namespace Oxide.Plugins
         private const float EditorWidthUnits = 947.2f;  // 0.74 of 1280
         private const float EditorHeightUnits = 576f;   // 0.8 of 720
         private const float ArchiveWidthUnits = 896f;   // 0.7 of 1280
+        private const float AdminRowWidthUnits = 827f;  // 0.95 of the 0.68 x 1280 admin panel
 
         private const string AdminBackdrop = "0.015 0.018 0.022 0.74";
         private const string AdminSurface = "0.055 0.062 0.073 0.99";
@@ -191,7 +192,6 @@ namespace Oxide.Plugins
         {
             public string Type = "all";   // all, polls or an AnnouncementType name
             public string Query = string.Empty;
-            public bool Active => Type != "all" || !string.IsNullOrEmpty(Query);
         }
 
         class ReadRewardState
@@ -202,7 +202,7 @@ namespace Oxide.Plugins
 
         class EditorSession
         {
-            public Announcement Draft;
+            public Announcement Post;   // working copy; the stored post only changes on save
             public string EditingId = string.Empty;
             public bool Notify = true;
             public bool Discord = true;
@@ -386,7 +386,6 @@ namespace Oxide.Plugins
                 ["NoNewsHistory"] = "No news history available.",
                 ["NewsBroadcasted"] = "News broadcasted!",
                 ["ArchiveTitle"] = "ARCHIVE",
-                ["ReadMore"] = "READ >",
                 ["ViewArchive"] = "VIEW ARCHIVE",
                 ["BackToArchive"] = "< BACK TO ARCHIVE",
                 ["BackToEditor"] = "< BACK TO EDITOR",
@@ -395,7 +394,6 @@ namespace Oxide.Plugins
                 ["NewAnnouncement"] = "NEW ANNOUNCEMENT",
                 ["AutoCloseIn"] = "CLOSES IN %TIME_LEFT%S",
                 ["ClickToRead"] = "CLICK TO READ",
-                ["Close"] = "CLOSE",
                 ["Previous"] = "< PREVIOUS",
                 ["Next"] = "NEXT >",
                 ["Page"] = "PAGE {0} / {1}",
@@ -418,7 +416,6 @@ namespace Oxide.Plugins
                 ["OptionNotifyEdit"] = "RE-NOTIFY PLAYERS",
                 ["OptionDiscord"] = "POST TO DISCORD",
                 ["ContentBody"] = "CONTENT BODY",
-                ["BodyHint"] = "Press Enter or use \\n for a new line. Long posts scroll in-game.",
                 ["BodyHintShort"] = "Enter or \\n makes a new line",
                 ["SaveBroadcast"] = "PUBLISH ANNOUNCEMENT",
                 ["SaveChanges"] = "SAVE CHANGES",
@@ -494,7 +491,6 @@ namespace Oxide.Plugins
                 ["ConsolePublished"] = "Published '{0}'",
 
                 // Editor: settings column
-                ["SettingsColumn"] = "SETTINGS",
                 ["AudienceLabel"] = "WHO CAN SEE IT",
                 ["AudienceEveryone"] = "EVERYONE",
                 ["GroupOnly"] = "{0} ONLY",
@@ -688,33 +684,37 @@ namespace Oxide.Plugins
 
         private static string NewAnnouncementId() => Guid.NewGuid().ToString("N");
 
-        private static string Now() => DateTime.Now.ToString(InvariantDateFormat, CultureInfo.InvariantCulture);
-
-        private Announcement FindById(string id)
-        {
-            if (string.IsNullOrEmpty(id)) return null;
-            for (int i = 0; i < announcements.Count; i++)
-                if (string.Equals(announcements[i].Id, id, StringComparison.Ordinal))
-                    return announcements[i];
-            return null;
-        }
-
-        private int FindIndexById(string id)
-        {
-            if (string.IsNullOrEmpty(id)) return -1;
-            for (int i = 0; i < announcements.Count; i++)
-                if (string.Equals(announcements[i].Id, id, StringComparison.Ordinal))
-                    return i;
-            return -1;
-        }
+        private Announcement FindById(string id) => string.IsNullOrEmpty(id) ? null : announcements.Find(a => a.Id == id);
 
         // Console commands accept either the list index shown by news.list or an announcement id.
-        private int ResolveIndex(string indexOrId)
+        private Announcement FindByIndexOrId(string value)
         {
             int index;
-            if (int.TryParse(indexOrId, NumberStyles.Integer, CultureInfo.InvariantCulture, out index))
-                return index >= 0 && index < announcements.Count ? index : -1;
-            return FindIndexById(indexOrId);
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out index))
+                return index >= 0 && index < announcements.Count ? announcements[index] : null;
+            return FindById(value);
+        }
+
+        // Type names only: Enum.TryParse would also take "7" or "Info, Alert".
+        private static bool TryParseType(string value, out AnnouncementType type)
+        {
+            foreach (AnnouncementType candidate in Enum.GetValues(typeof(AnnouncementType)))
+            {
+                if (string.Equals(candidate.ToString(), value, StringComparison.OrdinalIgnoreCase))
+                {
+                    type = candidate;
+                    return true;
+                }
+            }
+            type = AnnouncementType.Info;
+            return false;
+        }
+
+        // Removes a post and tells other plugins. The caller saves.
+        private void RemoveAnnouncement(Announcement ann)
+        {
+            announcements.Remove(ann);
+            Interface.CallHook("OnNewsDeleted", BuildHookData(ann));
         }
 
         private HashSet<string> GetAdminSelection(ulong userId)
@@ -746,7 +746,7 @@ namespace Oxide.Plugins
 
         private bool IsUnread(Announcement ann, ulong userId)
         {
-            if (ann.ReadByPlayers != null && ann.ReadByPlayers.Contains(userId)) return false;
+            if (ann.ReadByPlayers.Contains(userId)) return false;
             long readAll;
             return !(storedData.ReadAllUpTo.TryGetValue(userId, out readAll) && ann.Timestamp <= readAll);
         }
@@ -764,7 +764,7 @@ namespace Oxide.Plugins
         private static int VoteOf(Announcement ann, ulong userId)
         {
             int vote;
-            return ann.PollVotes != null && ann.PollVotes.TryGetValue(userId, out vote) ? vote : -1;
+            return ann.PollVotes.TryGetValue(userId, out vote) ? vote : -1;
         }
 
         // Non-empty, trimmed poll options (max MaxPollOptions).
@@ -788,6 +788,14 @@ namespace Oxide.Plugins
         private static long NowTicks => DateTime.UtcNow.Ticks;
 
         private static bool IsExpired(Announcement ann) => ann.ExpiresAt > 0 && NowTicks >= ann.ExpiresAt;
+
+        // Votes count until the poll is closed or its timer runs out (CheckScheduled closes it a little later).
+        private static bool IsPollOpen(Announcement ann) => !ann.PollClosed && (ann.PollEndsAt <= 0 || NowTicks < ann.PollEndsAt);
+
+        // When the auto-delete / poll timer of a post published (or re-timed) at `now` runs out; 0 = off.
+        private static long ExpiryFrom(Announcement ann, long now) => ann.ExpireDays > 0 ? now + ann.ExpireDays * TimeSpan.TicksPerDay : 0;
+
+        private static long PollEndFrom(Announcement ann, long now) => HasPoll(ann) && ann.PollHours > 0 ? now + ann.PollHours * TimeSpan.TicksPerHour : 0;
 
         // Whether this player sees the post: published, not expired, and meant for everyone or for one of
         // the player's Oxide groups. Admins see every group's posts.
@@ -843,7 +851,7 @@ namespace Oxide.Plugins
         private PlayerPrefs GetPrefs(ulong userId)
         {
             PlayerPrefs prefs;
-            return storedData != null && storedData.PlayerSettings != null && storedData.PlayerSettings.TryGetValue(userId, out prefs) && prefs != null ? prefs : DefaultPrefs;
+            return storedData.PlayerSettings.TryGetValue(userId, out prefs) && prefs != null ? prefs : DefaultPrefs;
         }
 
         // Oxide groups a post can be limited to ("default" is everyone, so it is not offered).
@@ -866,7 +874,7 @@ namespace Oxide.Plugins
         }
 
         // Server-local date for a UTC tick value, in the same format as post dates.
-        private static string LocalTime(long utcTicks) => new DateTime(utcTicks, DateTimeKind.Utc).ToLocalTime().ToString(InvariantDateFormat, CultureInfo.InvariantCulture);
+        private static string LocalTime(long utcTicks) => new DateTime(utcTicks, DateTimeKind.Utc).ToLocalTime().ToString(DateFormat, CultureInfo.InvariantCulture);
 
         private static readonly Regex SpanPartRegex = new Regex(@"(\d+)\s*([dhm])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SpanOnlyRegex = new Regex(@"^\s*(\d+\s*[dhm]\s*)+$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -942,11 +950,11 @@ namespace Oxide.Plugins
                 ["date"] = ann.Date,
                 ["text"] = ann.Text,
                 ["imageUrl"] = ann.ImageUrl,
-                ["likes"] = ann.LikedPlayers?.Count ?? 0,
+                ["likes"] = ann.LikedPlayers.Count,
                 ["pinned"] = ann.Pinned,
                 ["pollOptions"] = HasPoll(ann) ? ann.PollOptions.ToArray() : new string[0],
-                ["pollVotes"] = ann.PollVotes?.Count ?? 0,
-                ["group"] = ann.Group ?? string.Empty,
+                ["pollVotes"] = ann.PollVotes.Count,
+                ["group"] = ann.Group,
                 ["expiresAt"] = ann.ExpiresAt,
                 ["pollEndsAt"] = ann.PollEndsAt,
                 ["countdownTo"] = ann.CountdownTo
@@ -972,18 +980,33 @@ namespace Oxide.Plugins
             return false;
         }
 
-        // Server console / RCON or an in-game admin.
-        private bool IsAdminArg(ConsoleSystem.Arg arg)
+        // Console commands for admins: the server console / RCON, or an in-game admin.
+        private bool RequireAdmin(ConsoleSystem.Arg arg)
         {
-            if (arg.Connection == null) return true;
-            if (arg.IsAdmin) return true;
-            return permission.UserHasPermission(arg.Connection.userid.ToString(), PermAdmin);
+            if (arg.Connection == null || arg.IsAdmin || permission.UserHasPermission(arg.Connection.userid.ToString(), PermAdmin)) return true;
+            SendReply(arg, Msg("NoPermissionCommand"));
+            return false;
         }
 
-        // In-game admin issuing a UI command; null when the caller is not allowed.
+        // The post named by the first argument of news.delete / news.resend / news.publish,
+        // or null after telling the caller what was wrong.
+        private Announcement ConsoleTarget(ConsoleSystem.Arg arg, string usageKey)
+        {
+            if (!RequireAdmin(arg)) return null;
+            if (arg.Args == null || arg.Args.Length < 1)
+            {
+                SendReply(arg, Msg(usageKey));
+                return null;
+            }
+            var ann = FindByIndexOrId(arg.GetString(0));
+            if (ann == null) SendReply(arg, Msg("ConsoleInvalidIndex"));
+            return ann;
+        }
+
+        // In-game admin clicking a UI button; null when the caller is not allowed.
         private BasePlayer AdminPlayer(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             return CanAdmin(player) ? player : null;
         }
 
@@ -1011,8 +1034,6 @@ namespace Oxide.Plugins
                 catch { }
 
                 if (raw != null && MigrateLegacyRewardArrays(raw)) needsSave = true;
-
-                if (raw != null && raw["Rewards"] == null) needsSave = true;
 
                 config = raw != null ? raw.ToObject<ConfigData>() : Config.ReadObject<ConfigData>();
                 if (config == null) throw new Exception("config is empty");
@@ -1279,24 +1300,23 @@ namespace Oxide.Plugins
         private void CheckScheduled()
         {
             if (storedData == null) return;
-            long now = NowTicks;
             bool changed = false;
 
             for (int i = announcements.Count - 1; i >= 0; i--)
             {
                 var ann = announcements[i];
-                if (ann.Draft || ann.ExpiresAt <= 0 || now < ann.ExpiresAt) continue;
-                announcements.RemoveAt(i);
-                Interface.CallHook("OnNewsDeleted", BuildHookData(ann));
-                changed = true;
-            }
-
-            foreach (var ann in announcements.ToList())
-            {
-                if (ann.Draft || ann.PollClosed || ann.PollEndsAt <= 0 || now < ann.PollEndsAt || !HasPoll(ann)) continue;
-                ann.PollClosed = true;
-                changed = true;
-                AnnouncePollResults(ann);
+                if (ann.Draft) continue;
+                if (IsExpired(ann))
+                {
+                    RemoveAnnouncement(ann);
+                    changed = true;
+                }
+                else if (!ann.PollClosed && HasPoll(ann) && !IsPollOpen(ann))
+                {
+                    ann.PollClosed = true;
+                    AnnouncePollResults(ann);
+                    changed = true;
+                }
             }
 
             if (changed) SaveAnnouncements();
@@ -1421,7 +1441,7 @@ namespace Oxide.Plugins
 
             announcements = storedData.Announcements;
 
-            long baseTime = DateTime.UtcNow.Ticks;
+            long baseTime = NowTicks;
             bool changed = false;
             int removedNulls = announcements.RemoveAll(x => x == null);
             if (removedNulls > 0)
@@ -1578,14 +1598,8 @@ namespace Oxide.Plugins
             toastNames.Remove(id);
             archiveFilters.Remove(id);
             CancelReadRewardTimer(id);
-            CancelAutoClose(id);
-
-            Timer nt;
-            if (notificationTimers.TryGetValue(id, out nt))
-            {
-                nt?.Destroy();
-                notificationTimers.Remove(id);
-            }
+            CancelTimer(autoCloseTimers, id);
+            CancelTimer(notificationTimers, id);
         }
         #endregion
 
@@ -1619,17 +1633,21 @@ namespace Oxide.Plugins
         private static void ApplyPublishTimes(Announcement ann, long now)
         {
             ann.Timestamp = now;
-            ann.Date = Now();
-            ann.ExpiresAt = ann.ExpireDays > 0 ? now + ann.ExpireDays * TimeSpan.TicksPerDay : 0;
-            ann.PollEndsAt = HasPoll(ann) && ann.PollHours > 0 ? now + ann.PollHours * TimeSpan.TicksPerHour : 0;
+            ann.Date = LocalTime(now);
+            ann.ExpiresAt = ExpiryFrom(ann, now);
+            ann.PollEndsAt = PollEndFrom(ann, now);
         }
 
         // Adds a new post (published, or saved as a draft) at the top of the list.
         private void AddAnnouncement(Announcement ann, bool draft)
         {
             ann.Draft = draft;
-            if (draft) { ann.Timestamp = DateTime.UtcNow.Ticks; ann.Date = Now(); }
-            else ApplyPublishTimes(ann, DateTime.UtcNow.Ticks);
+            if (draft)
+            {
+                ann.Timestamp = NowTicks;
+                ann.Date = LocalTime(ann.Timestamp);
+            }
+            else ApplyPublishTimes(ann, NowTicks);
             announcements.Insert(0, ann);
             SaveAnnouncements();
             RegisterImage(ann.ImageUrl);
@@ -1640,7 +1658,7 @@ namespace Oxide.Plugins
         private void PublishDraft(Announcement ann)
         {
             ann.Draft = false;
-            ApplyPublishTimes(ann, DateTime.UtcNow.Ticks);
+            ApplyPublishTimes(ann, NowTicks);
             announcements.Remove(ann);
             announcements.Insert(0, ann);
             SaveAnnouncements();
@@ -1648,23 +1666,25 @@ namespace Oxide.Plugins
             Interface.CallHook("OnNewsBroadcast", BuildHookData(ann));
         }
 
-        private Announcement CreateAnnouncement(string title, string imageUrl, string text, AnnouncementType type, string author, bool pinned, List<string> pollOptions = null)
+        // news.show / news.poll: published straight away, posted to Discord and sent to everyone online.
+        private Announcement PublishFromConsole(ConsoleSystem.Arg arg, string title, string imageUrl, string text, AnnouncementType type, List<string> pollOptions = null)
         {
+            string author = arg.Connection?.username;
             var ann = new Announcement
             {
                 Id = NewAnnouncementId(),
                 Title = LimitText(title, MaxTitleChars).Trim(),
                 ImageUrl = NormalizeImageUrl(imageUrl),
                 Text = NormalizeInputBody(text),
-                Date = Now(),
                 Author = string.IsNullOrEmpty(author) ? config.General.ServerName : author,
-                Type = type,
-                Timestamp = DateTime.UtcNow.Ticks,
-                Pinned = pinned
+                Type = type
             };
-            if (pollOptions != null && pollOptions.Count >= 2) ann.PollOptions = pollOptions;
+            if (pollOptions != null) ann.PollOptions = pollOptions;
 
             AddAnnouncement(ann, false);
+            SendToDiscord(ann);
+            NotifyPlayers(ann);
+            SendReply(arg, Msg("NewsBroadcasted"));
             return ann;
         }
         #endregion
@@ -1673,46 +1693,21 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.show")]
         private void CmdNewsShow(ConsoleSystem.Arg arg)
         {
-            if (!IsAdminArg(arg))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
+            if (!RequireAdmin(arg)) return;
 
-            string fullCommand = arg.FullString.ToString() ?? string.Empty;
-            var rawMatches = CommandSplitRegex.Matches(fullCommand).Cast<Match>().ToList();
-            var values = rawMatches.Select(m => m.Value.Trim('"')).ToList();
-
+            bool lastQuoted;
+            var values = SplitConsoleLine(arg, out lastQuoted);
             if (values.Count < 3)
             {
                 SendReply(arg, Msg("ConsoleShowUsage"));
                 return;
             }
 
-            string title = values[0];
-            string img = values[1] == "-" ? string.Empty : values[1];
+            AnnouncementType type = TakeTrailingType(values, lastQuoted);
+            string image = values[1] == "-" ? string.Empty : values[1];
+            string text = string.Join(" ", values.Skip(2).ToArray());
 
-            string text;
-            AnnouncementType type = AnnouncementType.Info;
-            AnnouncementType parsedType;
-
-            bool lastWasUnquoted = rawMatches.Count > 0 && !rawMatches[rawMatches.Count - 1].Value.StartsWith("\"");
-            if (values.Count > 3 && lastWasUnquoted && Enum.TryParse(values[values.Count - 1], true, out parsedType))
-            {
-                type = parsedType;
-                text = string.Join(" ", values.GetRange(2, values.Count - 3).ToArray());
-            }
-            else
-            {
-                text = string.Join(" ", values.GetRange(2, values.Count - 2).ToArray());
-            }
-
-            string authorName = arg.Connection != null ? arg.Connection.username : config.General.ServerName;
-            var ann = CreateAnnouncement(title, img, text, type, authorName, false);
-            SendToDiscord(ann);
-            NotifyPlayers(ann);
-
-            SendReply(arg, Msg("NewsBroadcasted"));
+            var ann = PublishFromConsole(arg, values[0], image, text, type);
             string problem = ImageLinkProblem(ann.ImageUrl);
             if (problem != null) SendReply(arg, Msg("ImageWarning", null, Msg(problem)));
         }
@@ -1720,26 +1715,17 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.poll")]
         private void CmdNewsPoll(ConsoleSystem.Arg arg)
         {
-            if (!IsAdminArg(arg))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
+            if (!RequireAdmin(arg)) return;
 
-            var rawMatches = CommandSplitRegex.Matches(arg.FullString.ToString() ?? string.Empty).Cast<Match>().ToList();
-            var values = rawMatches.Select(m => m.Value.Trim('"')).ToList();
+            bool lastQuoted;
+            var values = SplitConsoleLine(arg, out lastQuoted);
             if (values.Count < 3)
             {
                 SendReply(arg, Msg("ConsolePollUsage"));
                 return;
             }
 
-            AnnouncementType type = AnnouncementType.Info;
-            AnnouncementType parsedType;
-            bool lastWasUnquoted = !rawMatches[rawMatches.Count - 1].Value.StartsWith("\"");
-            if (values.Count > 3 && lastWasUnquoted && Enum.TryParse(values[values.Count - 1], true, out parsedType))
-                type = parsedType;
-
+            AnnouncementType type = TakeTrailingType(values, lastQuoted);
             var options = CleanPollOptions(values[2].Split('|'));
             if (options.Count < 2)
             {
@@ -1747,21 +1733,31 @@ namespace Oxide.Plugins
                 return;
             }
 
-            string authorName = arg.Connection != null ? arg.Connection.username : config.General.ServerName;
-            var ann = CreateAnnouncement(values[0], string.Empty, values[1], type, authorName, false, options);
-            SendToDiscord(ann);
-            NotifyPlayers(ann);
-            SendReply(arg, Msg("NewsBroadcasted"));
+            PublishFromConsole(arg, values[0], string.Empty, values[1], type, options);
+        }
+
+        // Words and "quoted phrases" of a console line, without the quotes.
+        private static List<string> SplitConsoleLine(ConsoleSystem.Arg arg, out bool lastQuoted)
+        {
+            var matches = CommandSplitRegex.Matches(arg.FullString.ToString()).Cast<Match>().ToList();
+            lastQuoted = matches.Count > 0 && matches[matches.Count - 1].Value.StartsWith("\"");
+            return matches.Select(m => m.Value.Trim('"')).ToList();
+        }
+
+        // news.show / news.poll end with an optional type ("... Event"). Only an unquoted last word after
+        // the required values counts; it is removed from the list.
+        private static AnnouncementType TakeTrailingType(List<string> values, bool lastQuoted)
+        {
+            AnnouncementType type;
+            if (values.Count <= 3 || lastQuoted || !TryParseType(values[values.Count - 1], out type)) return AnnouncementType.Info;
+            values.RemoveAt(values.Count - 1);
+            return type;
         }
 
         [ConsoleCommand("news.trigger")]
         private void CmdNewsTrigger(ConsoleSystem.Arg arg)
         {
-            if (!IsAdminArg(arg))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
+            if (!RequireAdmin(arg)) return;
 
             if (arg.Args == null || arg.Args.Length < 1)
             {
@@ -1776,95 +1772,44 @@ namespace Oxide.Plugins
                 return;
             }
 
-            var published = announcements.Where(a => !a.Draft).ToList();
-            if (published.Count == 0)
+            // Index into the posts this player can see (0 = newest).
+            var visible = announcements.Where(a => CanSee(player, a)).ToList();
+            if (visible.Count == 0)
             {
                 SendReply(arg, Msg("NoAnnouncementsAvailable"));
                 return;
             }
 
             int index = arg.GetInt(1, 0);
-            if (index < 0 || index >= published.Count) index = 0;
+            if (index < 0 || index >= visible.Count) index = 0;
 
-            ShowPopup(player, published[index], PopupOrigin.Direct);
+            ShowPopup(player, visible[index], PopupOrigin.Direct);
             SendReply(arg, Msg("PopupTriggered", null, player.displayName));
         }
 
         [ConsoleCommand("news.delete")]
         private void CmdNewsDelete(ConsoleSystem.Arg arg)
         {
-            if (!IsAdminArg(arg))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
+            var ann = ConsoleTarget(arg, "ConsoleDeleteUsage");
+            if (ann == null) return;
 
-            if (arg.Args == null || arg.Args.Length < 1)
-            {
-                SendReply(arg, Msg("ConsoleDeleteUsage"));
-                return;
-            }
-
-            int index = ResolveIndex(arg.GetString(0));
-            if (index < 0)
-            {
-                SendReply(arg, Msg("ConsoleInvalidIndex"));
-                return;
-            }
-
-            var removed = announcements[index];
-            announcements.RemoveAt(index);
+            RemoveAnnouncement(ann);
             SaveAnnouncements();
-            Interface.CallHook("OnNewsDeleted", BuildHookData(removed));
-            SendReply(arg, Msg("ConsoleDeleted", null, removed.Title));
+            SendReply(arg, Msg("ConsoleDeleted", null, ann.Title));
         }
 
         [ConsoleCommand("news.resend")]
         private void CmdNewsResend(ConsoleSystem.Arg arg)
         {
-            if (!IsAdminArg(arg))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
-
-            if (arg.Args == null || arg.Args.Length < 1)
-            {
-                SendReply(arg, Msg("ConsoleResendUsage"));
-                return;
-            }
-
-            int index = ResolveIndex(arg.GetString(0));
-            if (index < 0)
-            {
-                SendReply(arg, Msg("ConsoleInvalidIndex"));
-                return;
-            }
-
-            SendReply(arg, Msg("Resent", null, NotifyPlayers(announcements[index])));
+            var ann = ConsoleTarget(arg, "ConsoleResendUsage");
+            if (ann != null) SendReply(arg, Msg("Resent", null, NotifyPlayers(ann)));
         }
 
         [ConsoleCommand("news.publish")]
         private void CmdNewsPublish(ConsoleSystem.Arg arg)
         {
-            if (!IsAdminArg(arg))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
-            if (arg.Args == null || arg.Args.Length < 1)
-            {
-                SendReply(arg, Msg("ConsolePublishUsage"));
-                return;
-            }
-
-            int index = ResolveIndex(arg.GetString(0));
-            if (index < 0)
-            {
-                SendReply(arg, Msg("ConsoleInvalidIndex"));
-                return;
-            }
-            var ann = announcements[index];
+            var ann = ConsoleTarget(arg, "ConsolePublishUsage");
+            if (ann == null) return;
             if (!ann.Draft)
             {
                 SendReply(arg, Msg("ConsoleNotDraft"));
@@ -1880,11 +1825,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.list")]
         private void CmdNewsList(ConsoleSystem.Arg arg)
         {
-            if (!IsAdminArg(arg))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
+            if (!RequireAdmin(arg)) return;
 
             if (announcements.Count == 0)
             {
@@ -1903,7 +1844,7 @@ namespace Oxide.Plugins
                 if (!string.IsNullOrEmpty(a.Group)) sb.Append($" [GROUP {a.Group}]");
                 if (a.ExpiresAt > 0) sb.Append($" [DELETES {LocalTime(a.ExpiresAt)}]");
                 if (HasPoll(a) && !a.PollClosed && a.PollEndsAt > 0) sb.Append($" [POLL CLOSES {LocalTime(a.PollEndsAt)}]");
-                sb.AppendLine($"  (id {a.Id}, {a.ReadByPlayers?.Count ?? 0} reads, {a.LikedPlayers?.Count ?? 0} likes)");
+                sb.AppendLine($"  (id {a.Id}, {a.ReadByPlayers.Count} reads, {a.LikedPlayers.Count} likes)");
             }
             SendReply(arg, sb.ToString().TrimEnd());
         }
@@ -1966,7 +1907,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.page")]
         private void CmdConsolePage(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             if (string.Equals(arg.GetString(1), "reset", StringComparison.OrdinalIgnoreCase)) archiveFilters.Remove(player.userID);
@@ -1976,22 +1917,21 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.filter")]
         private void CmdArchiveFilter(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
-            string value = arg.GetString(0).ToLowerInvariant();
+            string value = arg.GetString(0);
             AnnouncementType type;
             var filter = GetArchiveFilter(player.userID);
-            if (value == "polls") filter.Type = "polls";
-            else if (value != "all" && Enum.TryParse(value, true, out type)) filter.Type = type.ToString();
-            else filter.Type = "all";
+            if (string.Equals(value, "polls", StringComparison.OrdinalIgnoreCase)) filter.Type = "polls";
+            else filter.Type = TryParseType(value, out type) ? type.ToString() : "all";
             ShowHistory(player, 0);
         }
 
         [ConsoleCommand("news.search")]
         private void CmdArchiveSearch(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             string query = arg.Args == null ? string.Empty : string.Join(" ", arg.Args).Trim();
@@ -2002,7 +1942,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.search.clear")]
         private void CmdArchiveSearchClear(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             archiveFilters.Remove(player.userID);
@@ -2012,7 +1952,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.view")]
         private void CmdConsoleView(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             var ann = FindById(arg.GetString(0));
@@ -2025,21 +1965,21 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.close")]
         private void CmdConsoleClose(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (player != null) DestroyUI(player);
         }
 
         [ConsoleCommand("news.close.notif")]
         private void CmdCloseNotif(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (player != null) DestroyNotification(player);
         }
 
         [ConsoleCommand("news.markread")]
         private void CmdMarkRead(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             MarkAllRead(player);
@@ -2047,30 +1987,28 @@ namespace Oxide.Plugins
         }
 
         // Marks every current announcement as read for this player without touching per-post read stats.
-        private int MarkAllRead(BasePlayer player)
+        private void MarkAllRead(BasePlayer player)
         {
-            ulong userId = player.userID;
             int unread = CountUnread(player);
             if (unread == 0)
             {
                 SendReply(player, Msg("NothingUnread", player));
-                return 0;
+                return;
             }
 
-            storedData.ReadAllUpTo[userId] = announcements.Where(a => !a.Draft).Max(a => a.Timestamp);
+            storedData.ReadAllUpTo[player.userID] = announcements.Where(a => CanSee(player, a)).Max(a => a.Timestamp);
             MarkDataDirty();
             SendReply(player, Msg("MarkedAllRead", player, unread));
-            return unread;
         }
 
         [ConsoleCommand("news.vote")]
         private void CmdNewsVote(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             var ann = FindById(arg.GetString(0));
-            if (ann == null || !CanSee(player, ann) || !HasPoll(ann) || ann.PollClosed || (ann.PollEndsAt > 0 && NowTicks >= ann.PollEndsAt)) return;
+            if (ann == null || !CanSee(player, ann) || !HasPoll(ann) || !IsPollOpen(ann)) return;
 
             int option = arg.GetInt(1, -1);
             if (option < 0 || option >= ann.PollOptions.Count) return;
@@ -2112,7 +2050,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.like")]
         private void CmdNewsLike(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             var ann = FindById(arg.GetString(0));
@@ -2127,18 +2065,14 @@ namespace Oxide.Plugins
             bool addedLike = !ann.LikedPlayers.Remove(userId);
             if (addedLike) ann.LikedPlayers.Add(userId);
 
-            bool rewarded = false;
-            if (addedLike && config.Rewards.EnableLikeReward)
+            // A like reward is paid once per post, so unliking and liking again earns nothing.
+            bool rewarded = addedLike && config.Rewards.EnableLikeReward && !ann.LikeRewardedPlayers.Contains(userId)
+                && GiveRewards(player, config.Rewards.LikeRewards, "RewardLike");
+            if (rewarded)
             {
-                if (ann.LikeRewardedPlayers == null) ann.LikeRewardedPlayers = new HashSet<ulong>();
-                if (!ann.LikeRewardedPlayers.Contains(userId) && GiveRewards(player, config.Rewards.LikeRewards, "RewardLike"))
-                {
-                    ann.LikeRewardedPlayers.Add(userId);
-                    rewarded = true;
-                }
+                ann.LikeRewardedPlayers.Add(userId);
+                SaveAnnouncements();
             }
-
-            if (rewarded) SaveAnnouncements();
             else MarkDataDirty();
 
             Interface.CallHook("OnNewsLiked", player, BuildHookData(ann), addedLike);
@@ -2163,7 +2097,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.countdown")]
         private void CmdNewsCountdown(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             PopupState state;
@@ -2173,7 +2107,7 @@ namespace Oxide.Plugins
                 return;
 
             var container = new CuiElementContainer();
-            AddCountdownBlock(container, player, ann, string.IsNullOrEmpty(ann.ImageUrl) ? 0.03f : 0.5f);
+            AddCountdownBlock(container, player, ann);
             CuiHelper.DestroyUi(player, CountdownName);
             CuiHelper.AddUi(player, container);
         }
@@ -2181,7 +2115,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.settings")]
         private void CmdNewsSettings(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
             ShowPlayerSettings(player);
         }
@@ -2189,7 +2123,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.settings.toggle")]
         private void CmdNewsSettingsToggle(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (!RequireView(player)) return;
 
             PlayerPrefs prefs;
@@ -2212,13 +2146,8 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.admin")]
         private void CmdNewsAdmin(ConsoleSystem.Arg arg)
         {
-            if (!IsAdminArg(arg))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
-
-            var player = arg.Connection?.player as BasePlayer;
+            if (!RequireAdmin(arg)) return;
+            var player = arg.Player();
             if (player == null) return;
 
             currentScreens.Remove(player.userID);   // typed: open from scratch
@@ -2228,14 +2157,8 @@ namespace Oxide.Plugins
         [ConsoleCommand("news.admin.page")]
         private void CmdNewsAdminPage(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
-            if (player == null) return;
-            if (!CanAdmin(player))
-            {
-                SendReply(arg, Msg("NoPermissionCommand"));
-                return;
-            }
-            ShowAdminList(player, arg.GetInt(0, 0));
+            var player = AdminPlayer(arg);
+            if (player != null) ShowAdminList(player, arg.GetInt(0, 0));
         }
 
         [ConsoleCommand("news.admin.create")]
@@ -2244,22 +2167,18 @@ namespace Oxide.Plugins
             var player = AdminPlayer(arg);
             if (player == null) return;
 
-            editors[player.userID] = new EditorSession
+            OpenEditor(player, new EditorSession
             {
-                Draft = new Announcement
+                Post = new Announcement
                 {
                     Title = string.Empty,
                     Text = string.Empty,
-                    Type = AnnouncementType.Info,
+                    ImageUrl = string.Empty,
                     Author = player.displayName,
-                    Date = Now(),
-                    ImageUrl = string.Empty
+                    Date = LocalTime(NowTicks)
                 },
-                EditingId = string.Empty,
-                Notify = true,
                 Discord = DiscordConfigured
-            };
-            ShowEditor(player);
+            });
         }
 
         [ConsoleCommand("news.admin.edit")]
@@ -2271,9 +2190,9 @@ namespace Oxide.Plugins
             var original = FindById(arg.GetString(0));
             if (original == null) return;
 
-            editors[player.userID] = new EditorSession
+            OpenEditor(player, new EditorSession
             {
-                Draft = new Announcement
+                Post = new Announcement
                 {
                     Id = original.Id,
                     Title = original.Title,
@@ -2287,13 +2206,13 @@ namespace Oxide.Plugins
                     Pinned = original.Pinned,
                     LikedPlayers = new HashSet<ulong>(original.LikedPlayers),
                     Draft = original.Draft,
-                    Group = original.Group ?? string.Empty,
+                    Group = original.Group,
                     ExpireDays = original.ExpireDays,
                     ExpiresAt = original.ExpiresAt,
                     PollHours = original.PollHours,
                     PollEndsAt = original.PollEndsAt,
                     CountdownTo = original.CountdownTo,
-                    CountdownLabel = original.CountdownLabel ?? string.Empty
+                    CountdownLabel = original.CountdownLabel
                 },
                 EditingId = original.Id,
                 IsDraft = original.Draft,
@@ -2303,10 +2222,7 @@ namespace Oxide.Plugins
                 Poll = HasPoll(original),
                 PollClosed = original.PollClosed,
                 CountdownInput = original.CountdownTo > 0 ? LocalTime(original.CountdownTo) : string.Empty
-            };
-            for (int i = 0; i < MaxPollOptions && i < original.PollOptions.Count; i++)
-                editors[player.userID].PollOptions[i] = original.PollOptions[i];
-            ShowEditor(player);
+            }, original);
         }
 
         // Opens the editor with a copy of a post: same content and settings, a new post when saved.
@@ -2320,32 +2236,36 @@ namespace Oxide.Plugins
             if (original == null) return;
 
             bool futureCountdown = original.CountdownTo > NowTicks;
-            var session = new EditorSession
+            SendReply(player, Msg("Copied", player, Ellipsize(original.Title, 40)));
+            OpenEditor(player, new EditorSession
             {
-                Draft = new Announcement
+                Post = new Announcement
                 {
                     Title = original.Title,
                     ImageUrl = original.ImageUrl,
                     Text = original.Text,
                     Type = original.Type,
                     Author = player.displayName,
-                    Date = Now(),
-                    Group = original.Group ?? string.Empty,
+                    Date = LocalTime(NowTicks),
+                    Group = original.Group,
                     ExpireDays = original.ExpireDays,
                     PollHours = original.PollHours,
                     CountdownTo = futureCountdown ? original.CountdownTo : 0,
-                    CountdownLabel = original.CountdownLabel ?? string.Empty
+                    CountdownLabel = original.CountdownLabel
                 },
-                EditingId = string.Empty,
-                Notify = true,
                 Discord = DiscordConfigured,
                 Poll = HasPoll(original),
                 CountdownInput = futureCountdown ? LocalTime(original.CountdownTo) : string.Empty
-            };
-            for (int i = 0; i < MaxPollOptions && i < original.PollOptions.Count; i++)
-                session.PollOptions[i] = original.PollOptions[i];
+            }, original);
+        }
+
+        // pollSource: the post whose poll options fill the editor's option fields.
+        private void OpenEditor(BasePlayer player, EditorSession session, Announcement pollSource = null)
+        {
+            if (pollSource != null)
+                for (int i = 0; i < MaxPollOptions && i < pollSource.PollOptions.Count; i++)
+                    session.PollOptions[i] = pollSource.PollOptions[i];
             editors[player.userID] = session;
-            SendReply(player, Msg("Copied", player, Ellipsize(original.Title, 40)));
             ShowEditor(player);
         }
 
@@ -2389,10 +2309,8 @@ namespace Oxide.Plugins
             var ann = FindById(arg.GetString(0));
             if (ann == null || ann.Draft) return;
 
-            int page = arg.GetInt(1, 0);
-            int reached = NotifyPlayers(ann);
-            SendReply(player, Msg("Resent", player, reached));
-            ShowAdminList(player, page);
+            SendReply(player, Msg("Resent", player, NotifyPlayers(ann)));
+            ShowAdminList(player, arg.GetInt(1, 0));
         }
 
         [ConsoleCommand("news.admin.toggleselect")]
@@ -2402,7 +2320,7 @@ namespace Oxide.Plugins
             if (player == null) return;
 
             string id = arg.GetString(0);
-            if (string.IsNullOrEmpty(id) || FindById(id) == null) return;
+            if (FindById(id) == null) return;
 
             var sel = GetAdminSelection(player.userID);
             if (!sel.Remove(id)) sel.Add(id);
@@ -2416,22 +2334,13 @@ namespace Oxide.Plugins
             var player = AdminPlayer(arg);
             if (player == null) return;
 
-            int page = arg.GetInt(0, 0);
+            // Selects every post on the page, or clears them when they are all selected already.
+            int page = Math.Max(0, arg.GetInt(0, 0));
             int perPage = config.General.AnnouncementsPerPage;
-            var displayList = GetDisplayOrder();
+            var onPage = GetDisplayOrder().Skip(page * perPage).Take(perPage).Select(a => a.Id).ToList();
             var sel = GetAdminSelection(player.userID);
-
-            int start = page * perPage;
-            int end = Math.Min(start + perPage, displayList.Count);
-
-            bool allSelected = true;
-            for (int i = start; i < end; i++) { if (!sel.Contains(displayList[i].Id)) { allSelected = false; break; } }
-
-            for (int i = start; i < end; i++)
-            {
-                if (allSelected) sel.Remove(displayList[i].Id);
-                else sel.Add(displayList[i].Id);
-            }
+            if (onPage.All(sel.Contains)) sel.ExceptWith(onPage);
+            else sel.UnionWith(onPage);
 
             ShowAdminList(player, page);
         }
@@ -2456,11 +2365,8 @@ namespace Oxide.Plugins
             int page = arg.GetInt(1, 0);
 
             PruneAdminSelection(player.userID);
-            var sel = GetAdminSelection(player.userID);
-            if (sel.Count == 0) { ShowAdminList(player, page); return; }
-
             int changed = 0;
-            foreach (var id in sel.ToList())
+            foreach (var id in GetAdminSelection(player.userID))
             {
                 var ann = FindById(id);
                 if (ann == null || ann.Pinned == pin) continue;
@@ -2495,28 +2401,14 @@ namespace Oxide.Plugins
 
             PruneAdminSelection(player.userID);
             var sel = GetAdminSelection(player.userID);
-            if (sel.Count == 0)
+            if (sel.Count > 0)
             {
-                CuiHelper.DestroyUi(player, ConfirmLayer);
-                ShowAdminList(player, arg.GetInt(0, 0));
-                return;
-            }
-
-            int removed = 0;
-            foreach (var id in sel.ToList())
-            {
-                int idx = FindIndexById(id);
-                if (idx < 0) continue;
-                var victim = announcements[idx];
-                announcements.RemoveAt(idx);
-                Interface.CallHook("OnNewsDeleted", BuildHookData(victim));
-                removed++;
+                foreach (var id in sel) RemoveAnnouncement(FindById(id));
+                SaveAnnouncements();
+                SendReply(player, Msg("BulkDeleted", player, sel.Count));
             }
 
             adminSelections.Remove(player.userID);
-            if (removed > 0) SaveAnnouncements();
-            CuiHelper.DestroyUi(player, ConfirmLayer);
-            SendReply(player, Msg("BulkDeleted", player, removed));
             ShowAdminList(player, arg.GetInt(0, 0));
         }
 
@@ -2535,22 +2427,19 @@ namespace Oxide.Plugins
             var player = AdminPlayer(arg);
             if (player == null) return;
 
-            int index = FindIndexById(arg.GetString(0));
-            if (index >= 0)
+            var ann = FindById(arg.GetString(0));
+            if (ann != null)
             {
-                var removed = announcements[index];
-                announcements.RemoveAt(index);
+                RemoveAnnouncement(ann);
                 SaveAnnouncements();
-                Interface.CallHook("OnNewsDeleted", BuildHookData(removed));
             }
-            CuiHelper.DestroyUi(player, ConfirmLayer);
             ShowAdminList(player, arg.GetInt(1, 0));
         }
 
         [ConsoleCommand("news.confirm.close")]
         private void CmdConfirmClose(ConsoleSystem.Arg arg)
         {
-            var player = arg.Connection?.player as BasePlayer;
+            var player = arg.Player();
             if (player != null) CuiHelper.DestroyUi(player, ConfirmLayer);
         }
 
@@ -2606,11 +2495,12 @@ namespace Oxide.Plugins
 
             string field = arg.GetString(0).ToLowerInvariant();
 
-            string fullStr = arg.FullString.ToString() ?? string.Empty;
+            // The value is the rest of the raw line, so its spacing and quotes are kept as typed.
+            string line = arg.FullString.ToString();
             string value;
-            if (fullStr.StartsWith(field, StringComparison.OrdinalIgnoreCase))
+            if (line.StartsWith(field, StringComparison.OrdinalIgnoreCase))
             {
-                value = fullStr.Substring(field.Length).TrimStart();
+                value = line.Substring(field.Length).TrimStart();
                 if (value.Length >= 2 && value.StartsWith("\"") && value.EndsWith("\""))
                     value = value.Substring(1, value.Length - 2);
             }
@@ -2619,7 +2509,7 @@ namespace Oxide.Plugins
                 value = string.Join(" ", arg.Args.Skip(1).ToArray());
             }
 
-            var ann = session.Draft;
+            var ann = session.Post;
             switch (field)
             {
                 case "title":
@@ -2659,18 +2549,6 @@ namespace Oxide.Plugins
             RefreshEditorHint(player, session, field);
         }
 
-        [ConsoleCommand("news.editor.type")]
-        private void CmdEditorType(ConsoleSystem.Arg arg)
-        {
-            var player = AdminPlayer(arg);
-            var session = GetEditor(player);
-            if (session == null) return;
-
-            int next = ((int)session.Draft.Type + 1) % Enum.GetValues(typeof(AnnouncementType)).Length;
-            session.Draft.Type = (AnnouncementType)next;
-            ShowEditor(player);
-        }
-
         [ConsoleCommand("news.editor.settype")]
         private void CmdEditorSetType(ConsoleSystem.Arg arg)
         {
@@ -2679,7 +2557,7 @@ namespace Oxide.Plugins
             if (session == null) return;
 
             AnnouncementType type;
-            if (Enum.TryParse(arg.GetString(0), true, out type)) session.Draft.Type = type;
+            if (TryParseType(arg.GetString(0), out type)) session.Post.Type = type;
             ShowEditor(player);
         }
 
@@ -2692,7 +2570,7 @@ namespace Oxide.Plugins
 
             switch (arg.GetString(0).ToLowerInvariant())
             {
-                case "pin": session.Draft.Pinned = !session.Draft.Pinned; break;
+                case "pin": session.Post.Pinned = !session.Post.Pinned; break;
                 case "notify": session.Notify = !session.Notify; break;
                 case "discord": session.Discord = !session.Discord && DiscordConfigured; break;
                 case "poll": session.Poll = !session.Poll; break;
@@ -2701,16 +2579,16 @@ namespace Oxide.Plugins
                 {
                     var choices = new List<string> { string.Empty };
                     choices.AddRange(AudienceGroups());
-                    int at = choices.FindIndex(g => string.Equals(g, session.Draft.Group ?? string.Empty, StringComparison.OrdinalIgnoreCase));
-                    session.Draft.Group = choices[(at + 1) % choices.Count];
+                    int at = choices.FindIndex(g => string.Equals(g, session.Post.Group, StringComparison.OrdinalIgnoreCase));
+                    session.Post.Group = choices[(at + 1) % choices.Count];
                     break;
                 }
                 case "expire":
-                    session.Draft.ExpireDays = NextPreset(ExpirePresets, session.Draft.ExpireDays);
+                    session.Post.ExpireDays = NextPreset(ExpirePresets, session.Post.ExpireDays);
                     session.ExpireChanged = true;
                     break;
                 case "polltimer":
-                    session.Draft.PollHours = NextPreset(PollTimerPresets, session.Draft.PollHours);
+                    session.Post.PollHours = NextPreset(PollTimerPresets, session.Post.PollHours);
                     session.PollTimerChanged = true;
                     break;
             }
@@ -2731,10 +2609,10 @@ namespace Oxide.Plugins
             if (session == null) return;
 
             Dictionary<int, int> unusedMap;
-            session.Draft.PollOptions = session.Poll ? BuildPollOptions(session, out unusedMap) : new List<string>();
-            session.Draft.PollClosed = session.PollClosed;
-            session.Draft.PollVotes = new Dictionary<ulong, int>();
-            ShowPopup(player, session.Draft, PopupOrigin.Preview);
+            session.Post.PollOptions = session.Poll ? BuildPollOptions(session, out unusedMap) : new List<string>();
+            session.Post.PollClosed = session.PollClosed;
+            session.Post.PollVotes = new Dictionary<ulong, int>();
+            ShowPopup(player, session.Post, PopupOrigin.Preview);
         }
 
         [ConsoleCommand("news.editor.back")]
@@ -2758,9 +2636,9 @@ namespace Oxide.Plugins
             if (session == null) return;
             if (!session.Publishes) asDraft = false;   // a published post doesn't go back to the drafts
 
-            var draft = session.Draft;
-            draft.Title = LimitText(draft.Title, MaxTitleChars).Trim();
-            if (string.IsNullOrEmpty(draft.Title))
+            var edit = session.Post;
+            edit.Title = LimitText(edit.Title, MaxTitleChars).Trim();
+            if (string.IsNullOrEmpty(edit.Title))
             {
                 SendReply(player, Msg("TitleRequired", player));
                 ShowEditor(player);
@@ -2785,15 +2663,15 @@ namespace Oxide.Plugins
                 ann = new Announcement
                 {
                     Id = NewAnnouncementId(),
-                    Title = draft.Title,
-                    ImageUrl = NormalizeImageUrl(draft.ImageUrl),
-                    Text = NormalizeInputBody(draft.Text),
-                    Author = string.IsNullOrEmpty(draft.Author) ? player.displayName : draft.Author,
-                    Type = draft.Type,
-                    Pinned = draft.Pinned
+                    Title = edit.Title,
+                    ImageUrl = NormalizeImageUrl(edit.ImageUrl),
+                    Text = NormalizeInputBody(edit.Text),
+                    Author = string.IsNullOrEmpty(edit.Author) ? player.displayName : edit.Author,
+                    Type = edit.Type,
+                    Pinned = edit.Pinned
                 };
-                if (pollOptions != null && pollOptions.Count >= 2) ann.PollOptions = pollOptions;
-                ApplyEditorSettings(draft, ann);
+                if (pollOptions != null) ann.PollOptions = pollOptions;
+                ApplyEditorSettings(edit, ann);
                 AddAnnouncement(ann, asDraft);
                 published = !asDraft;
             }
@@ -2809,13 +2687,13 @@ namespace Oxide.Plugins
                 }
 
                 bool wasClosed = ann.PollClosed;
-                ann.Title = draft.Title;
-                ann.ImageUrl = NormalizeImageUrl(draft.ImageUrl);
-                ann.Text = NormalizeInputBody(draft.Text);
-                ann.Type = draft.Type;
-                ann.Pinned = draft.Pinned;
+                ann.Title = edit.Title;
+                ann.ImageUrl = NormalizeImageUrl(edit.ImageUrl);
+                ann.Text = NormalizeInputBody(edit.Text);
+                ann.Type = edit.Type;
+                ann.Pinned = edit.Pinned;
                 ApplyPollEdit(ann, session, pollOptions, slotMap);
-                ApplyEditorSettings(draft, ann);
+                ApplyEditorSettings(edit, ann);
 
                 if (ann.Draft && !asDraft)
                 {
@@ -2827,12 +2705,15 @@ namespace Oxide.Plugins
                     published = false;
                     if (!ann.Draft)
                     {
-                        // Changed timers count from now; untouched ones keep their time.
+                        // A timer the admin changed counts from now; an untouched one keeps its time.
+                        // Reopening a poll whose timer already ran out starts the timer again (otherwise
+                        // CheckScheduled would close it straight away and announce the result twice).
                         long now = NowTicks;
-                        ann.EditedDate = Now();
-                        if (session.ExpireChanged) ann.ExpiresAt = ann.ExpireDays > 0 ? now + ann.ExpireDays * TimeSpan.TicksPerDay : 0;
-                        if (!HasPoll(ann)) ann.PollEndsAt = 0;
-                        else if (session.PollTimerChanged) ann.PollEndsAt = ann.PollHours > 0 ? now + ann.PollHours * TimeSpan.TicksPerHour : 0;
+                        bool reopened = wasClosed && !ann.PollClosed;
+                        ann.EditedDate = LocalTime(now);
+                        if (session.ExpireChanged) ann.ExpiresAt = ExpiryFrom(ann, now);
+                        if (!HasPoll(ann) || session.PollTimerChanged || (reopened && ann.PollEndsAt <= now))
+                            ann.PollEndsAt = PollEndFrom(ann, now);
                         pollJustClosed = !wasClosed && ann.PollClosed && HasPoll(ann);
                     }
                     SaveAnnouncements();
@@ -2863,11 +2744,11 @@ namespace Oxide.Plugins
         // Settings from the editor's right-hand column onto the saved post.
         private static void ApplyEditorSettings(Announcement from, Announcement to)
         {
-            to.Group = from.Group ?? string.Empty;
+            to.Group = from.Group;
             to.ExpireDays = from.ExpireDays;
             to.PollHours = HasPoll(to) ? from.PollHours : 0;
             to.CountdownTo = from.CountdownTo;
-            to.CountdownLabel = from.CountdownLabel ?? string.Empty;
+            to.CountdownLabel = from.CountdownLabel;
         }
 
         [ConsoleCommand("news.editor.cancel")]
@@ -2903,12 +2784,7 @@ namespace Oxide.Plugins
                 CuiHelper.DestroyUi(player, toast);
                 toastNames.Remove(player.userID);
             }
-            Timer t;
-            if (notificationTimers.TryGetValue(player.userID, out t))
-            {
-                t?.Destroy();
-                notificationTimers.Remove(player.userID);
-            }
+            CancelTimer(notificationTimers, player.userID);
         }
 
         private void ShowNotification(BasePlayer player, Announcement ann)
@@ -2998,7 +2874,7 @@ namespace Oxide.Plugins
             playersWithUiOpen.Remove(player.userID);
             currentScreens.Remove(player.userID);
             openPopups.Remove(player.userID);
-            CancelAutoClose(player.userID);
+            CancelTimer(autoCloseTimers, player.userID);
             CancelReadRewardTimer(player.userID);
         }
 
@@ -3006,18 +2882,16 @@ namespace Oxide.Plugins
         private void StopAutoClose(BasePlayer player)
         {
             if (!autoCloseTimers.ContainsKey(player.userID)) return;
-            CancelAutoClose(player.userID);
+            CancelTimer(autoCloseTimers, player.userID);
             CuiHelper.DestroyUi(player, AutoCloseName);
         }
 
-        private void CancelAutoClose(ulong userId)
+        private static void CancelTimer(Dictionary<ulong, Timer> timers, ulong userId)
         {
             Timer t;
-            if (autoCloseTimers.TryGetValue(userId, out t))
-            {
-                t?.Destroy();
-                autoCloseTimers.Remove(userId);
-            }
+            if (!timers.TryGetValue(userId, out t)) return;
+            t?.Destroy();
+            timers.Remove(userId);
         }
 
         // Animation. Rust CUI fades graphics in when they appear (FadeIn) and out when destroyed (FadeOut);
@@ -3036,7 +2910,7 @@ namespace Oxide.Plugins
             fresh = previous == UiScreen.None;
             CuiHelper.DestroyUi(player, ConfirmLayer);   // dialogs belong to the view they were opened from
             openPopups.Remove(player.userID);
-            CancelAutoClose(player.userID);
+            CancelTimer(autoCloseTimers, player.userID);
             CancelReadRewardTimer(player.userID);
             currentScreens[player.userID] = screen;
             playersWithUiOpen.Add(player.userID);
@@ -3540,16 +3414,14 @@ namespace Oxide.Plugins
             if (preview)
                 AddPill(container, mainPanel, Msg("PreviewBadge", player), "0.852 0.928", "0.938 0.972", c.ButtonPrimary, "1 1 1 1", 10);
             else
-            {
                 AddPopupNavigation(container, player, ann, origin, mainPanel, c);
-            }
 
             AddGhostButton(container, mainPanel, "✕", preview ? "news.editor.back" : "news.close", "0.947 0.928", "0.972 0.972", c.TextNormal, 11);
             AddHairline(container, mainPanel, 0.905f, 0.03f, 0.97f);
 
             // Image column: a framed card; the picture fills it.
             bool hasImage = !string.IsNullOrEmpty(ann.ImageUrl);
-            float contentLeft = hasImage ? 0.5f : 0.03f;
+            float contentLeft = ContentLeft(ann);
 
             if (hasImage)
             {
@@ -3598,7 +3470,7 @@ namespace Oxide.Plugins
             }, mainPanel);
 
             // Live countdown ("WIPE IN 2 DAYS 04:12:33") right above the body.
-            if (ann.CountdownTo > 0) AddCountdownBlock(container, player, ann, contentLeft);
+            if (ann.CountdownTo > 0) AddCountdownBlock(container, player, ann);
             float bodyTop = BodyTopFor(ann);
 
             // Poll block sits under the body and shortens it.
@@ -3613,8 +3485,7 @@ namespace Oxide.Plugins
             // Body text sits directly on the panel, aligned with the title, in a native scroll view.
             // Content height is estimated from wrapped line count.
             string bodyText = ann.Text ?? string.Empty;
-            int wrap = hasImage ? BodyWrapWithImage : BodyWrapFullWidth;
-            int estLines = BuildBodyDisplayLines(bodyText, wrap).Count + 1;
+            int estLines = BuildBodyDisplayLines(bodyText, BodyWrap(ann)).Count + 1;
             float viewportUnits = (bodyTop - bodyBottom) * PopupHeightUnits;
             int extra = Mathf.Max(0, Mathf.CeilToInt(estLines * BodyLineUnits - viewportUnits));
 
@@ -3653,7 +3524,7 @@ namespace Oxide.Plugins
             if (preview)
             {
                 string likePreview = AddSurface(container, mainPanel, "0.03 0.028", "0.135 0.082", Ghost, RadiusButton);
-                AddLabelIn(container, likePreview, $"❤  {ann.LikedPlayers?.Count ?? 0}", 12, "0.62 0.63 0.68 0.6");
+                AddLabelIn(container, likePreview, $"❤  {ann.LikedPlayers.Count}", 12, "0.62 0.63 0.68 0.6");
             }
             else if (!string.IsNullOrEmpty(ann.Id))
             {
@@ -3691,7 +3562,6 @@ namespace Oxide.Plugins
             if (origin == PopupOrigin.Broadcast && config.General.EnableAutoClose)
             {
                 ulong userId = player.userID;
-                CancelAutoClose(userId);
                 autoCloseTimers[userId] = timer.Once(config.General.AutoCloseSeconds, () =>
                 {
                     autoCloseTimers.Remove(userId);
@@ -3715,15 +3585,20 @@ namespace Oxide.Plugins
         // The body starts lower when a countdown block sits above it.
         private static float BodyTopFor(Announcement ann) => ann.CountdownTo > 0 ? BodyTop - CountdownBlockHeight : BodyTop;
 
+        // Title, body, countdown and poll sit right of the picture, or use the full width without one.
+        private static float ContentLeft(Announcement ann) => string.IsNullOrEmpty(ann.ImageUrl) ? 0.03f : 0.5f;
+
+        private static int BodyWrap(Announcement ann) => string.IsNullOrEmpty(ann.ImageUrl) ? BodyWrapFullWidth : BodyWrapWithImage;
+
         // Countdown card: title on the left, the time on the right. The client counts the seconds itself
         // (HoursMinutesSeconds); days are written as text, and when a day runs out the client sends
         // news.countdown so the next day (or "STARTED") is drawn. Named, so it can be swapped in place.
-        private void AddCountdownBlock(CuiElementContainer container, BasePlayer player, Announcement ann, float contentLeft)
+        private void AddCountdownBlock(CuiElementContainer container, BasePlayer player, Announcement ann)
         {
             SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));   // also when redrawn on its own
             var c = config.Colors;
             float top = BodyTop - 0.008f, bottom = top - 0.062f;   // the rest of CountdownBlockHeight is space above the body
-            AddSurface(container, PopupPanel, Anchor(contentLeft, bottom), Anchor(0.97f, top), MixAlpha(c.ButtonPrimary, 0.10f), RadiusButton, null, CountdownName, MixAlpha(c.ButtonPrimary, 0.30f));
+            AddSurface(container, PopupPanel, Anchor(ContentLeft(ann), bottom), Anchor(0.97f, top), MixAlpha(c.ButtonPrimary, 0.10f), RadiusButton, null, CountdownName, MixAlpha(c.ButtonPrimary, 0.30f));
 
             string label = string.IsNullOrEmpty(ann.CountdownLabel) ? Msg("CountdownDefaultLabel", player) : ann.CountdownLabel.ToUpper();
             container.Add(new CuiLabel
@@ -3777,8 +3652,7 @@ namespace Oxide.Plugins
         private static void PollLayout(Announcement ann, out float bodyBottom, out float pollBottom)
         {
             float pollH = PollBlockHeight(ann);
-            int wrap = string.IsNullOrEmpty(ann.ImageUrl) ? BodyWrapFullWidth : BodyWrapWithImage;
-            float needed = Math.Max(0.09f, (BuildBodyDisplayLines(ann.Text ?? string.Empty, wrap).Count * BodyLineUnits + 16f) / PopupHeightUnits);
+            float needed = Math.Max(0.09f, (BuildBodyDisplayLines(ann.Text ?? string.Empty, BodyWrap(ann)).Count * BodyLineUnits + 16f) / PopupHeightUnits);
             bodyBottom = Math.Max(BodyBottomDefault + pollH + 0.018f, BodyTopFor(ann) - needed);
             pollBottom = bodyBottom - 0.018f - pollH;
         }
@@ -3789,7 +3663,7 @@ namespace Oxide.Plugins
         {
             SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));   // also when redrawn on its own
             var c = config.Colors;
-            float left = string.IsNullOrEmpty(ann.ImageUrl) ? 0.03f : 0.5f;
+            float left = ContentLeft(ann);
             float h = PollBlockHeight(ann);
             float bodyBottom, pollBottom;
             PollLayout(ann, out bodyBottom, out pollBottom);
@@ -3801,8 +3675,9 @@ namespace Oxide.Plugins
             int myVote = preview ? -1 : VoteOf(ann, userId);
             int[] counts = CountVotes(ann);
             int total = counts.Sum();
-            bool canVote = !preview && !ann.PollClosed && (myVote < 0 || config.Polls.AllowVoteChange);
-            bool showResults = !preview && (myVote >= 0 || ann.PollClosed || config.Polls.ShowResultsBeforeVoting || CanAdmin(player));
+            bool closed = !IsPollOpen(ann);
+            bool canVote = !preview && !closed && (myVote < 0 || config.Polls.AllowVoteChange);
+            bool showResults = !preview && (myVote >= 0 || closed || config.Polls.ShowResultsBeforeVoting || CanAdmin(player));
 
             float headBottom = 1f - 0.05f / h;
             container.Add(new CuiLabel
@@ -3811,10 +3686,10 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = Anchor(0.03f, headBottom), AnchorMax = "0.55 1" }
             }, PollPanelName);
 
-            string hint = ann.PollClosed ? Msg("PollClosedLabel", player)
+            string hint = closed ? Msg("PollClosedLabel", player)
                 : myVote >= 0 ? Msg(config.Polls.AllowVoteChange ? "PollVotedChange" : "PollVoted", player)
                 : Msg("PollClickToVote", player);
-            if (!ann.PollClosed && !preview && ann.PollEndsAt > NowTicks)
+            if (!closed && !preview && ann.PollEndsAt > 0)
                 hint += "   •   " + Msg("PollClosesIn", player, FormatSpan(ann.PollEndsAt - NowTicks, player).ToUpper());
             container.Add(new CuiLabel
             {
@@ -4072,7 +3947,7 @@ namespace Oxide.Plugins
 
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = $"❤ {ann.LikedPlayers?.Count ?? 0}", FontSize = 10, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = FontBold },
+                    Text = { Text = $"❤ {ann.LikedPlayers.Count}", FontSize = 10, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = FontBold },
                     RectTransform = { AnchorMin = "0.82 0.12", AnchorMax = "0.93 0.48" }
                 }, itemPanel);
 
@@ -4157,7 +4032,7 @@ namespace Oxide.Plugins
             AddRoundedFill(container, bar, color, 1.5f);
         }
 
-        private string GetTypeColor(AnnouncementType type)
+        private static string GetTypeColor(AnnouncementType type)
         {
             switch (type)
             {
@@ -4177,18 +4052,14 @@ namespace Oxide.Plugins
             return ImageLibrary.Call<string>("GetImage", url);
         }
 
-        private string RgbaToHex(string rgba)
+        // For <color=...> tags in rich text.
+        private static string RgbaToHex(string rgba)
         {
-            try
-            {
-                var parts = rgba.Split(' ');
-                int r = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[0], CultureInfo.InvariantCulture) * 255), 0, 255);
-                int g = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[1], CultureInfo.InvariantCulture) * 255), 0, 255);
-                int b = Mathf.Clamp(Mathf.RoundToInt(float.Parse(parts[2], CultureInfo.InvariantCulture) * 255), 0, 255);
-                return $"#{r:X2}{g:X2}{b:X2}";
-            }
-            catch { return "#FFFFFF"; }
+            float[] c = ParseColor(rgba);
+            return $"#{ColorByte(c[0]):X2}{ColorByte(c[1]):X2}{ColorByte(c[2]):X2}";
         }
+
+        private static int ColorByte(float value) => Mathf.Clamp(Mathf.RoundToInt(value * 255f), 0, 255);
         #endregion
 
         #region Admin UI
@@ -4212,12 +4083,12 @@ namespace Oxide.Plugins
 
             container.Add(new CuiLabel
             {
-                Text = { Text = $"{Msg("AdminControl", player)}  <color={RgbaToHex(c.TextMuted)}>/  {(config.General.ServerName ?? "SERVER").ToUpper()}</color>", FontSize = 17, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = FontBold },
+                Text = { Text = $"{Msg("AdminControl", player)}  <color={RgbaToHex(c.TextMuted)}>/  {config.General.ServerName.ToUpper()}</color>", FontSize = 17, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = FontBold },
                 RectTransform = { AnchorMin = "0.035 0.925", AnchorMax = "0.57 0.975" }
             }, mainPanel);
 
-            int totalReads = announcements.Sum(a => a.ReadByPlayers?.Count ?? 0);
-            int totalLikes = announcements.Sum(a => a.LikedPlayers?.Count ?? 0);
+            int totalReads = announcements.Sum(a => a.ReadByPlayers.Count);
+            int totalLikes = announcements.Sum(a => a.LikedPlayers.Count);
             container.Add(new CuiLabel
             {
                 Text = { Text = Msg("AdminStats", player, announcements.Count, announcements.Count(a => a.Pinned), totalReads, totalLikes), FontSize = 9, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = FontBold },
@@ -4225,8 +4096,6 @@ namespace Oxide.Plugins
             }, mainPanel);
 
             AddPrimaryButton(container, mainPanel, Msg("NewPost", player), "news.admin.create", "0.735 0.907", "0.925 0.961", c.ButtonPrimary, "1 1 1 1", 10);
-
-
             AddGhostButton(container, mainPanel, Msg("Themes", player), "news.admin.themes", "0.59 0.907", "0.725 0.961", c.TextNormal, 9);
             AddGhostButton(container, mainPanel, "✕", "news.close", "0.94 0.907", "0.975 0.961", c.TextNormal, 12);
 
@@ -4242,6 +4111,7 @@ namespace Oxide.Plugins
             int count = 0;
             float rowHeight = 0.68f / perPage;
             float padding = 0.007f;
+            long now = NowTicks;
 
             if (displayList.Count == 0)
             {
@@ -4273,7 +4143,6 @@ namespace Oxide.Plugins
                 if (selected) AddLabelIn(container, check, "✓", 11, "1 1 1 1");
                 AddAccentBar(container, itemPanel, typeColor, 0.045f, 0f);
 
-
                 // Title, with DRAFT / group badges after it.
                 string titleText = Ellipsize((string.IsNullOrEmpty(ann.Title) ? Msg("NoTitle", player) : ann.Title).ToUpper(), ann.Draft || !string.IsNullOrEmpty(ann.Group) ? 34 : 46);
                 container.Add(new CuiLabel
@@ -4285,7 +4154,7 @@ namespace Oxide.Plugins
                 if (!string.IsNullOrEmpty(ann.Group))
                 {
                     string groupText = Msg("GroupOnly", player, ann.Group.ToUpper());
-                    float groupWidth = Math.Min(0.12f, (groupText.Length * 5f + 14f) / 827f);
+                    float groupWidth = Math.Min(0.12f, (groupText.Length * 5f + 14f) / AdminRowWidthUnits);
                     AddPill(container, itemPanel, groupText, Anchor(badgeRight - groupWidth, 0.56f), Anchor(badgeRight, 0.82f), Blend("1 1 1 0.12", rowColor), c.TextTitle, 8);
                     badgeRight -= groupWidth + 0.006f;
                 }
@@ -4301,10 +4170,11 @@ namespace Oxide.Plugins
                 }, itemPanel);
 
                 // Stats, then when the post deletes itself / the poll closes.
-                string stats = HasPoll(ann) ? Msg("ReadsLikesVotes", player, ann.ReadByPlayers?.Count ?? 0, ann.LikedPlayers?.Count ?? 0, ann.PollVotes.Count) : Msg("ReadsLikes", player, ann.ReadByPlayers?.Count ?? 0, ann.LikedPlayers?.Count ?? 0);
-                long nowTicks = NowTicks;
-                if (!ann.Draft && ann.ExpiresAt > nowTicks) stats += "  •  " + Msg("AdminDeletesIn", player, FormatSpan(ann.ExpiresAt - nowTicks, player).ToUpper());
-                if (!ann.Draft && HasPoll(ann) && !ann.PollClosed && ann.PollEndsAt > nowTicks) stats += "  •  " + Msg("AdminPollClosesIn", player, FormatSpan(ann.PollEndsAt - nowTicks, player).ToUpper());
+                string stats = HasPoll(ann)
+                    ? Msg("ReadsLikesVotes", player, ann.ReadByPlayers.Count, ann.LikedPlayers.Count, ann.PollVotes.Count)
+                    : Msg("ReadsLikes", player, ann.ReadByPlayers.Count, ann.LikedPlayers.Count);
+                if (!ann.Draft && ann.ExpiresAt > now) stats += "  •  " + Msg("AdminDeletesIn", player, FormatSpan(ann.ExpiresAt - now, player).ToUpper());
+                if (!ann.Draft && HasPoll(ann) && !ann.PollClosed && ann.PollEndsAt > now) stats += "  •  " + Msg("AdminPollClosesIn", player, FormatSpan(ann.PollEndsAt - now, player).ToUpper());
                 container.Add(new CuiLabel
                 {
                     Text = { Text = stats, FontSize = 8, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = FontRegular },
@@ -4334,7 +4204,6 @@ namespace Oxide.Plugins
                 string bulkPanel = mainPanel + ".Bulk";
                 AddSurface(container, mainPanel, "0.025 0.108", "0.975 0.165", Blend(MixAlpha(c.ButtonPrimary, 0.08f), surface), RadiusCard, null, bulkPanel, MixAlpha(c.ButtonPrimary, 0.35f));
 
-
                 container.Add(new CuiLabel
                 {
                     Text = { Text = Msg("SelectedCount", player, selection.Count), FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
@@ -4343,8 +4212,6 @@ namespace Oxide.Plugins
 
                 AddPrimaryButton(container, bulkPanel, Msg("BulkDelete", player), $"news.admin.bulkdelconfirm {page}", "0.19 0.17", "0.32 0.83", AdminDanger, "1 1 1 1", 10);
                 AddPrimaryButton(container, bulkPanel, Msg("BulkPin", player), $"news.admin.bulkpin 1 {page}", "0.33 0.17", "0.46 0.83", c.ButtonPrimary, "1 1 1 1", 10);
-
-
                 AddGhostButton(container, bulkPanel, Msg("BulkUnpin", player), $"news.admin.bulkpin 0 {page}", "0.47 0.17", "0.60 0.83", c.TextTitle, 10);
                 AddGhostButton(container, bulkPanel, Msg("ClearSelection", player), $"news.admin.clearsel {page}", "0.61 0.17", "0.74 0.83", c.TextTitle, 10);
             }
@@ -4365,13 +4232,9 @@ namespace Oxide.Plugins
             }, mainPanel);
 
             if (page > 0)
-            {
                 AddGhostButton(container, mainPanel, "<", $"news.admin.page {page - 1}", "0.345 0.02", "0.38 0.075", c.TextNormal, 11);
-            }
             if (page < totalPages - 1)
-            {
                 AddGhostButton(container, mainPanel, ">", $"news.admin.page {page + 1}", "0.62 0.02", "0.655 0.075", c.TextNormal, 11);
-            }
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.5f * anim);
             CuiHelper.AddUi(player, container);
@@ -4425,7 +4288,7 @@ namespace Oxide.Plugins
         private void AddEditorHints(CuiElementContainer container, BasePlayer player, EditorSession session, string only = null)
         {
             var c = config.Colors;
-            var ann = session.Draft;
+            var ann = session.Post;
 
             if (only == null || only == "title")
             {
@@ -4476,7 +4339,6 @@ namespace Oxide.Plugins
         private void AddEditorInput(CuiElementContainer container, string parent, string field, string value, int limit, float bottom, float top, bool multiline, float left = 0.05f, float right = 0.95f, string prefix = null)
         {
             AddSurface(container, parent, Anchor(left, bottom), Anchor(right, top), "1 1 1 0.045", RadiusButton);
-
 
             float inputLeft = left + 0.01f;
             if (prefix != null)
@@ -4543,7 +4405,7 @@ namespace Oxide.Plugins
         {
             var session = GetEditor(player);
             if (session == null) return;
-            var ann = session.Draft;
+            var ann = session.Post;
 
             bool fresh;
             float anim = OpenScreen(player, UiScreen.Editor, out fresh);
@@ -4612,20 +4474,19 @@ namespace Oxide.Plugins
 
             // Option toggles, two per row.
             AddEditorLabel(container, editorPanel, Msg("Options", player), 0.755f, 0.795f, c, R, RR);
-            var toggles = new List<string[]>
+            int slot = 0;
+            Action<string, string, bool> addToggle = (text, key, on) =>
             {
-                new[] { Msg("OptionPin", player), "pin", ann.Pinned ? "1" : "0" },
-                new[] { Msg(session.Publishes ? "OptionNotify" : "OptionNotifyEdit", player), "notify", session.Notify ? "1" : "0" }
+                float left = slot % 2 == 0 ? R : RM + 0.0075f;
+                float right = slot % 2 == 0 ? RM - 0.0075f : RR;
+                float top = slot < 2 ? 0.75f : 0.695f;
+                AddEditorToggle(container, editorPanel, text, "news.editor.toggle " + key, on, left, right, c, top - 0.05f, top);
+                slot++;
             };
-            if (session.Publishes && DiscordConfigured) toggles.Add(new[] { Msg("OptionDiscord", player), "discord", session.Discord ? "1" : "0" });
-            toggles.Add(new[] { Msg("OptionPoll", player), "poll", session.Poll ? "1" : "0" });
-            for (int i = 0; i < toggles.Count; i++)
-            {
-                float left = i % 2 == 0 ? R : RM + 0.0075f;
-                float right = i % 2 == 0 ? RM - 0.0075f : RR;
-                float top = i < 2 ? 0.75f : 0.695f;
-                AddEditorToggle(container, editorPanel, toggles[i][0], "news.editor.toggle " + toggles[i][1], toggles[i][2] == "1", left, right, c, top - 0.05f, top);
-            }
+            addToggle(Msg("OptionPin", player), "pin", ann.Pinned);
+            addToggle(Msg(session.Publishes ? "OptionNotify" : "OptionNotifyEdit", player), "notify", session.Notify);
+            if (session.Publishes && DiscordConfigured) addToggle(Msg("OptionDiscord", player), "discord", session.Discord);
+            addToggle(Msg("OptionPoll", player), "poll", session.Poll);
 
             // Who can see it / auto-delete.
             AddEditorLabel(container, editorPanel, Msg("AudienceLabel", player), 0.595f, 0.635f, c, R, RM);
@@ -4635,16 +4496,14 @@ namespace Oxide.Plugins
             string expire = ann.ExpireDays <= 0 ? Msg("ExpireNever", player) : ann.ExpireDays == 1 ? Msg("ExpireAfterDay", player) : Msg("ExpireAfterDays", player, ann.ExpireDays);
             AddEditorCycle(container, editorPanel, expire, "news.editor.toggle expire", RM + 0.0075f, RR, 0.54f, 0.595f, c, ann.ExpireDays > 0);
 
+            // When it will be deleted: a published post keeps its time unless the setting was changed here.
             string expireInfo = string.Empty;
-            long now = NowTicks;
             if (ann.ExpireDays > 0)
             {
-                if (!session.Publishes && !session.ExpireChanged && ann.ExpiresAt > now)
-                    expireInfo = Msg("ExpireInfo", player, LocalTime(ann.ExpiresAt), FormatSpan(ann.ExpiresAt - now, player));
-                else if (!session.Publishes)
-                    expireInfo = Msg("ExpireInfo", player, LocalTime(now + ann.ExpireDays * TimeSpan.TicksPerDay), FormatSpan(ann.ExpireDays * TimeSpan.TicksPerDay, player));
-                else
-                    expireInfo = Msg("ExpireCountsFromPublish", player);
+                long now = NowTicks;
+                long expiresAt = !session.ExpireChanged && ann.ExpiresAt > now ? ann.ExpiresAt : ExpiryFrom(ann, now);
+                expireInfo = session.Publishes ? Msg("ExpireCountsFromPublish", player)
+                    : Msg("ExpireInfo", player, LocalTime(expiresAt), FormatSpan(expiresAt - now, player));
             }
             container.Add(new CuiLabel { Text = { Text = expireInfo, FontSize = 9, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = FontRegular }, RectTransform = { AnchorMin = "0.817 0.49", AnchorMax = "0.965 0.537" } }, editorPanel);
 
@@ -4699,7 +4558,7 @@ namespace Oxide.Plugins
                 Image = { Color = "0 0 0 0.45", Material = BlurMaterial },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
                 CursorEnabled = true
-            }, "Overlay", ConfirmLayer);
+            }, "Overlay", ConfirmLayer, ConfirmLayer);
 
             AddPanelShadow(container, ConfirmLayer, "0.355 0.385", "0.645 0.615");
 
@@ -4722,7 +4581,6 @@ namespace Oxide.Plugins
             }, dialogPanel);
 
             AddGhostButton(container, dialogPanel, Msg("Cancel", player), "news.confirm.close", "0.05 0.08", "0.46 0.26", c.TextTitle, 11);
-
             AddPrimaryButton(container, dialogPanel, Msg("ConfirmDelete", player), confirmCommand, "0.54 0.08", "0.95 0.26", AdminDanger);
         }
 
@@ -4761,36 +4619,9 @@ namespace Oxide.Plugins
             AddGhostButton(container, panel, "✕", "news.confirm.close", "0.885 0.885", "0.945 0.955", c.TextNormal, 11);
             AddHairline(container, panel, 0.845f, 0.06f, 0.94f);
 
-            var rows = new[]
-            {
-                new[] { Msg("SettingSound", player), "sound", prefs.Sound ? "1" : "0", null },
-                new[] { Msg("SettingPopups", player), "popups", prefs.Popups ? "1" : "0", Msg("SettingPopupsHint", player) },
-                new[] { Msg("SettingJoin", player), "join", prefs.JoinPopup ? "1" : "0", null }
-            };
-            for (int i = 0; i < rows.Length; i++)
-            {
-                float top = 0.8f - i * 0.185f, bottom = top - 0.15f;
-                bool on = rows[i][2] == "1";
-                bool hasHint = rows[i][3] != null;
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = rows[i][0], FontSize = 11, Align = hasHint ? TextAnchor.LowerLeft : TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
-                    RectTransform = { AnchorMin = Anchor(0.06f, hasHint ? bottom + 0.075f : bottom), AnchorMax = Anchor(0.7f, hasHint ? top : top) }
-                }, panel);
-                if (hasHint)
-                {
-                    container.Add(new CuiLabel
-                    {
-                        Text = { Text = rows[i][3], FontSize = 9, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = FontRegular },
-                        RectTransform = { AnchorMin = Anchor(0.06f, bottom), AnchorMax = Anchor(0.7f, bottom + 0.07f) }
-                    }, panel);
-                }
-
-                // ON / OFF switch: filled when on.
-                string toggle = AddSurface(container, panel, Anchor(0.76f, bottom + 0.03f), Anchor(0.94f, top - 0.03f), on ? c.ButtonPrimary : Ghost, RadiusButton,
-                    "news.settings.toggle " + rows[i][1], null, on ? null : "1 1 1 0.14");
-                AddLabelIn(container, toggle, Msg(on ? "SettingOn" : "SettingOff", player), 10, on ? "1 1 1 1" : c.TextMuted);
-            }
+            AddSettingRow(container, panel, player, 0, Msg("SettingSound", player), "sound", prefs.Sound);
+            AddSettingRow(container, panel, player, 1, Msg("SettingPopups", player), "popups", prefs.Popups, Msg("SettingPopupsHint", player));
+            AddSettingRow(container, panel, player, 2, Msg("SettingJoin", player), "join", prefs.JoinPopup);
 
             AddPrimaryButton(container, panel, Msg("Done", player), "news.confirm.close", "0.06 0.06", "0.94 0.16", c.ButtonPrimary);
 
@@ -4798,11 +4629,34 @@ namespace Oxide.Plugins
             CuiHelper.AddUi(player, container);
         }
 
+        // A setting in the /news settings dialog: name (and a hint under it) on the left, ON / OFF switch on the right.
+        private void AddSettingRow(CuiElementContainer container, string panel, BasePlayer player, int row, string text, string key, bool on, string hint = null)
+        {
+            var c = config.Colors;
+            float top = 0.8f - row * 0.185f, bottom = top - 0.15f;
+            container.Add(new CuiLabel
+            {
+                Text = { Text = text, FontSize = 11, Align = hint != null ? TextAnchor.LowerLeft : TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
+                RectTransform = { AnchorMin = Anchor(0.06f, hint != null ? bottom + 0.075f : bottom), AnchorMax = Anchor(0.7f, top) }
+            }, panel);
+            if (hint != null)
+            {
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = hint, FontSize = 9, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = FontRegular },
+                    RectTransform = { AnchorMin = Anchor(0.06f, bottom), AnchorMax = Anchor(0.7f, bottom + 0.07f) }
+                }, panel);
+            }
+
+            string toggle = AddSurface(container, panel, Anchor(0.76f, bottom + 0.03f), Anchor(0.94f, top - 0.03f), on ? c.ButtonPrimary : Ghost, RadiusButton,
+                "news.settings.toggle " + key, null, on ? null : "1 1 1 0.14");
+            AddLabelIn(container, toggle, Msg(on ? "SettingOn" : "SettingOff", player), 10, on ? "1 1 1 1" : c.TextMuted);
+        }
+
         private void ShowDeleteConfirm(BasePlayer player, string id, int returnPage)
         {
             var ann = FindById(id);
             if (ann == null) return;
-            CuiHelper.DestroyUi(player, ConfirmLayer);
 
             var container = new CuiElementContainer();
             AddConfirmDialog(container, player, Msg("DeleteAnnouncement", player), Msg("DeleteConfirmBody", player, Ellipsize(ann.Title, 32)), $"news.admin.del {ann.Id} {returnPage}");
@@ -4814,7 +4668,6 @@ namespace Oxide.Plugins
         {
             var sel = GetAdminSelection(player.userID);
             if (sel.Count == 0) return;
-            CuiHelper.DestroyUi(player, ConfirmLayer);
 
             var container = new CuiElementContainer();
             AddConfirmDialog(container, player, Msg("BulkDeleteTitle", player), Msg("BulkDeleteBody", player, sel.Count), $"news.admin.bulkdel {returnPage}");
@@ -4928,14 +4781,15 @@ namespace Oxide.Plugins
                 if (isSelected)
                     AddPill(container, card, Msg("ActiveBadge", player), "0.72 0.62", "0.94 0.86", theme.ButtonPrimary, "1 1 1 1", 9);
 
-                // Colour swatches in a rounded tray: panel, header, content, primary button, secondary button, title text.
+                // Colour swatches in a rounded tray (drawn opaque so translucent theme colours stay readable):
+                // panel, header, content, primary button, secondary button, title text.
                 string tray = AddSurface(container, card, "0.06 0.13", "0.94 0.47", Blend("0 0 0 0.35", cardColor), RadiusPill);
                 string[] swatches = { theme.PanelBg, theme.HeaderBg, theme.ContentBg, theme.ButtonPrimary, theme.ButtonSecondary, theme.TextTitle };
                 float swatchWidth = (0.96f - 0.012f * (swatches.Length - 1)) / swatches.Length;
                 for (int s = 0; s < swatches.Length; s++)
                 {
                     float sx = 0.02f + s * (swatchWidth + 0.012f);
-                    container.Add(new CuiPanel { Image = { Color = OpaqueColor(swatches[s]) }, RectTransform = { AnchorMin = Anchor(sx, 0.18f), AnchorMax = Anchor(sx + swatchWidth, 0.82f) } }, tray);
+                    container.Add(new CuiPanel { Image = { Color = Opaque(swatches[s]) }, RectTransform = { AnchorMin = Anchor(sx, 0.18f), AnchorMax = Anchor(sx + swatchWidth, 0.82f) } }, tray);
                 }
             }
 
@@ -4954,14 +4808,6 @@ namespace Oxide.Plugins
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.45f * anim);
             CuiHelper.AddUi(player, container);
-        }
-
-        // Swatches are drawn fully opaque so translucent theme colours are still readable.
-        private static string OpaqueColor(string rgba)
-        {
-            var parts = (rgba ?? string.Empty).Split(' ');
-            if (parts.Length < 3) return "1 1 1 1";
-            return $"{parts[0]} {parts[1]} {parts[2]} 1";
         }
         #endregion
 
@@ -5085,7 +4931,6 @@ namespace Oxide.Plugins
         private void ScheduleReadCompletion(BasePlayer player, Announcement ann)
         {
             if (player == null || ann == null || string.IsNullOrEmpty(ann.Id)) return;
-            if (ann.ReadByPlayers == null) ann.ReadByPlayers = new HashSet<ulong>();
 
             ulong userId = player.userID;
             ReadRewardState existing;
@@ -5094,17 +4939,13 @@ namespace Oxide.Plugins
                 && existing.Timer != null && !existing.Timer.Destroyed)
                 return;
 
-            bool alreadyRead = ann.ReadByPlayers.Contains(userId);
-            bool rewardsActive = config.Rewards.EnableReadReward;
-            bool rewardAlreadyGranted = ann.ReadRewardedPlayers != null && ann.ReadRewardedPlayers.Contains(userId);
-            if (alreadyRead && (!rewardsActive || rewardAlreadyGranted)) return;
+            // Nothing left to do: already read, and no reward to pay.
+            if (ann.ReadByPlayers.Contains(userId) && (!config.Rewards.EnableReadReward || ann.ReadRewardedPlayers.Contains(userId))) return;
 
             CancelReadRewardTimer(userId);
 
-            int delay = Math.Max(1, config.Rewards.ReadDelaySeconds);
             string targetId = ann.Id;
-
-            var t = timer.Once(delay, () =>
+            var t = timer.Once(config.Rewards.ReadDelaySeconds, () =>
             {
                 readRewardTimers.Remove(userId);
                 if (player == null || !player.IsConnected) return;
@@ -5114,15 +4955,15 @@ namespace Oxide.Plugins
 
                 var current = FindById(targetId);
                 if (current == null) return;
-                if (current.ReadByPlayers == null) current.ReadByPlayers = new HashSet<ulong>();
-                if (current.ReadRewardedPlayers == null) current.ReadRewardedPlayers = new HashSet<ulong>();
 
                 bool firstRead = current.ReadByPlayers.Add(userId);
                 bool rewardDue = config.Rewards.EnableReadReward && !current.ReadRewardedPlayers.Contains(userId);
-                bool grantReward = rewardDue && GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
-                if (grantReward) current.ReadRewardedPlayers.Add(userId);
-
-                if (grantReward) SaveAnnouncements();
+                bool rewarded = rewardDue && GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
+                if (rewarded)
+                {
+                    current.ReadRewardedPlayers.Add(userId);
+                    SaveAnnouncements();   // straight away: the reward was paid
+                }
                 else if (firstRead) MarkDataDirty();
                 if (firstRead) Interface.CallHook("OnNewsRead", player, BuildHookData(current));
             });
@@ -5165,8 +5006,8 @@ namespace Oxide.Plugins
 
             var payload = new
             {
-                username = string.IsNullOrWhiteSpace(config.Discord.BotName) ? null : LimitText(config.Discord.BotName, 80),
-                avatar_url = string.IsNullOrWhiteSpace(config.Discord.AvatarUrl) ? null : config.Discord.AvatarUrl,
+                username = WebhookName,
+                avatar_url = WebhookAvatar,
                 content = mention,
                 allowed_mentions = new { parse = parse.ToArray() },
                 embeds = new[]
@@ -5205,8 +5046,8 @@ namespace Oxide.Plugins
 
             var payload = new
             {
-                username = string.IsNullOrWhiteSpace(config.Discord.BotName) ? null : LimitText(config.Discord.BotName, 80),
-                avatar_url = string.IsNullOrWhiteSpace(config.Discord.AvatarUrl) ? null : config.Discord.AvatarUrl,
+                username = WebhookName,
+                avatar_url = WebhookAvatar,
                 allowed_mentions = new { parse = new string[0] },
                 embeds = new[]
                 {
@@ -5222,6 +5063,11 @@ namespace Oxide.Plugins
             };
             PostWebhook(payload);
         }
+
+        // null leaves the name / picture set on the webhook in Discord.
+        private string WebhookName => string.IsNullOrWhiteSpace(config.Discord.BotName) ? null : LimitText(config.Discord.BotName, 80);
+
+        private string WebhookAvatar => string.IsNullOrWhiteSpace(config.Discord.AvatarUrl) ? null : config.Discord.AvatarUrl;
 
         private void PostWebhook(object payload)
         {

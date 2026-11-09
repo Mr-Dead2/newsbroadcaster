@@ -62,6 +62,7 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 - The notification sound played at the player's position for everyone nearby; it is now private.
 - ServerRewards points failed to pay on current Rust builds (wrapped player id).
 - `/n` broke normal words such as `w/new`.
+- `news.show` / `news.poll` took a number at the end of unquoted text as the type (`... wipe at 7` became an unknown type `7`).
 - An admin's editor was replaced by a forced popup when news was posted.
 - Players saw a post again as a popup after respawning even though they had already got it live.
 - Pinned posts could be deleted by the `MaxStoredAnnouncements` limit.
@@ -126,7 +127,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | `news.publish <index\|id>` | Admin | Publish a draft (notifies players, posts to Discord) |
 | `news.delete <index\|id>` | Admin | Delete an announcement |
 | `news.resend <index\|id>` | Admin | Re-send the notification for an announcement to online players |
-| `news.trigger <SteamID/Name> [index]` | Admin | Force-show a popup to one player |
+| `news.trigger <SteamID/Name> [index]` | Admin | Force-show a popup to one player (`index` counts the posts that player can see, 0 = newest) |
 | `news.admin` | Admin | Open the in-game admin panel |
 
 Index `0` is always the newest announcement.
@@ -206,7 +207,7 @@ These are run by CUI buttons. They address announcements by their stable id, not
 | `news.admin.bulkpin <0\|1> [page]`, `news.admin.bulkdelconfirm [page]`, `news.admin.bulkdel [page]` | Bulk actions |
 | `news.admin.themes [page]` / `news.admin.settheme "Name" [page]` | Theme picker |
 | `news.editor.input <title\|image\|text\|poll1-poll4\|cdlabel\|cdtime> <value>` | Editor field |
-| `news.editor.settype <Type>` / `news.editor.type` | Set / cycle the type |
+| `news.editor.settype <Type>` | Set the type |
 | `news.editor.toggle <pin\|notify\|discord\|poll\|pollclosed\|audience\|expire\|polltimer>` | Editor options (the last three step through their choices) |
 | `news.editor.preview` / `news.editor.back` | Preview and return |
 | `news.editor.save` / `news.editor.savedraft` / `news.editor.cancel` | Publish or save changes / save as draft / cancel |
@@ -482,7 +483,7 @@ Stores announcements, each player's last-seen marker, each player's "mark all re
 
 ## Localization
 
-All player-facing text is in Oxide's lang system (`oxide/lang/<lang>/NewsBroadcaster.json`). New keys are added to your existing lang file automatically. Keys whose meaning changed in 2.0.0 were renamed so the new text shows up (`TypeLabel`, `BodyHint`, `NoPostsYet`, `PublishedNoNotify`, `ActiveBadge`); the old keys can be deleted from your lang file. The editor now uses `BodyHintShort`, and `/news help` adds `ChatHelpSettings`.
+All player-facing text is in Oxide's lang system (`oxide/lang/<lang>/NewsBroadcaster.json`). New keys are added to your existing lang file automatically. Keys whose meaning changed in 2.0.0 were renamed so the new text shows up (`TypeLabel`, `NoPostsYet`, `PublishedNoNotify`, `ActiveBadge`); the old keys can be deleted from your lang file, as can `ReadMore`, `Close`, `BodyHint` and `SettingsColumn`, which are no longer used. The editor's new-line hint is `BodyHintShort`, and `/news help` adds `ChatHelpSettings`.
 
 ---
 
