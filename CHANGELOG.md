@@ -35,11 +35,13 @@
 - **Character counters** for the title and the text.
 - **Notification position:** six spots plus X / Y offsets.
 - **RESEND** re-notifies everyone online about an existing post (button or `news.resend`).
-- **Admin overview.** A stats line (posts, pinned, reads, likes) plus reads, likes and votes on every row, and an `EDITED` marker.
+- **News Management dashboard.** Five stat cards (published, drafts, reads, likes, poll votes), tabs with counts (All, Published, Drafts, Pinned, Polls), a search box and a sort order (newest, oldest, most read, most liked). Rows show the picture, type and status badges, when a post deletes itself or its poll closes, and reads / likes / votes as numbers.
+- **Editor autosave.** Everything typed in the editor is kept. After a disconnect, a restart or a plugin reload, News Management shows the unsaved post with **CONTINUE EDITING** and **DISCARD**.
+- **Post from other plugins.** `API_PostNews` / `API_CreateNews` let an event or wipe plugin publish through NewsBroadcaster (see API methods).
 - **Theme picker** with colour swatches and pages for extra themes.
 - **Console:** `news.poll`, `news.resend`, and `news.delete` / `news.list` with ids.
 - **Discord:** type-coloured embeds with timestamp, avatar, poll options and optional `@here` / `@everyone`; poll results when a poll closes.
-- **API:** new `OnNewsPollClosed` hook; payloads add `group`, `expiresAt`, `pollEndsAt` and `countdownTo`.
+- **API:** new `OnNewsPollClosed` hook; payloads add `group`, `expiresAt`, `pollEndsAt` and `countdownTo`. New methods for other plugins: `API_PostNews`, `API_CreateNews`, `API_DeleteNews`, `API_GetNews`, `API_GetNewsList`, `API_GetUnreadCount`, `API_ShowNews`.
 
 #### Fixes
 - Clicking a button rebuilt the whole menu: it blinked and the mouse jumped back to the middle of the screen. Now only the content is swapped, in one step, and the cursor stays put.
@@ -56,6 +58,14 @@
 - UI layout broke on servers whose system language uses a comma as the decimal separator.
 - An ImageLibrary placeholder showed while an image was still downloading.
 - The data file was rewritten on every like or read; saves are now batched and flushed on server save and unload.
+- **BACK** in the theme picker rebuilt the whole menu (a blink, and the mouse jumped to the middle).
+- `news.show "Title" - Restart in 5` read the `5` as a post type and cut it from the text.
+- `news.trigger` counted posts differently from `news.list` when drafts were stored, and said "triggered" even when the player could not see the post. It now takes the same index or id as the other commands and tells you when the player can't see it.
+- **Mark all read** also marked group posts the player could not see yet.
+- A poll whose timer had run out could still be clicked for up to 30 seconds (the vote was ignored).
+- A toast for a post that had been deleted stayed on screen when clicked.
+- A language file with a broken `{0}` placeholder could stop a command from working.
+- Players who never came back stayed in the data file forever; old "last seen" markers are now cleaned up on load.
 
 #### New config options
 `UnreadReminderOnConnect`, `RequireViewPermission`, `StripLinksFromBody`, `PopupImageFrame` (`Tall` / `Wide`), `ArchiveThumbnails`, `RoundedCorners`, `Notification.Position` (six positions; `Left` / `Right` still work), `Notification.OffsetX` / `OffsetY`, `Discord.AvatarUrl`, `Discord.PostGroupOnlyPosts`, `Discord.PostPollResults`, `Polls.AllowVoteChange`, `Polls.ShowResultsBeforeVoting`, `Polls.AnnounceResults`. All are added to your config with their defaults on first load.

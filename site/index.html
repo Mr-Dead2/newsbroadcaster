@@ -377,7 +377,7 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
             <li><b>Timed polls</b><span>Close a poll after 1 hour to 7 days. The result goes to chat and Discord when it closes.</span></li>
             <li><b>Pin, resend, bulk</b><span>Keep the rules on top in a gold frame, re-notify everyone online, or pin and delete many posts at once.</span></li>
             <li><b>Discord</b><span>Type-coloured embeds with the picture, an optional role or @here ping, and poll results.</span></li>
-            <li><b>Console and API</b><span>Post, list, publish, resend and delete from RCON, and seven hooks for other plugins.</span></li>
+            <li><b>Console and API</b><span>Post, list, publish, resend and delete from RCON. Seven hooks for other plugins, and methods to post news from them.</span></li>
           </ul>
         </div>
       </div>
@@ -457,7 +457,9 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
       <div class="gal-group">
         <h3>Admins <small>News Management, the editor, preview, themes</small></h3>
         <div class="gallery" data-gallery>
-          <figure class="shot"><button type="button" data-full="shots/05_admin.webp"><img src="shots/thumb_05_admin.webp" width="1600" height="900" alt="News Management list with a draft, PUBLISH, PIN, COPY, EDIT and DEL buttons and a bulk toolbar."></button><figcaption><b>News Management</b><span>Reads, likes and votes per post, drafts, and bulk tools.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/05_admin.webp"><img src="shots/thumb_05_admin.webp" width="1600" height="900" alt="News Management: five stat cards, tabs with counts, a search box, and rows with reads, likes and votes; two rows are selected."></button><figcaption><b>News Management</b><span>Stat cards, tabs, search and sorting. Reads, likes and votes on every row.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/05c_admin_filtered.webp"><img src="shots/thumb_05c_admin_filtered.webp" width="1600" height="900" alt="News Management on the PUBLISHED tab, searched for wipe and sorted by most read."></button><figcaption><b>Tabs, search and sort</b><span>Find a post by tab, text or what players read most.</span></figcaption></figure>
+          <figure class="shot"><button type="button" data-full="shots/05b_admin_unsaved.webp"><img src="shots/thumb_05b_admin_unsaved.webp" width="1600" height="900" alt="News Management with an UNSAVED bar offering CONTINUE EDITING and DISCARD."></button><figcaption><b>Editor autosave</b><span>A disconnect or restart never loses a half-written post.</span></figcaption></figure>
           <figure class="shot"><button type="button" data-full="shots/07b_editor_new.webp"><img src="shots/thumb_07b_editor_new.webp" width="1600" height="900" alt="Editor with content on the left and settings on the right, including auto-delete and a countdown."></button><figcaption><b>Editor</b><span>Content on the left, settings on the right.</span></figcaption></figure>
           <figure class="shot"><button type="button" data-full="shots/07c_editor_poll.webp"><img src="shots/thumb_07c_editor_poll.webp" width="1600" height="900" alt="Editor with four poll options and a poll timer."></button><figcaption><b>Editor with a poll</b><span>Two to four options and a timer that closes the poll.</span></figcaption></figure>
           <figure class="shot"><button type="button" data-full="shots/07_editor.webp"><img src="shots/thumb_07_editor.webp" width="1600" height="900" alt="Editing a live post, with RE-NOTIFY PLAYERS and SAVE CHANGES."></button><figcaption><b>Editing a live post</b><span>Re-notify players, or just save the changes.</span></figcaption></figure>
@@ -658,7 +660,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
     <div class="wrap">
       <div class="head">
         <p class="eyebrow">API</p>
-        <h2>Hooks for other plugins</h2>
+        <h2>Hooks and methods for other plugins</h2>
         <p>Every hook gets a plain <code>Dictionary&lt;string, object&gt;</code>, so your plugin doesn't need NewsBroadcaster's classes.</p>
       </div>
       <div class="grid2">
@@ -673,6 +675,18 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
               <tr><td><code>OnNewsLiked(player, ann, added)</code></td><td>A like or an un-like</td></tr>
               <tr><td><code>OnNewsPollVote(player, ann, option)</code></td><td>A vote, with the 0-based option</td></tr>
               <tr><td><code>OnNewsPollClosed(ann)</code></td><td>A poll closes by its timer or by an admin</td></tr>
+            </tbody>
+          </table></div>
+          <p class="note">Methods your plugin can call</p>
+          <div class="scroll"><table>
+            <thead><tr><th>Method</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>API_PostNews(title, text, type)</code></td><td>Publishes a post and returns its id</td></tr>
+              <tr><td><code>API_CreateNews(options)</code></td><td>The same with every option: poll, group, countdown, draft...</td></tr>
+              <tr><td><code>API_DeleteNews(id)</code></td><td>Deletes a post</td></tr>
+              <tr><td><code>API_GetNews(id)</code> / <code>API_GetNewsList()</code></td><td>Read one post, or all published ones</td></tr>
+              <tr><td><code>API_GetUnreadCount(player)</code></td><td>Unread posts a player can see</td></tr>
+              <tr><td><code>API_ShowNews(player, id)</code></td><td>Opens a post for a player</td></tr>
             </tbody>
           </table></div>
           <p class="note">Payload keys</p>
