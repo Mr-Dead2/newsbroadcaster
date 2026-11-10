@@ -12,7 +12,7 @@ Repo contents:
 - `NewsBroadcaster.cs` — the entire plugin (~5720 lines, one class).
 - `PLUGIN_DOCS.md` — admin reference (commands, permissions, config, API hooks, what's new).
 - `CHANGELOG.md` — release notes (1.0.0 = everything, including what changed since the earlier builds).
-- `ROGUEDEPOT_LISTING.md` — everything for the RogueDepot product page (name, short description, tags, full description, which images to upload, notes for their review). Keep it in step with the plugin, like the Codefling text.
+- `ROGUEDEPOT_LISTING.md` — what goes in each field of RogueDepot's listing form (name, tagline, tags, which files and screenshots in which order, notes for their review); `ROGUEDEPOT_DESCRIPTION.md` is the description itself, pasted whole into the form (Markdown, no escaped pipes in tables). Keep both in step with the plugin, like the Codefling text.
 - `CODEFLING_DESCRIPTION.md` — marketing copy for the store listing.
 - `previews/` — rendered screenshots of every screen (from the test harness).
 - `site/` — the product page as a static website (`index.html`, `favicon.svg`, `shots/` = WebP copies of `previews/`, `media/animations.mp4`). No build step: it is uploaded as-is to Cloudflare Pages (drag and drop the folder or a zip of its contents, or `npx wrangler pages deploy site`). Keep its feature list, requirements and screenshots in step with the plugin.
