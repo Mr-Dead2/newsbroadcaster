@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="NewsBroadcaster">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2433"/>
+      <stop offset="1" stop-color="#0b0e14"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5cb5ff" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#5cb5ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="cone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b4e2ff"/>
+      <stop offset="1" stop-color="#58b0fb"/>
+    </linearGradient>
+    <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4aa5f6"/>
+      <stop offset="1" stop-color="#2f7fdc"/>
+    </linearGradient>
+    <linearGradient id="grip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3486e0"/>
+      <stop offset="1" stop-color="#1f5cab"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d3e9fc"/>
+    </linearGradient>
+    <clipPath id="tile"><rect width="512" height="512" rx="116"/></clipPath>
+  </defs>
+
+  <!-- tile: the plugin's dark rounded panel with its faint rim -->
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <g clip-path="url(#tile)">
+    <circle cx="236" cy="268" r="260" fill="url(#glow)"/>
+  </g>
+  <rect x="3" y="3" width="506" height="506" rx="113" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="6"/>
+
+  <g transform="translate(-30 6) rotate(-16 256 262)">
+    <!-- handle, behind the cone -->
+    <rect x="178" y="296" width="52" height="106" rx="19" fill="url(#grip)" transform="rotate(10 204 349)"/>
+    <!-- back of the megaphone -->
+    <rect x="84" y="210" width="80" height="104" rx="24" fill="url(#grip)"/>
+    <!-- cone: light top half, darker lower half -->
+    <path d="M146 216 L292 146 Q308 139 308 157 L308 262 L146 262 Z" fill="url(#cone)"/>
+    <path d="M146 262 L308 262 L308 367 Q308 385 292 378 L146 308 Z" fill="url(#shade)"/>
+    <!-- bell rim -->
+    <rect x="296" y="118" width="36" height="288" rx="18" fill="url(#rim)"/>
+    <!-- broadcast -->
+    <g fill="none" stroke-linecap="round" stroke-width="26">
+      <path d="M372 222 A48 48 0 0 1 372 302" stroke="#ffb86e"/>
+      <path d="M404 186 A96 96 0 0 1 404 338" stroke="#ff8f45"/>
+      <path d="M436 150 A144 144 0 0 1 436 374" stroke="#f2652a"/>
+    </g>
+  </g>
+</svg>

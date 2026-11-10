@@ -15,6 +15,7 @@ Repo contents:
 - `CODEFLING_DESCRIPTION.md` — marketing copy for the store listing.
 - `previews/` — rendered screenshots of every screen (from the test harness).
 - `site/` — the product page as a static website (`index.html`, `favicon.svg`, `shots/` = WebP copies of `previews/`, `media/animations.mp4`). No build step: it is uploaded as-is to Cloudflare Pages (drag and drop the folder or a zip of its contents, or `npx wrangler pages deploy site`). Keep its feature list, requirements and screenshots in step with the plugin.
+- `branding/` — the logo pack: `logo.svg` (the icon, drawn by hand: blue megaphone, orange signal waves, on the plugin's dark rounded tile) and what `branding/build.py` makes from it (PNG sizes, `wordmark*.svg/png`, `banner.svg/png` for the store page, and `site/favicon.svg`). Text is outlined, so the SVGs need no font. Change `logo.svg`, then run the script.
 - `tools/test-harness/` — compile checks, functional tests and the screenshot renderer (see below).
 - `new-joiner-architecture.tour` — CodeTour walkthrough of the code; update line numbers when code moves.
 
