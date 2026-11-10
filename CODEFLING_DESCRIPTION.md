@@ -1,4 +1,4 @@
-# NewsBroadcaster 2.0.0
+# NewsBroadcaster 1.0.0
 
 **A clean, modern in-game news system for Rust — popups, polls, event countdowns, drafts, VIP-only posts, archive with filters, search and unread tracking, likes & rewards, Discord and themes, all managed from an in-game admin UI.**
 
@@ -158,7 +158,7 @@ Open an issue, leave a review, or DM me on Discord — happy to fix bugs and con
 
 ---
 
-## Update notes — 2.0.0
+## Release notes — 1.0.0
 
 See `CHANGELOG.md` for the full list. Highlights:
 

@@ -6,12 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NewsBroadcaster is a single-file **Oxide/uMod plugin for the game Rust** (`NewsBroadcaster.cs`). It lets server admins post rich in-game news announcements (title, image, body, type badge) via a CUI, with player notifications, an archive viewer with unread tracking, polls, likes, rewards, Discord webhooks, and themes. Author is "DEDA"; the plugin is distributed on Codefling.
 
-Version 2.x is built on the author's own 1.2.0 design (the author's "known good" version). The 1.3–1.7 redesigns in git history were dropped; keep the 1.2.0 look and layout unless asked otherwise.
+The released version is **1.0.0** (the first release, sold on RogueDepot). It is built on the author's own earlier design (the build that was numbered 1.2.0, the author's "known good" version); the 1.3–1.7 redesigns in git history were dropped. Keep that look and layout unless asked otherwise. Commit messages in the history that say 2.x are from before the renumbering; the docs call everything before 1.0.0 "the earlier builds", and their config and data still load.
 
 Repo contents:
 - `NewsBroadcaster.cs` — the entire plugin (~5720 lines, one class).
 - `PLUGIN_DOCS.md` — admin reference (commands, permissions, config, API hooks, what's new).
-- `CHANGELOG.md` — release notes (2.0.0 = everything since the author's 1.2.0).
+- `CHANGELOG.md` — release notes (1.0.0 = everything, including what changed since the earlier builds).
+- `ROGUEDEPOT_LISTING.md` — everything for the RogueDepot product page (name, short description, tags, full description, which images to upload, notes for their review). Keep it in step with the plugin, like the Codefling text.
 - `CODEFLING_DESCRIPTION.md` — marketing copy for the store listing.
 - `previews/` — rendered screenshots of every screen (from the test harness).
 - `site/` — the product page as a static website (`index.html`, `favicon.svg`, `shots/` = WebP copies of `previews/`, `media/animations.mp4`). No build step: it is uploaded as-is to Cloudflare Pages (drag and drop the folder or a zip of its contents, or `npx wrangler pages deploy site`). Keep its feature list, requirements and screenshots in step with the plugin.

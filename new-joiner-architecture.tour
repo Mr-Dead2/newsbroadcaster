@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
   "title": "NewsBroadcaster Plugin Architecture Tour",
-  "description": "A guided walkthrough of the single-file Rust/Oxide plugin (v2.0.0) for a new maintainer: state model, config migration, the broadcast pipeline, UI generation, and the optional integrations it must degrade gracefully without.",
+  "description": "A guided walkthrough of the single-file Rust/Oxide plugin (v1.0.0) for a new maintainer: state model, config migration, the broadcast pipeline, UI generation, and the optional integrations it must degrade gracefully without.",
   "ref": "main",
   "steps": [
     {
@@ -13,7 +13,7 @@
       "file": "NewsBroadcaster.cs",
       "line": 22,
       "title": "Plugin Identity & Optional Integrations",
-      "description": "The `[Info]` attribute (line 17) carries the version (`2.0.0`) — bump it together with `PLUGIN_DOCS.md`.\n\n`[PluginReference]` wires up `ImageLibrary`, `Notify`, `ServerRewards`, `Economics` as *optional* plugins. Every call site null-checks and `IsLoaded`-checks them: a server without ServerRewards still broadcasts news fine, just without point payouts."
+      "description": "The `[Info]` attribute (line 17) carries the version (`1.0.0`) — bump it together with `PLUGIN_DOCS.md`.\n\n`[PluginReference]` wires up `ImageLibrary`, `Notify`, `ServerRewards`, `Economics` as *optional* plugins. Every call site null-checks and `IsLoaded`-checks them: a server without ServerRewards still broadcasts news fine, just without point payouts."
     },
     {
       "file": "NewsBroadcaster.cs",
@@ -49,7 +49,7 @@
         }
       },
       "title": "The Announcement Record",
-      "description": "`Announcement` is the one data shape everything revolves around: stored in `StoredData.Announcements`, rendered by every screen, sent to Discord and hooks.\n\n`LikedPlayers`/`ReadByPlayers`/`ReadRewardedPlayers`/`LikeRewardedPlayers` are per-post sets of SteamIDs — read tracking (NEW badges) and reward-once logic live here. `EditedDate` was added in 2.0.0; missing fields simply default on old data.\n\nSince 2.0.0 a post can carry a poll: `PollOptions` (2-4 strings), `PollVotes` (SteamID → option index) and `PollClosed`. \"Mark all read\" is not stored per post but as one timestamp per player in `StoredData.ReadAllUpTo`, so read counts stay honest."
+      "description": "`Announcement` is the one data shape everything revolves around: stored in `StoredData.Announcements`, rendered by every screen, sent to Discord and hooks.\n\n`LikedPlayers`/`ReadByPlayers`/`ReadRewardedPlayers`/`LikeRewardedPlayers` are per-post sets of SteamIDs — read tracking (NEW badges) and reward-once logic live here. `EditedDate` is missing in data from the earlier builds; missing fields simply default.\n\nNow a post can carry a poll: `PollOptions` (2-4 strings), `PollVotes` (SteamID → option index) and `PollClosed`. \"Mark all read\" is not stored per post but as one timestamp per player in `StoredData.ReadAllUpTo`, so read counts stay honest."
     },
     {
       "file": "NewsBroadcaster.cs",
