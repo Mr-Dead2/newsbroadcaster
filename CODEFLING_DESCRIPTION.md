@@ -10,7 +10,8 @@ NewsBroadcaster pushes clean, modern announcements straight to your players: tit
 
 - **Premium, modern UI** — rounded anti-aliased corners on every panel, card, button and picture, soft layered shadows, a blurred background and article-style popups, all in your theme colours.
 - **Smooth animations** — screens reveal top-to-bottom, archive rows cascade in, toasts fade in and out, likes pop, poll bars fade in, and auto-closing popups show a live countdown. All client-side: no lag, no extra network traffic.
-- **In-game admin panel** — create, edit, preview, pin, resend and delete announcements without leaving the game.
+- **In-game admin panel** — a dashboard with stat cards, tabs, search and sorting; create, edit, preview, pin, resend and delete announcements without leaving the game.
+- **Editor autosave** — a disconnect or restart never loses a half-written post.
 - **Live preview** — see the exact popup your players will get before you hit publish.
 - **Polls** — attach a 2–4 option poll to any post. One-click voting, live result bars, change-your-vote. Close voting yourself or set a timer (1 hour – 7 days); the result is announced in chat and on Discord.
 - **Event countdowns** — a live "WIPE IN 2 DAYS 04:12:33" timer right in the post, counted by the player's game.
@@ -31,7 +32,7 @@ NewsBroadcaster pushes clean, modern announcements straight to your players: tit
 - **6 built-in themes** with colour-swatch previews, plus as many custom themes as you like.
 - **Bulk tools** — multi-select to delete, pin or unpin many posts at once.
 - **Private notification sound** — only the receiving player hears it.
-- **API hooks** for other plugins: broadcast, edit, delete, read, like.
+- **API** for other plugins: hooks for broadcast, edit, delete, read, like and polls, and methods to post news from your own plugins.
 - Long posts scroll natively, long titles shrink to fit, images can be cached with ImageLibrary, and Notify is supported.
 
 ---
@@ -139,6 +140,8 @@ A reward that includes RP or currency isn't paid while its plugin is missing, in
 ## API hooks
 
 `OnNewsBroadcast(Dictionary<string, object> ann)`, `OnNewsEdited(...)`, `OnNewsDeleted(...)`, `OnNewsRead(BasePlayer, ...)`, `OnNewsLiked(BasePlayer, ..., bool added)`, `OnNewsPollVote(BasePlayer, ..., int option)`, `OnNewsPollClosed(...)`.
+Methods: `API_PostNews(title, text, type, imageUrl, author)`, `API_CreateNews(options)`, `API_DeleteNews(id)`, `API_GetNews(id)`, `API_GetNewsList()`, `API_GetUnreadCount(player)`, `API_ShowNews(player, id)`. Details in `PLUGIN_DOCS.md`.
+
 Payload: `id`, `title`, `author`, `type`, `timestamp`, `date`, `text`, `imageUrl`, `likes`, `pinned`, `pollOptions`, `pollVotes`, `group`, `expiresAt`, `pollEndsAt`, `countdownTo`.
 
 ---

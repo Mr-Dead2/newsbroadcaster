@@ -131,11 +131,38 @@ static class Previews
         H.Save(player, outDir, "04_archive");
         H.Console(player, "news.close");
 
-        // 5) Admin list with selection
+        // 5) News Management with two posts selected
         H.Console(admin, "news.admin");
-        H.Console(admin, $"news.admin.toggleselect {H.Id(maint)} 0");
-        H.Console(admin, $"news.admin.toggleselect {H.Id(patch)} 0");
+        H.Console(admin, $"news.admin.toggleselect {H.Id(H.AnnByTitle("Raid Base Event This Saturday"))} 0");
+        H.Console(admin, $"news.admin.toggleselect {H.Id(wipe)} 0");
         H.Save(admin, outDir, "05_admin");
+
+        if (H.HasConsole("news.admin.filter"))
+        {
+            // 5b) An admin who lost the editor mid-post finds it waiting
+            H.Console(admin, "news.admin.clearsel 0");
+            H.Console(admin, "news.admin.create");
+            H.Console(admin, "news.editor.input title Server Rules Update");
+            H.Console(admin, "news.editor.input text We changed two rules this week. Please read them before the wipe.");
+            H.Console(admin, "news.close");
+            var autosaves = (System.Collections.IDictionary)H.AGet(H.Get("storedData"), "EditorAutosaves");
+            H.ASet(autosaves[(ulong)admin.userID], "SavedAt", DateTime.UtcNow.Ticks - 12 * TimeSpan.TicksPerMinute - TimeSpan.TicksPerSecond);
+            H.Console(admin, "news.admin");
+            H.Save(admin, outDir, "05b_admin_unsaved");
+            H.Console(admin, "news.admin.discard");
+
+            // 5c) Tab, search and sort
+            H.Console(admin, "news.admin.filter published");
+            H.Console(admin, "news.admin.search wipe");
+            H.Console(admin, "news.admin.sort");
+            H.Console(admin, "news.admin.sort");
+            H.Save(admin, outDir, "05c_admin_filtered");
+            H.Console(admin, "news.admin.filter reset");
+            H.Console(admin, "news.admin.sort");
+            H.Console(admin, "news.admin.sort");
+
+            H.Console(admin, "news.admin");
+        }
 
         // 6) Delete confirmation
         H.Console(admin, $"news.admin.delconfirm {H.Id(maint)}");

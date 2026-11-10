@@ -50,7 +50,9 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 - **Character counters** next to the title and the text.
 - **Notification position.** Six spots (top or bottom, left / centre / right) plus fine X / Y offsets.
 - **RESEND** re-notifies everyone online about an existing post (button or `news.resend`).
-- **Admin overview.** A stats line (posts, pinned, reads, likes) plus reads, likes and votes on every row, and an `EDITED` marker.
+- **News Management dashboard.** Five stat cards (published, drafts, reads, likes, poll votes), tabs with counts (All, Published, Drafts, Pinned, Polls), a search box and a sort order (newest, oldest, most read, most liked). Rows show the picture, type and status badges, when a post deletes itself or its poll closes, and reads / likes / votes as numbers.
+- **Editor autosave.** Everything typed in the editor is kept. After a disconnect, a restart or a plugin reload, News Management shows the unsaved post with **CONTINUE EDITING** and **DISCARD**.
+- **Post from other plugins.** `API_PostNews` / `API_CreateNews` let an event or wipe plugin publish through NewsBroadcaster (see API methods).
 - **Theme picker** with colour swatches and pages for extra themes.
 - **Console:** `news.poll`, `news.resend`, and `news.delete` / `news.list` with ids.
 - **Discord:** type-coloured embeds with timestamp, avatar, poll options and optional `@here` / `@everyone`.
@@ -69,6 +71,7 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 - UI layout broke on servers whose system language uses a comma as the decimal separator.
 - An ImageLibrary placeholder showed while an image was still downloading.
 - The data file was rewritten on every like or read; saves are now batched and flushed on server save and unload.
+- **BACK** in the theme picker rebuilt the whole menu (a blink, and the mouse jumped to the middle).
 - `news.show "Title" - Restart in 5` read the `5` as a post type and cut it from the text.
 - `news.trigger` counted posts differently from `news.list` when drafts were stored, and said "triggered" even when the player could not see the post. It now takes the same index or id as the other commands and tells you when the player can't see it.
 - **Mark all read** also marked group posts the player could not see yet.
@@ -204,6 +207,9 @@ These are run by CUI buttons. They address announcements by their stable id, not
 | `news.markread` | Mark all read (archive button) |
 | `news.close` / `news.close.notif` | Close the UI / the toast |
 | `news.admin.page <page>` | Admin list page |
+| `news.admin.filter <all\|published\|drafts\|pinned\|polls\|reset>` | Tab of News Management (`reset` also clears the search) |
+| `news.admin.search <text>` / `news.admin.sort` | Search the list / step to the next sort order |
+| `news.admin.resume` / `news.admin.discard` | Continue or throw away the autosaved post |
 | `news.admin.create` / `news.admin.edit <id>` / `news.admin.copy <id>` | Open the editor (new, edit, copy) |
 | `news.admin.publish <id> [page]` | Publish a draft |
 | `news.admin.togglepin <id> [page]` | Pin / unpin |
@@ -351,13 +357,26 @@ Each theme has these `"R G B A"` (0–1) fields: `PanelBg`, `HeaderBg`, `Content
 
 ---
 
+## News Management
+
+`/news admin` (or `news.admin`) opens the dashboard:
+
+- **Stat cards**: published posts (and how many are pinned), drafts, total reads (and the average per post), likes (as a share of reads) and poll votes (and how many polls are open).
+- **Tabs** with counts: ALL, PUBLISHED, DRAFTS, PINNED, POLLS. **Search** looks in titles and text. The **sort** button steps through NEWEST FIRST (pinned on top), OLDEST FIRST, MOST READ and MOST LIKED.
+- **Rows**: picture (when `ArchiveThumbnails` is on), title, badges (type, PINNED, DRAFT, POLL, group), date, author, `EDITED`, and in yellow when the post deletes itself or its poll closes. Then reads, likes and votes, and the buttons RESEND (PUBLISH for a draft), PIN, COPY, EDIT, DEL.
+- The view (tab, search, sort) is kept while you click around and starts fresh when you type `/news admin` again.
+
+## Editor autosave
+
+From the first change on, what is in the editor is kept in the data file (written with the usual 15-second delay and on server save). **PUBLISH**, **SAVE DRAFT**, **SAVE CHANGES** and **CANCEL** end it. If the editor goes away any other way (disconnect, crash, server restart, plugin reload), News Management shows an **UNSAVED** bar with the title and how long ago it was changed: **CONTINUE EDITING** opens the editor as it was, **DISCARD** deletes it. If the post you were editing has been deleted meanwhile, it carries on as a new post. An autosave nobody comes back for is removed after 30 days.
+
 ## Pinned announcements
 
 Pinned posts always sit at the top of the archive and admin list, with a gold tint, a gold **PINNED** badge and a gold frame around the popup. Pin from the admin row (**PIN / UNPIN**), from the editor (**PIN TO TOP**) or in bulk.
 
 ## Bulk admin operations
 
-Tick the checkbox on admin rows (or **SELECT PAGE**) and a toolbar appears: **DELETE** (with confirmation), **PIN ALL**, **UNPIN ALL**, **CLEAR**. The selection is per admin, survives paging, and is dropped on disconnect.
+Tick the checkbox on admin rows (or **SELECT PAGE**, which takes the rows that are listed) and the footer shows **PIN ALL**, **UNPIN ALL**, **DELETE** (with confirmation) and **CLEAR**. The selection is per admin, survives paging, tabs and searches, and is dropped on disconnect.
 
 ## Drafts and copies
 
@@ -460,9 +479,49 @@ void OnNewsLiked(BasePlayer player, Dictionary<string, object> ann, bool added)
 
 ---
 
+## API methods
+
+Other plugins can also post and read news. Call them on the plugin reference; everything uses plain types.
+
+| Method | Returns | What it does |
+|---|---|---|
+| `API_PostNews(string title, string text, string type = "Info", string imageUrl = "", string author = "")` | `string` id, or `null` | Publishes a post: players are notified, Discord gets it, `OnNewsBroadcast` fires |
+| `API_CreateNews(Dictionary<string, object> options)` | `string` id, or `null` | The same with every option (see below) |
+| `API_DeleteNews(string id)` | `bool` | Deletes a post (`OnNewsDeleted` fires) |
+| `API_GetNews(string id)` | `Dictionary<string, object>` or `null` | One post, with the same keys as the hook payload |
+| `API_GetNewsList()` | `List<Dictionary<string, object>>` | Every published post, newest first |
+| `API_GetUnreadCount(BasePlayer player)` | `int` | Unread posts this player can see |
+| `API_ShowNews(BasePlayer player, string id)` | `bool` | Opens a post for a player; `false` when they may not see it |
+
+`API_CreateNews` options (only `title` is required): `text`, `type`, `imageUrl`, `author` (default: the server name), `pinned`, `draft` (save without publishing), `notify` (default `true`), `discord` (default `true`), `group` (an existing Oxide group; an unknown one is refused), `expireDays` (0-365), `pollOptions` (2-4 strings), `pollHours` (0-720), `countdownTo` (UTC ticks or a `DateTime`), `countdownLabel`.
+
+```csharp
+[PluginReference] private Plugin NewsBroadcaster;
+
+void AnnounceEvent()
+{
+    NewsBroadcaster?.Call("API_PostNews", "Airdrop event", "Starts in 10 minutes at the Launch Site!", "Event");
+}
+
+void AskPlayers()
+{
+    var id = NewsBroadcaster?.Call<string>("API_CreateNews", new Dictionary<string, object>
+    {
+        ["title"] = "Next event?",
+        ["text"] = "Vote for Saturday's event.",
+        ["type"] = "Event",
+        ["author"] = "EventManager",
+        ["pollOptions"] = new List<string> { "Raid base", "Boat race", "Arena" },
+        ["pollHours"] = 24
+    });
+}
+```
+
+---
+
 ## Data file (`oxide/data/NewsBroadcaster_Data.json`)
 
-Stores announcements, each player's last-seen marker, each player's "mark all read" marker (`ReadAllUpTo`) and each player's `/news settings` (`PlayerSettings`: `Sound`, `Popups`, `JoinPopup`). 1.2.0 and 2.0.0 data load unchanged.
+Stores announcements, each player's last-seen marker, each player's "mark all read" marker (`ReadAllUpTo`) each player's `/news settings` (`PlayerSettings`: `Sound`, `Popups`, `JoinPopup`) and each admin's unsaved editor (`EditorAutosaves`). 1.2.0 and 2.0.0 data load unchanged.
 
 | Field | Type | Description |
 |---|---|---|

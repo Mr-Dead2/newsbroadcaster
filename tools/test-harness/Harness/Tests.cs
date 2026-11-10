@@ -437,7 +437,7 @@ static class Tests
         H.Call("OnPlayerDisconnected", admin, "bye");
         H.Call("OnPlayerDisconnected", player, "bye");
         bool clean = true;
-        foreach (var f in new[] { "editors", "playersWithUiOpen", "adminSelections", "openPopups", "archivePages", "remindedPlayers", "readRewardTimers", "autoCloseTimers", "notificationTimers", "likeCooldowns", "voteCooldowns", "currentScreens", "toastNames", "archiveFilters" })
+        foreach (var f in new[] { "editors", "playersWithUiOpen", "adminSelections", "openPopups", "archivePages", "remindedPlayers", "readRewardTimers", "autoCloseTimers", "notificationTimers", "likeCooldowns", "voteCooldowns", "currentScreens", "toastNames", "archiveFilters", "adminViews" })
         {
             var coll = H.Get(f);
             int n = (int)coll.GetType().GetProperty("Count").GetValue(coll);
@@ -570,7 +570,7 @@ static class Tests
         H.Chat(player, "news");
         Check(H.Texts(player).Any(t => t != null && t.Contains("POLL · 2 VOTES")), "archive row shows poll + vote count");
         H.Chat(admin, "news", "admin");
-        Check(H.Texts(admin).Any(t => t != null && t.Contains("2 VOTES")) && H.Texts(admin).Any(t => t != null && t.StartsWith("2 POSTS")), "admin row shows votes; header stats line");
+        Check(H.Texts(admin).Contains("POLL VOTES") && H.Texts(admin).Count(t => t == "2") >= 2 && H.Texts(admin).Any(t => t != null && t.StartsWith("2 POSTS")), "admin: votes on the row and in the stat cards; post count in the footer");
         H.CfgSet("Discord.Enabled", true);
         H.CfgSet("Discord.WebhookUrl", "https://discord.com/api/webhooks/1/abc");
         H.Console(null, "news.poll \"Discord poll\" \"Pick\" \"A|B\"");
@@ -1144,6 +1144,173 @@ static class Tests
         Check(storedAfterLoad["LastSeenNews"]["76561198000000050"] == null && storedAfterLoad["ReadAllUpTo"]["76561198000000051"] == null, "markers older than the oldest post are dropped on load");
         Check(storedAfterLoad["LastSeenNews"]["76561198000000002"] != null && storedAfterLoad["ReadAllUpTo"]["76561198000000002"] != null, "markers that still matter are kept");
         Check((int)H.Call("CountUnread", player) == 0, "...and still work");
+
+        // ---------------------------------------------------------------
+        Section("News Management: stat cards, tabs, search, sort");
+        Fresh();
+        Post("Alpha wipe news", "first", "Event");
+        Post("Beta patch notes", "second", "Update");
+        Post("Gamma rules", "third wipe mention");
+        H.Console(null, "news.poll \"Delta poll\" \"x\" \"Yes|No\"");
+        var alpha = H.AnnByTitle("Alpha wipe news");
+        var beta = H.AnnByTitle("Beta patch notes");
+        for (ulong i = 0; i < 5; i++) Set(alpha, "ReadByPlayers").Add(900 + i);
+        for (ulong i = 0; i < 3; i++) Set(beta, "LikedPlayers").Add(900 + i);
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.input title Epsilon draft");
+        H.Console(admin, "news.editor.savedraft");
+        H.Console(admin, $"news.admin.togglepin {H.Id(beta)} 0");
+        string[] RowTitles() => H.Live(admin).Where(e => System.Text.RegularExpressions.Regex.IsMatch((string)e["name"] ?? "", @"\.Admin\.\d+$"))
+            .Select(e => H.Live(admin).Where(x => (string)x["parent"] == (string)e["name"]).SelectMany(x => x["components"].Children<JObject>()).Where(c => (string)c["type"] == "UnityEngine.UI.Text").Select(c => (string)c["text"]).First(t => !string.IsNullOrEmpty(t) && t != "✓")).ToArray();
+        Check(H.Texts(admin).Contains("PUBLISHED") && H.Texts(admin).Contains("1 PINNED") && H.Texts(admin).Contains("1.3 PER POST") && H.Texts(admin).Contains("60% OF READS"), "stat cards: published, pinned, reads per post, like rate");
+        Check(RowTitles().SequenceEqual(new[] { "BETA PATCH NOTES", "EPSILON DRAFT", "DELTA POLL", "GAMMA RULES", "ALPHA WIPE NEWS" }), "default order: pinned first, then newest");
+        H.Console(admin, "news.admin.filter drafts");
+        Check(RowTitles().SequenceEqual(new[] { "EPSILON DRAFT" }) && H.Texts(admin).Any(t => t.StartsWith("1 POSTS")), "DRAFTS tab");
+        H.Console(admin, "news.admin.filter polls");
+        Check(RowTitles().SequenceEqual(new[] { "DELTA POLL" }), "POLLS tab");
+        H.Console(admin, "news.admin.filter pinned");
+        Check(RowTitles().SequenceEqual(new[] { "BETA PATCH NOTES" }), "PINNED tab");
+        H.Console(admin, "news.admin.filter published");
+        Check(RowTitles().Length == 4 && !RowTitles().Contains("EPSILON DRAFT"), "PUBLISHED tab");
+        H.Console(admin, "news.admin.search wipe");
+        Check(RowTitles().SequenceEqual(new[] { "GAMMA RULES", "ALPHA WIPE NEWS" }), "search looks in titles and text");
+        H.Console(admin, "news.admin.selectpage 0");
+        Check(H.Texts(admin).Contains("2 SELECTED"), "SELECT PAGE only takes the rows that are listed");
+        H.Console(admin, "news.admin.clearsel 0");
+        H.Console(admin, "news.admin.search zzz");
+        Check(RowTitles().Length == 0 && H.Texts(admin).Contains("No posts match this filter.") && H.Commands(admin).Contains("news.admin.filter reset"), "nothing found: message and SHOW ALL");
+        H.Console(admin, "news.admin.filter reset");
+        Check(RowTitles().Length == 5, "SHOW ALL clears the tab and the search");
+        H.Console(admin, "news.admin.sort");
+        Check(H.Texts(admin).Contains("OLDEST FIRST") && RowTitles().First() == "ALPHA WIPE NEWS", "sort: oldest first");
+        H.Console(admin, "news.admin.sort");
+        Check(H.Texts(admin).Contains("MOST READ") && RowTitles().First() == "ALPHA WIPE NEWS", "sort: most read");
+        H.Console(admin, "news.admin.sort");
+        Check(H.Texts(admin).Contains("MOST LIKED") && RowTitles().First() == "BETA PATCH NOTES", "sort: most liked");
+        H.Console(admin, "news.admin.sort");
+        Check(H.Texts(admin).Contains("NEWEST FIRST"), "sort cycles back");
+        long adminMenu = IdOf(admin, "NewsBroadcasterUI");
+        int grabsBefore = Sim.Ui(admin).CursorGrabs;
+        H.Console(admin, "news.admin.themes");
+        string backCommand = H.Commands(admin).First(c => c.StartsWith("news.admin.page"));
+        H.Console(admin, backCommand);
+        Check(IdOf(admin, "NewsBroadcasterUI") == adminMenu && Sim.Ui(admin).CursorGrabs == grabsBefore, "BACK from the themes keeps the menu (no blink, mouse stays)");
+        H.Console(admin, "news.admin.filter drafts");
+        H.Chat(admin, "news", "admin");
+        Check(RowTitles().Length == 5, "/news admin opens the full list again");
+        H.CfgSet("General.AnnouncementsPerPage", 8);
+        H.Console(admin, "news.admin.page 0");
+        H.CfgSet("General.ArchiveThumbnails", false);
+        H.Console(admin, "news.admin.page 0");
+        Check(RowTitles().Length == 5 && !CuiWarnings().Any(), "8 rows per page / no thumbnails draw without warnings");
+
+        // ---------------------------------------------------------------
+        Section("Editor autosave");
+        Fresh();
+        Post("Existing post", "x");
+        H.Console(admin, "news.admin");
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.cancel");
+        Check(!Sim.DataFiles["NewsBroadcaster_Data"].Contains("Unfinished") && !H.Texts(admin).Contains("UNSAVED"), "an untouched editor leaves nothing behind");
+        H.Console(admin, "news.admin.create");
+        Check(H.Texts(admin).Contains("CHANGES ARE SAVED AUTOMATICALLY"), "the editor says that it autosaves");
+        H.Console(admin, "news.editor.input title Unfinished business");
+        H.Console(admin, "news.editor.input text Half a sentence and");
+        H.Console(admin, "news.editor.settype alert");
+        H.Console(admin, "news.editor.toggle poll");
+        H.Console(admin, "news.editor.input poll2 Second option");
+        H.Call("OnPlayerDisconnected", admin, "Timed out");
+        Sim.Ui(admin).Elements.Clear();
+        H.Call("OnServerSave");
+        Check(Sim.DataFiles["NewsBroadcaster_Data"].Contains("Unfinished business"), "what was typed is in the data file after a disconnect");
+        string withAutosave = Sim.DataFiles["NewsBroadcaster_Data"];
+
+        Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = withAutosave; });
+        H.Console(admin, "news.admin");
+        Check(H.Texts(admin).Contains("UNSAVED") && H.Texts(admin).Any(t => t.StartsWith("\"Unfinished business\"")) && H.Commands(admin).Contains("news.admin.resume"), "after a restart News Management offers to continue");
+        Check(H.AnnByTitle("Unfinished business") == null, "...and nothing was published on its own");
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.cancel");
+        Check(H.Texts(admin).Contains("UNSAVED"), "opening and cancelling another editor does not throw the unsaved post away");
+        H.Console(admin, "news.admin.resume");
+        var resumed = H.Live(admin).SelectMany(e => e["components"].Children<JObject>()).Where(c => (string)c["type"] == "UnityEngine.UI.InputField").Select(c => (string)c["text"]).ToList();
+        Check(resumed.Contains("Unfinished business") && resumed.Contains("Half a sentence and") && resumed.Contains("Second option"), "CONTINUE EDITING brings back title, text and poll options");
+        H.Console(admin, "news.editor.input poll1 First option");
+        H.Console(admin, "news.editor.save");
+        var finished = H.AnnByTitle("Unfinished business");
+        Check(finished != null && H.AGet(finished, "Type").ToString() == "Alert" && ((List<string>)H.AGet(finished, "PollOptions")).Count == 2, "...and it publishes like any other post");
+        H.Call("OnServerSave");
+        Check(!H.Texts(admin).Contains("UNSAVED") && JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["EditorAutosaves"].Count() == 0, "publishing removes the autosave");
+
+        var existing = H.AnnByTitle("Existing post");
+        H.Console(admin, $"news.admin.edit {H.Id(existing)}");
+        H.Console(admin, "news.editor.input text Rewritten but never saved");
+        H.Console(admin, "news.close");
+        H.Console(null, $"news.delete {H.Id(existing)}");
+        H.Console(admin, "news.admin");
+        H.Console(admin, "news.admin.resume");
+        Check(H.Texts(admin).Contains("CREATE NEW ANNOUNCEMENT") && H.Texts(admin).Contains("PUBLISH ANNOUNCEMENT"), "an unsaved edit of a post that was deleted carries on as a new post");
+        H.Console(admin, "news.editor.cancel");
+        Check(!H.Texts(admin).Contains("UNSAVED"), "CANCEL in the editor discards it");
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.input title Throw me away");
+        H.Console(admin, "news.close");
+        H.Console(admin, "news.admin");
+        H.Console(admin, "news.admin.discard");
+        Check(!H.Texts(admin).Contains("UNSAVED") && LastChat(admin) == "Unsaved post discarded.", "DISCARD removes it");
+        H.Console(player, "news.admin.resume");
+        H.Console(player, "news.admin.discard");
+        H.Console(player, "news.admin.filter drafts");
+        Check(!UiOpen(player), "players can't use the admin commands");
+
+        Fresh(preBoot: () =>
+        {
+            Sim.DataFiles["NewsBroadcaster_Data"] = @"{ ""Announcements"": [], ""EditorAutosaves"": {
+                ""76561198000000001"": { ""Draft"": { ""Title"": ""Ancient"" }, ""SavedAt"": 5 },
+                ""76561198000000009"": null } }";
+        });
+        Check(JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["EditorAutosaves"].Count() == 0, "autosaves nobody came back for (30 days) and broken ones are dropped on load");
+
+        // ---------------------------------------------------------------
+        Section("API for other plugins");
+        Fresh();
+        Sim.Permission.CreateGroup("vip", "VIP", 0);
+        H.CfgSet("Discord.Enabled", true);
+        H.CfgSet("Discord.WebhookUrl", "https://discord.com/api/webhooks/1/x");
+        int apiHooks = HooksNamed("OnNewsBroadcast"), apiWeb = Sim.WebRequests.Count;
+        string apiId = (string)H.Call("API_PostNews", "Airdrop event", "Starts in 10 minutes!", "Event");
+        var apiPost = H.AnnByTitle("Airdrop event");
+        Check(apiId != null && apiPost != null && H.Id(apiPost) == apiId && H.AGet(apiPost, "Type").ToString() == "Event" && (string)H.AGet(apiPost, "Author") == "SERVER NEWS", "API_PostNews publishes and returns the id");
+        Check(ToastOpen(player) && HooksNamed("OnNewsBroadcast") == apiHooks + 1 && Sim.WebRequests.Count == apiWeb + 1, "...players are notified, the hook fires, Discord gets it");
+        Check(H.Call("API_PostNews", "  ", "no title") == null, "no title, no post");
+        H.Console(player, "news.close.notif");
+
+        string quietId = (string)H.Call("API_CreateNews", new Dictionary<string, object>
+        {
+            ["title"] = "Vote: next event", ["text"] = "Pick one", ["type"] = "update", ["author"] = "EventManager", ["pinned"] = true,
+            ["notify"] = false, ["discord"] = false, ["expireDays"] = 3, ["pollOptions"] = new List<string> { "Raid", "Race", " " }, ["pollHours"] = 12,
+            ["countdownTo"] = DateTime.UtcNow.AddHours(5), ["countdownLabel"] = "Voting ends in"
+        });
+        var quiet = H.AnnByTitle("Vote: next event");
+        Check(quietId != null && (bool)H.AGet(quiet, "Pinned") && (string)H.AGet(quiet, "Author") == "EventManager" && H.AGet(quiet, "Type").ToString() == "Update", "API_CreateNews: type, author, pinned");
+        Check(((List<string>)H.AGet(quiet, "PollOptions")).SequenceEqual(new[] { "Raid", "Race" }) && (long)H.AGet(quiet, "PollEndsAt") > DateTime.UtcNow.Ticks && (long)H.AGet(quiet, "ExpiresAt") > DateTime.UtcNow.Ticks && (long)H.AGet(quiet, "CountdownTo") > DateTime.UtcNow.Ticks, "...poll, poll timer, auto-delete and countdown");
+        Check(!ToastOpen(player) && Sim.WebRequests.Count == apiWeb + 1, "...notify=false / discord=false keep it quiet");
+
+        string draftId = (string)H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "Later", ["draft"] = true });
+        Check((bool)H.AGet(H.AnnByTitle("Later"), "Draft") && HooksNamed("OnNewsBroadcast") == apiHooks + 2, "draft=true saves a draft (no broadcast)");
+        Check(H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "For nobody", ["group"] = "nosuchgroup" }) == null && H.AnnByTitle("For nobody") == null, "an unknown group is refused");
+        Check(H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "For VIPs", ["group"] = "vip", ["notify"] = false }) != null && (string)H.AGet(H.AnnByTitle("For VIPs"), "Group") == "vip", "a real group works");
+
+        var apiData = (Dictionary<string, object>)H.Call("API_GetNews", apiId);
+        Check(apiData != null && (string)apiData["title"] == "Airdrop event" && H.Call("API_GetNews", "nope") == null, "API_GetNews returns the hook payload");
+        var apiList = (List<Dictionary<string, object>>)H.Call("API_GetNewsList");
+        Check(apiList.Count == 3 && !apiList.Any(d => (string)d["title"] == "Later"), "API_GetNewsList: published posts only");
+        Check((int)H.Call("API_GetUnreadCount", player) == 2 && (int)H.Call("API_GetUnreadCount", noperm) == 0, "API_GetUnreadCount counts what the player can see");
+        Check((bool)H.Call("API_ShowNews", player, apiId) && H.Texts(player).Contains("AIRDROP EVENT"), "API_ShowNews opens the post");
+        H.Console(player, "news.close");
+        Check(!(bool)H.Call("API_ShowNews", player, draftId) && !(bool)H.Call("API_ShowNews", noperm, apiId) && !UiOpen(player), "...but not a draft, and not without permission");
+        int deletedHooks = HooksNamed("OnNewsDeleted");
+        Check((bool)H.Call("API_DeleteNews", apiId) && H.AnnByTitle("Airdrop event") == null && HooksNamed("OnNewsDeleted") == deletedHooks + 1 && !(bool)H.Call("API_DeleteNews", apiId), "API_DeleteNews");
 
         // ---------------------------------------------------------------
         Section("Global checks");

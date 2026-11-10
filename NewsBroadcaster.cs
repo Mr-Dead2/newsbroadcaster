@@ -66,6 +66,7 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, UiScreen> currentScreens = new Dictionary<ulong, UiScreen>();
         private readonly Dictionary<ulong, string> toastNames = new Dictionary<ulong, string>();
         private readonly Dictionary<ulong, ArchiveFilter> archiveFilters = new Dictionary<ulong, ArchiveFilter>();
+        private readonly Dictionary<ulong, AdminView> adminViews = new Dictionary<ulong, AdminView>();
         private int toastCounter;
 
         // Deletes expired posts and closes timed polls.
@@ -110,6 +111,12 @@ namespace Oxide.Plugins
         private const float EditorWidthUnits = 947.2f;  // 0.74 of 1280
         private const float EditorHeightUnits = 576f;   // 0.8 of 720
         private const float ArchiveWidthUnits = 896f;   // 0.7 of 1280
+        private const float AdminWidthUnits = 947.2f;   // 0.74 of 1280
+        private const float AdminHeightUnits = 619.2f;  // 0.86 of 720
+        private const float AdminSidePad = 28f;
+        private static readonly string[] AdminTabs = { "all", "published", "drafts", "pinned", "polls" };
+        private static readonly string[] AdminSorts = { "newest", "oldest", "reads", "likes" };
+        private const int AutosaveKeepDays = 30;
 
         private const string AdminBackdrop = "0.015 0.018 0.022 0.74";
         private const string AdminSurface = "0.055 0.062 0.073 0.99";
@@ -142,6 +149,8 @@ namespace Oxide.Plugins
             public Dictionary<ulong, long> ReadAllUpTo = new Dictionary<ulong, long>();
             // Choices players make in /news settings.
             public Dictionary<ulong, PlayerPrefs> PlayerSettings = new Dictionary<ulong, PlayerPrefs>();
+            // What each admin had in the editor and has not saved or cancelled yet.
+            public Dictionary<ulong, EditorSession> EditorAutosaves = new Dictionary<ulong, EditorSession>();
         }
 
         class PlayerPrefs
@@ -193,6 +202,14 @@ namespace Oxide.Plugins
             public string Query = string.Empty;
         }
 
+        // What an admin is looking at in News Management.
+        class AdminView
+        {
+            public string Tab = "all";    // one of AdminTabs
+            public string Query = string.Empty;
+            public int Sort;              // index into AdminSorts
+        }
+
         class EditorSession
         {
             public Announcement Draft;
@@ -202,7 +219,7 @@ namespace Oxide.Plugins
             public bool Poll;
             public bool PollClosed;
             public string[] PollOptions = new string[MaxPollOptions];
-            public bool IsNew => string.IsNullOrEmpty(EditingId);
+            [JsonIgnore] public bool IsNew => string.IsNullOrEmpty(EditingId);
             // Editing a saved draft (it can still be published or saved as a draft again).
             public bool IsDraft;
             // Auto-delete / poll timer picked in this session: they count from now (or from publishing).
@@ -210,7 +227,9 @@ namespace Oxide.Plugins
             public bool PollTimerChanged;
             // What was typed in the countdown field, so a redraw shows it back.
             public string CountdownInput = string.Empty;
-            public bool Publishes => IsNew || IsDraft;
+            [JsonIgnore] public bool Publishes => IsNew || IsDraft;
+            // Last change (UTC ticks). The session is kept in the data file from the first change on.
+            public long SavedAt;
 
             public void LoadPollOptions(Announcement from)
             {
@@ -382,7 +401,6 @@ namespace Oxide.Plugins
                 ["DiscordPostedBy"] = "Posted by {0}",
                 ["DiscordTruncated"] = "[Message truncated on Discord]",
                 ["ConsolePollUsage"] = "Usage: news.poll \"Title\" \"Text\" \"Option 1|Option 2|...\" [Type]",
-                ["AdminStats"] = "{0} POSTS  •  {1} PINNED  •  {2} READS  •  {3} LIKES",
                 ["NoPermissionView"] = "You do not have permission to view news.",
                 ["NoNewsHistory"] = "No news history available.",
                 ["NewsBroadcasted"] = "News broadcasted!",
@@ -430,8 +448,6 @@ namespace Oxide.Plugins
                 ["EditButton"] = "EDIT",
                 ["DelButton"] = "DEL",
                 ["ResendButton"] = "RESEND",
-                ["ReadsLikes"] = "{0} READS  •  {1} LIKES",
-                ["ReadsLikesVotes"] = "{0} READS  •  {1} LIKES  •  {2} VOTES",
                 ["PostsCount"] = "{0} POSTS",
                 ["DeleteAnnouncement"] = "DELETE ANNOUNCEMENT",
                 ["DeleteConfirmBody"] = "\"{0}\"\nThis cannot be undone.",
@@ -479,6 +495,38 @@ namespace Oxide.Plugins
                 ["PopupTriggered"] = "News popup triggered for {0}",
                 ["NoAnnouncementsAvailable"] = "No announcements available.",
                 ["ChatHelpSettings"] = "\n/news settings - sound and pop-up options",
+
+                // News Management
+                ["AdminTabAll"] = "ALL",
+                ["AdminTabPublished"] = "PUBLISHED",
+                ["AdminTabDrafts"] = "DRAFTS",
+                ["AdminTabPinned"] = "PINNED",
+                ["AdminTabPolls"] = "POLLS",
+                ["SortNewest"] = "NEWEST FIRST",
+                ["SortOldest"] = "OLDEST FIRST",
+                ["SortReads"] = "MOST READ",
+                ["SortLikes"] = "MOST LIKED",
+                ["StatPublished"] = "PUBLISHED",
+                ["StatDrafts"] = "DRAFTS",
+                ["StatReads"] = "READS",
+                ["StatLikes"] = "LIKES",
+                ["StatVotes"] = "POLL VOTES",
+                ["StatPinnedHint"] = "{0} PINNED",
+                ["StatDraftsHint"] = "HIDDEN FROM PLAYERS",
+                ["StatReadsHint"] = "{0} PER POST",
+                ["StatLikesHint"] = "{0}% OF READS",
+                ["StatVotesHint"] = "{0} OPEN",
+                ["ColReads"] = "READS",
+                ["ColLikes"] = "LIKES",
+                ["ColVotes"] = "VOTES",
+
+                // Editor autosave
+                ["UnsavedBadge"] = "UNSAVED",
+                ["UnsavedPost"] = "\"{0}\"  •  last change {1} ago",
+                ["ContinueEditing"] = "CONTINUE EDITING",
+                ["Discard"] = "DISCARD",
+                ["UnsavedDiscarded"] = "Unsaved post discarded.",
+                ["AutosaveHint"] = "CHANGES ARE SAVED AUTOMATICALLY",
 
                 // Drafts and copies
                 ["SaveDraft"] = "SAVE DRAFT",
@@ -849,9 +897,15 @@ namespace Oxide.Plugins
             if (filter == null) return true;
             if (filter.Type == "polls") { if (!HasPoll(ann)) return false; }
             else if (filter.Type != "all" && !string.Equals(ann.Type.ToString(), filter.Type, StringComparison.OrdinalIgnoreCase)) return false;
-            if (string.IsNullOrEmpty(filter.Query)) return true;
-            return (ann.Title ?? string.Empty).IndexOf(filter.Query, StringComparison.OrdinalIgnoreCase) >= 0
-                || (ann.Text ?? string.Empty).IndexOf(filter.Query, StringComparison.OrdinalIgnoreCase) >= 0;
+            return MatchesQuery(ann, filter.Query);
+        }
+
+        // Search text found in the title or the body (no text matches everything).
+        private static bool MatchesQuery(Announcement ann, string query)
+        {
+            if (string.IsNullOrEmpty(query)) return true;
+            return (ann.Title ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || (ann.Text ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         // The archive list for this player with their filter chips and search applied.
@@ -1447,6 +1501,7 @@ namespace Oxide.Plugins
             if (storedData.LastSeenNews == null) storedData.LastSeenNews = new Dictionary<ulong, long>();
             if (storedData.ReadAllUpTo == null) storedData.ReadAllUpTo = new Dictionary<ulong, long>();
             if (storedData.PlayerSettings == null) storedData.PlayerSettings = new Dictionary<ulong, PlayerPrefs>();
+            if (storedData.EditorAutosaves == null) storedData.EditorAutosaves = new Dictionary<ulong, EditorSession>();
 
             announcements = storedData.Announcements;
 
@@ -1510,6 +1565,7 @@ namespace Oxide.Plugins
             }
 
             if (PruneStaleMarkers() > 0) changed = true;
+            if (RepairAutosaves()) changed = true;
 
             if (changed) SaveAnnouncements();
         }
@@ -1521,6 +1577,26 @@ namespace Oxide.Plugins
         {
             long oldest = announcements.Count > 0 ? announcements.Min(a => a.Timestamp) : long.MaxValue;
             return PruneBelow(storedData.LastSeenNews, oldest) + PruneBelow(storedData.ReadAllUpTo, oldest);
+        }
+
+        // Drops autosaved editor sessions that are broken or that nobody came back for.
+        private bool RepairAutosaves()
+        {
+            long oldest = NowTicks - AutosaveKeepDays * TimeSpan.TicksPerDay;
+            var stale = storedData.EditorAutosaves.Where(e => e.Value == null || e.Value.Draft == null || e.Value.SavedAt < oldest).Select(e => e.Key).ToList();
+            foreach (var userId in stale) storedData.EditorAutosaves.Remove(userId);
+
+            foreach (var session in storedData.EditorAutosaves.Values)
+            {
+                if (session.EditingId == null) session.EditingId = string.Empty;
+                if (session.CountdownInput == null) session.CountdownInput = string.Empty;
+                if (session.PollOptions == null || session.PollOptions.Length != MaxPollOptions) Array.Resize(ref session.PollOptions, MaxPollOptions);
+                var draft = session.Draft;
+                if (draft.LikedPlayers == null) draft.LikedPlayers = new HashSet<ulong>();
+                if (draft.PollOptions == null) draft.PollOptions = new List<string>();
+                if (draft.PollVotes == null) draft.PollVotes = new Dictionary<ulong, int>();
+            }
+            return stale.Count > 0;
         }
 
         private static int PruneBelow(Dictionary<ulong, long> markers, long oldest)
@@ -1600,6 +1676,7 @@ namespace Oxide.Plugins
             currentScreens.Clear();
             toastNames.Clear();
             archiveFilters.Clear();
+            adminViews.Clear();
             surfaceColors.Clear();
             scheduleTimer?.Destroy();
             scheduleTimer = null;
@@ -1624,6 +1701,7 @@ namespace Oxide.Plugins
             currentScreens.Remove(id);
             toastNames.Remove(id);
             archiveFilters.Remove(id);
+            adminViews.Remove(id);
             CancelReadRewardTimer(id);
             CancelAutoClose(id);
             CancelNotificationTimer(id);
@@ -1929,6 +2007,7 @@ namespace Oxide.Plugins
                         SendReply(player, Msg("NoPermissionCommand", player));
                         return;
                     }
+                    adminViews.Remove(player.userID);
                     ShowAdminList(player, 0);
                     return;
 
@@ -2227,7 +2306,90 @@ namespace Oxide.Plugins
             if (player == null) return;
 
             currentScreens.Remove(player.userID);   // typed: open from scratch
+            adminViews.Remove(player.userID);
             ShowAdminList(player, 0);
+        }
+
+        // Tab of News Management; "reset" also clears the search.
+        [ConsoleCommand("news.admin.filter")]
+        private void CmdNewsAdminFilter(ConsoleSystem.Arg arg)
+        {
+            var player = AdminPlayer(arg);
+            if (player == null) return;
+
+            string tab = arg.GetString(0).ToLowerInvariant();
+            var view = GetAdminView(player.userID);
+            if (tab == "reset") view.Query = string.Empty;
+            view.Tab = Array.IndexOf(AdminTabs, tab) >= 0 ? tab : "all";
+            ShowAdminList(player, 0);
+        }
+
+        [ConsoleCommand("news.admin.search")]
+        private void CmdNewsAdminSearch(ConsoleSystem.Arg arg)
+        {
+            var player = AdminPlayer(arg);
+            if (player == null) return;
+
+            string query = arg.Args == null ? string.Empty : string.Join(" ", arg.Args);
+            GetAdminView(player.userID).Query = LimitText(query.Trim(), MaxSearchChars).Trim();
+            ShowAdminList(player, 0);
+        }
+
+        [ConsoleCommand("news.admin.sort")]
+        private void CmdNewsAdminSort(ConsoleSystem.Arg arg)
+        {
+            var player = AdminPlayer(arg);
+            if (player == null) return;
+
+            var view = GetAdminView(player.userID);
+            view.Sort = (view.Sort + 1) % AdminSorts.Length;
+            ShowAdminList(player, 0);
+        }
+
+        // Back into the post this admin was writing when the editor went away.
+        [ConsoleCommand("news.admin.resume")]
+        private void CmdNewsAdminResume(ConsoleSystem.Arg arg)
+        {
+            var player = AdminPlayer(arg);
+            if (player == null) return;
+
+            EditorSession session;
+            if (!storedData.EditorAutosaves.TryGetValue(player.userID, out session))
+            {
+                ShowAdminList(player, 0);
+                return;
+            }
+
+            if (!session.IsNew)
+            {
+                var target = FindById(session.EditingId);
+                if (target != null) session.IsDraft = target.Draft;
+                else
+                {
+                    // The post it belonged to was deleted meanwhile: it carries on as a new post.
+                    session.EditingId = string.Empty;
+                    session.IsDraft = false;
+                    session.Notify = true;
+                    session.Discord = DiscordConfigured;
+                }
+            }
+            editors[player.userID] = session;
+            ShowEditor(player);
+        }
+
+        [ConsoleCommand("news.admin.discard")]
+        private void CmdNewsAdminDiscard(ConsoleSystem.Arg arg)
+        {
+            var player = AdminPlayer(arg);
+            if (player == null) return;
+
+            if (storedData.EditorAutosaves.Remove(player.userID))
+            {
+                MarkDataDirty();
+                SendReply(player, Msg("UnsavedDiscarded", player));
+            }
+            editors.Remove(player.userID);
+            ShowAdminList(player, arg.GetInt(0, 0));
         }
 
         [ConsoleCommand("news.admin.page")]
@@ -2412,7 +2574,7 @@ namespace Oxide.Plugins
 
             int page = arg.GetInt(0, 0);
             int perPage = config.General.AnnouncementsPerPage;
-            var displayList = GetDisplayOrder();
+            var displayList = AdminOrder(player.userID);
             var sel = GetAdminSelection(player.userID);
 
             int start = page * perPage;
@@ -2574,6 +2736,28 @@ namespace Oxide.Plugins
             return player != null && editors.TryGetValue(player.userID, out session) ? session : null;
         }
 
+        // Something changed in the editor: keep the session in the data file (saved with the usual delay),
+        // so a disconnect, a restart or a plugin reload does not lose what was typed.
+        private void AutosaveEditor(BasePlayer player, EditorSession session)
+        {
+            session.SavedAt = NowTicks;
+            storedData.EditorAutosaves[player.userID] = session;
+            MarkDataDirty();
+        }
+
+        // The session was saved, published or cancelled: its autosave goes too. An older autosave that
+        // this session never replaced (the admin opened the editor and changed nothing) is left alone.
+        private void CloseEditor(ulong userId)
+        {
+            EditorSession session, saved;
+            if (editors.TryGetValue(userId, out session) && storedData.EditorAutosaves.TryGetValue(userId, out saved) && ReferenceEquals(session, saved))
+            {
+                storedData.EditorAutosaves.Remove(userId);
+                MarkDataDirty();
+            }
+            editors.Remove(userId);
+        }
+
         [ConsoleCommand("news.editor.input")]
         private void CmdEditorInput(ConsoleSystem.Arg arg)
         {
@@ -2631,6 +2815,7 @@ namespace Oxide.Plugins
                     if (target > 0) session.CountdownInput = LocalTime(target);
                     break;
             }
+            AutosaveEditor(player, session);
             // The field already shows what was typed, so the editor is not rebuilt here (the admin can
             // click straight into the next field); only the counter / hint next to the field is swapped.
             RefreshEditorHint(player, session, field);
@@ -2644,7 +2829,11 @@ namespace Oxide.Plugins
             if (session == null) return;
 
             AnnouncementType type;
-            if (TryParseType(arg.GetString(0), out type)) session.Draft.Type = type;
+            if (TryParseType(arg.GetString(0), out type))
+            {
+                session.Draft.Type = type;
+                AutosaveEditor(player, session);
+            }
             ShowEditor(player);
         }
 
@@ -2678,7 +2867,10 @@ namespace Oxide.Plugins
                     session.Draft.PollHours = NextPreset(PollTimerPresets, session.Draft.PollHours);
                     session.PollTimerChanged = true;
                     break;
+                default:
+                    return;
             }
+            AutosaveEditor(player, session);
             ShowEditor(player);
         }
 
@@ -2768,7 +2960,7 @@ namespace Oxide.Plugins
                 if (ann == null)
                 {
                     SendReply(player, Msg("EditTargetGone", player));
-                    editors.Remove(player.userID);
+                    CloseEditor(player.userID);
                     ShowAdminList(player, 0);
                     return;
                 }
@@ -2806,7 +2998,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            editors.Remove(player.userID);
+            CloseEditor(player.userID);
             if (pollJustClosed) AnnouncePollResults(ann);
 
             if (asDraft)
@@ -2841,8 +3033,136 @@ namespace Oxide.Plugins
             var player = AdminPlayer(arg);
             if (player == null) return;
 
-            editors.Remove(player.userID);
+            CloseEditor(player.userID);
             ShowAdminList(player, 0);
+        }
+        #endregion
+
+        #region API
+        // For other plugins, e.g. NewsBroadcaster.Call<string>("API_PostNews", "Airdrop event", "Starts in 10 minutes!", "Event").
+        // Posts made here are normal posts: they are saved, shown to players, sent to Discord and fire OnNewsBroadcast.
+
+        // Publishes a post. Returns its id, or null when it could not be created (no title).
+        private string API_PostNews(string title, string text, string type = "Info", string imageUrl = "", string author = "")
+        {
+            return API_CreateNews(new Dictionary<string, object>
+            {
+                ["title"] = title,
+                ["text"] = text,
+                ["type"] = type,
+                ["imageUrl"] = imageUrl,
+                ["author"] = author
+            });
+        }
+
+        // The same with every option. Keys (only "title" is required): text, type, imageUrl, author,
+        // pinned, draft, notify (default true), discord (default true), group, expireDays,
+        // pollOptions (2-4 strings), pollHours, countdownTo (UTC ticks or a DateTime), countdownLabel.
+        private string API_CreateNews(Dictionary<string, object> options)
+        {
+            if (options == null) return null;
+            string title = LimitText(OptionText(options, "title"), MaxTitleChars).Trim();
+            if (title.Length == 0) return null;
+
+            string group = OptionText(options, "group").Trim();
+            if (group.Length > 0 && !permission.GroupExists(group))
+            {
+                PrintWarning($"API_CreateNews: \"{title}\" was not posted, the group '{group}' does not exist.");
+                return null;
+            }
+
+            AnnouncementType type;
+            TryParseType(OptionText(options, "type"), out type);
+            string author = OptionText(options, "author").Trim();
+            var ann = new Announcement
+            {
+                Id = NewAnnouncementId(),
+                Title = title,
+                ImageUrl = NormalizeImageUrl(OptionText(options, "imageUrl")),
+                Text = NormalizeInputBody(OptionText(options, "text")),
+                Author = author.Length > 0 ? author : config.General.ServerName,
+                Type = type,
+                Pinned = OptionFlag(options, "pinned", false),
+                Group = group,
+                ExpireDays = (int)Math.Max(0L, Math.Min(365L, OptionNumber(options, "expireDays"))),
+                CountdownLabel = LimitText(OptionText(options, "countdownLabel"), MaxCountdownLabelChars).Trim()
+            };
+
+            object value;
+            if (options.TryGetValue("countdownTo", out value) && value is DateTime) ann.CountdownTo = ((DateTime)value).ToUniversalTime().Ticks;
+            else ann.CountdownTo = Math.Max(0L, OptionNumber(options, "countdownTo"));
+
+            var pollOptions = options.TryGetValue("pollOptions", out value) ? value as System.Collections.IEnumerable : null;
+            if (pollOptions != null && !(value is string))
+            {
+                var cleaned = CleanPollOptions(pollOptions.Cast<object>().Select(o => o?.ToString()));
+                if (cleaned.Count >= 2)
+                {
+                    ann.PollOptions = cleaned;
+                    ann.PollHours = (int)Math.Max(0L, Math.Min(720L, OptionNumber(options, "pollHours")));
+                }
+            }
+
+            bool draft = OptionFlag(options, "draft", false);
+            AddAnnouncement(ann, draft);
+            if (!draft)
+            {
+                if (OptionFlag(options, "discord", true)) SendToDiscord(ann);
+                if (OptionFlag(options, "notify", true)) NotifyPlayers(ann);
+            }
+            return ann.Id;
+        }
+
+        private bool API_DeleteNews(string id)
+        {
+            var ann = FindById(id);
+            if (ann == null) return false;
+            RemoveAnnouncement(ann);
+            SaveAnnouncements();
+            return true;
+        }
+
+        // The same data the hooks carry (see BuildHookData), or null for an unknown id.
+        private Dictionary<string, object> API_GetNews(string id) => BuildHookData(FindById(id));
+
+        // Every published post, newest first.
+        private List<Dictionary<string, object>> API_GetNewsList()
+        {
+            return announcements.Where(a => !a.Draft && !IsExpired(a)).Select(BuildHookData).ToList();
+        }
+
+        private int API_GetUnreadCount(BasePlayer player) => player != null && CanView(player) ? CountUnread(player) : 0;
+
+        // Opens a post for a player; false when they are not allowed to see it.
+        private bool API_ShowNews(BasePlayer player, string id)
+        {
+            var ann = FindById(id);
+            if (player == null || !player.IsConnected || ann == null || !CanView(player) || !CanSee(player, ann)) return false;
+            ShowPopup(player, ann, PopupOrigin.Direct);
+            return true;
+        }
+
+        private static string OptionText(Dictionary<string, object> options, string key)
+        {
+            object value;
+            return options.TryGetValue(key, out value) && value != null ? value.ToString() : string.Empty;
+        }
+
+        private static bool OptionFlag(Dictionary<string, object> options, string key, bool fallback)
+        {
+            object value;
+            if (!options.TryGetValue(key, out value) || value == null) return fallback;
+            if (value is bool) return (bool)value;
+            bool parsed;
+            return bool.TryParse(value.ToString(), out parsed) ? parsed : fallback;
+        }
+
+        private static long OptionNumber(Dictionary<string, object> options, string key)
+        {
+            object value;
+            if (!options.TryGetValue(key, out value) || value == null) return 0;
+            double parsed;
+            return double.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture, out parsed) ? (long)parsed : 0;
         }
         #endregion
 
@@ -4093,9 +4413,16 @@ namespace Oxide.Plugins
                 left += width + 0.006f;
             }
 
-            // Search: typed text is sent when the player presses Enter or clicks away.
-            string query = filter?.Query ?? string.Empty;
-            string field = AddSurface(container, mainPanel, Anchor(0.66f, bottom), Anchor(0.975f, top), "1 1 1 0.045", RadiusButton, null, mainPanel + ".Search",
+            AddSearchField(container, player, mainPanel, Anchor(0.66f, bottom), Anchor(0.975f, top), filter?.Query, "news.search", "news.search.clear", mainPanel + ".Search");
+        }
+
+        // Search box: typed text is sent when the player presses Enter or clicks away. With text in it,
+        // it gets an accent rim and a ✕ that clears it.
+        private void AddSearchField(CuiElementContainer container, BasePlayer player, string parent, string anchorMin, string anchorMax, string query, string command, string clearCommand, string name)
+        {
+            var c = config.Colors;
+            query = query ?? string.Empty;
+            string field = AddSurface(container, parent, anchorMin, anchorMax, "1 1 1 0.045", RadiusButton, null, name,
                 string.IsNullOrEmpty(query) ? null : MixAlpha(c.ButtonPrimary, 0.55f));
             container.Add(new CuiLabel
             {
@@ -4107,12 +4434,12 @@ namespace Oxide.Plugins
                 Parent = field,
                 Components =
                 {
-                    new CuiInputFieldComponent { Text = query, FontSize = 11, Align = TextAnchor.MiddleLeft, Command = "news.search", Color = c.TextTitle, CharsLimit = MaxSearchChars, NeedsKeyboard = true, Font = FontRegular },
+                    new CuiInputFieldComponent { Text = query, FontSize = 11, Align = TextAnchor.MiddleLeft, Command = command, Color = c.TextTitle, CharsLimit = MaxSearchChars, NeedsKeyboard = true, Font = FontRegular },
                     new CuiRectTransformComponent { AnchorMin = "0.24 0", AnchorMax = "0.89 1" }
                 }
             });
             if (!string.IsNullOrEmpty(query))
-                AddGhostButton(container, field, "✕", "news.search.clear", "0.9 0.15", "0.985 0.85", c.TextNormal, 9);
+                AddGhostButton(container, field, "✕", clearCommand, "0.9 0.15", "0.985 0.85", c.TextNormal, 9);
         }
 
         private void AddBadge(CuiElementContainer container, string parent, string text, string background, string textColor, float left, float right)
@@ -4158,6 +4485,61 @@ namespace Oxide.Plugins
         #endregion
 
         #region Admin UI
+        // Positions in News Management are worked out in units from the top-left corner of a box
+        // (the panel, a row); this turns them into anchors for that box.
+        struct Grid
+        {
+            private readonly float width, height;
+
+            public Grid(float width, float height)
+            {
+                this.width = width;
+                this.height = height;
+            }
+
+            public string Min(float left, float bottom) => Anchor(left / width, 1f - bottom / height);
+            public string Max(float right, float top) => Anchor(right / width, 1f - top / height);
+        }
+
+        private AdminView GetAdminView(ulong userId)
+        {
+            AdminView view;
+            if (!adminViews.TryGetValue(userId, out view))
+            {
+                view = new AdminView();
+                adminViews[userId] = view;
+            }
+            return view;
+        }
+
+        private static bool InAdminTab(Announcement ann, string tab)
+        {
+            switch (tab)
+            {
+                case "published": return !ann.Draft;
+                case "drafts": return ann.Draft;
+                case "pinned": return ann.Pinned;
+                case "polls": return HasPoll(ann);
+                default: return true;
+            }
+        }
+
+        // News Management as this admin has it filtered and sorted.
+        private List<Announcement> AdminOrder(ulong userId)
+        {
+            AdminView view;
+            if (!adminViews.TryGetValue(userId, out view)) return GetDisplayOrder();
+
+            var list = announcements.Where(a => InAdminTab(a, view.Tab) && MatchesQuery(a, view.Query));
+            switch (AdminSorts[view.Sort])
+            {
+                case "oldest": return list.OrderBy(a => a.Timestamp).ToList();
+                case "reads": return list.OrderByDescending(a => a.ReadByPlayers.Count).ThenByDescending(a => a.Timestamp).ToList();
+                case "likes": return list.OrderByDescending(a => a.LikedPlayers.Count).ThenByDescending(a => a.Timestamp).ToList();
+                default: return list.OrderByDescending(a => a.Pinned).ThenByDescending(a => a.Timestamp).ToList();
+            }
+        }
+
         private void ShowAdminList(BasePlayer player, int page)
         {
             bool fresh;
@@ -4165,178 +4547,344 @@ namespace Oxide.Plugins
 
             var container = new CuiElementContainer();
             var c = config.Colors;
+            ulong userId = player.userID;
+            var view = GetAdminView(userId);
+            var g = new Grid(AdminWidthUnits, AdminHeightUnits);
+            const float left = AdminSidePad, right = AdminWidthUnits - AdminSidePad;
 
             BeginScreen(container, fresh, AdminBackdrop);
             int contentStart = container.Count;
-            AddPanelShadow(container, ScreenName, "0.16 0.12", "0.84 0.88");
+            AddPanelShadow(container, ScreenName, "0.13 0.07", "0.87 0.93");
 
             string surface = Opaque(AdminSurface);
-            string mainPanel = AddSurface(container, ScreenName, "0.16 0.12", "0.84 0.88", surface, RadiusPanel, null, LayerName + ".Admin", PanelRim);
-            AddTopSheen(container, mainPanel, RadiusPanel);
+            string panel = AddSurface(container, ScreenName, "0.13 0.07", "0.87 0.93", surface, RadiusPanel, null, LayerName + ".Admin", PanelRim);
+            AddTopSheen(container, panel, RadiusPanel);
 
-            AddHairline(container, mainPanel, 0.866f, 0.025f, 0.975f);
-
+            // Header: title on the left, the main action on the right.
             container.Add(new CuiLabel
             {
-                Text = { Text = $"{Msg("AdminControl", player)}  <color={RgbaToHex(c.TextMuted)}>/  {(config.General.ServerName ?? "SERVER").ToUpper()}</color>", FontSize = 17, Align = TextAnchor.LowerLeft, Color = c.TextTitle, Font = FontBold },
-                RectTransform = { AnchorMin = "0.035 0.925", AnchorMax = "0.57 0.975" }
-            }, mainPanel);
+                Text = { Text = $"{Msg("AdminControl", player)}  <color={RgbaToHex(c.TextMuted)}>/  {(config.General.ServerName ?? string.Empty).ToUpper()}</color>", FontSize = 17, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
+                RectTransform = { AnchorMin = g.Min(left, 48f), AnchorMax = g.Max(560f, 14f) }
+            }, panel);
+            AddGhostButton(container, panel, Msg("Themes", player), "news.admin.themes", g.Min(right - 334f, 46f), g.Max(right - 222f, 16f), c.TextNormal, 9);
+            AddPrimaryButton(container, panel, Msg("NewPost", player), "news.admin.create", g.Min(right - 214f, 46f), g.Max(right - 40f, 16f), c.ButtonPrimary, "1 1 1 1", 10);
+            AddGhostButton(container, panel, "✕", "news.close", g.Min(right - 30f, 46f), g.Max(right, 16f), c.TextNormal, 12);
+            AddHairline(container, panel, 1f - 58f / AdminHeightUnits, left / AdminWidthUnits, right / AdminWidthUnits);
 
-            int totalReads = announcements.Sum(a => a.ReadByPlayers?.Count ?? 0);
-            int totalLikes = announcements.Sum(a => a.LikedPlayers?.Count ?? 0);
-            container.Add(new CuiLabel
+            AddAdminStats(container, player, panel, g, surface);
+            AddAdminToolbar(container, player, panel, g, view);
+
+            // A post this admin was writing when they left (disconnect, restart, plugin reload).
+            float rowsTop = 180f;
+            EditorSession unsaved;
+            if (storedData.EditorAutosaves.TryGetValue(userId, out unsaved) && unsaved != null)
             {
-                Text = { Text = Msg("AdminStats", player, announcements.Count, announcements.Count(a => a.Pinned), totalReads, totalLikes), FontSize = 9, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = FontBold },
-                RectTransform = { AnchorMin = "0.035 0.875", AnchorMax = "0.57 0.92" }
-            }, mainPanel);
+                AddUnsavedBanner(container, player, panel, g, unsaved, surface);
+                rowsTop = 218f;
+            }
+            float rowsBottom = AdminHeightUnits - 64f;
 
-            AddPrimaryButton(container, mainPanel, Msg("NewPost", player), "news.admin.create", "0.735 0.907", "0.925 0.961", c.ButtonPrimary, "1 1 1 1", 10);
-
-            AddGhostButton(container, mainPanel, Msg("Themes", player), "news.admin.themes", "0.59 0.907", "0.725 0.961", c.TextNormal, 9);
-            AddGhostButton(container, mainPanel, "✕", "news.close", "0.94 0.907", "0.975 0.961", c.TextNormal, 12);
-
-            var displayList = GetDisplayOrder();
+            var list = AdminOrder(userId);
             int perPage = config.General.AnnouncementsPerPage;
-            int totalPages = Math.Max(1, Mathf.CeilToInt((float)displayList.Count / perPage));
+            int totalPages = Math.Max(1, Mathf.CeilToInt((float)list.Count / perPage));
             if (page < 0) page = 0;
             if (page >= totalPages) page = totalPages - 1;
 
-            PruneAdminSelection(player.userID);
-            var selection = GetAdminSelection(player.userID);
-            int start = page * perPage;
-            int count = 0;
-            float rowHeight = 0.68f / perPage;
-            float padding = 0.007f;
+            PruneAdminSelection(userId);
+            var selection = GetAdminSelection(userId);
 
-            if (displayList.Count == 0)
+            if (list.Count == 0)
             {
+                bool nothingStored = announcements.Count == 0;
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = Msg("NoPostsYet", player), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = FontRegular },
-                    RectTransform = { AnchorMin = "0.1 0.3", AnchorMax = "0.9 0.7" }
-                }, mainPanel);
+                    Text = { Text = Msg(nothingStored ? "NoPostsYet" : "NoMatches", player), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = FontRegular },
+                    RectTransform = { AnchorMin = g.Min(left, rowsTop + 190f), AnchorMax = g.Max(right, rowsTop + 110f) }
+                }, panel);
+                if (!nothingStored)
+                    AddGhostButton(container, panel, Msg("ClearFilter", player), "news.admin.filter reset", g.Min(AdminWidthUnits / 2f - 60f, rowsTop + 226f), g.Max(AdminWidthUnits / 2f + 60f, rowsTop + 196f), c.TextTitle, 10);
             }
 
-            for (int i = start; i < displayList.Count && count < perPage; i++)
-            {
-                var ann = displayList[i];
-                float top = 0.845f - (count * rowHeight) - padding;
-                float bottom = top - rowHeight + (padding * 2);
+            // Rows share the space between the toolbar and the footer.
+            int start = page * perPage, end = Math.Min(start + perPage, list.Count);
+            float slot = (rowsBottom - rowsTop) / perPage;
+            float gap = slot > 56f ? 8f : 5f;
+            for (int i = start; i < end; i++)
+                AddAdminRow(container, player, panel, g, list[i], panel + "." + i, rowsTop + (i - start) * slot, slot - gap, page, selection.Contains(list[i].Id), surface);
 
-                string itemPanel = mainPanel + $".{i}";
-                string typeColor = GetTypeColor(ann.Type);
-                bool selected = selection.Contains(ann.Id);
-
-                string rowColor = Blend(AdminSurfaceRaised, surface);
-                if (selected) rowColor = Blend(MixAlpha(c.ButtonPrimary, 0.12f), rowColor);
-                else if (ann.Pinned) rowColor = Blend("0.95 0.70 0.20 0.05", rowColor);
-                string rowRim = selected ? MixAlpha(c.ButtonPrimary, 0.55f) : ann.Pinned ? "0.95 0.70 0.20 0.35" : ann.Draft ? "1 1 1 0.16" : null;
-                AddSurface(container, mainPanel, Anchor(0.025f, bottom), Anchor(0.975f, top), rowColor, RadiusCard, null, itemPanel, rowRim);
-
-                string check = AddSurface(container, itemPanel, "0.012 0.32", "0.034 0.68", selected ? c.ButtonPrimary : rowColor, RadiusPill,
-                    $"news.admin.toggleselect {ann.Id} {page}", null, selected ? null : "1 1 1 0.22", 1.5f);
-                if (selected) AddLabelIn(container, check, "✓", 11, "1 1 1 1");
-                AddAccentBar(container, itemPanel, typeColor, 0.045f, 0f);
-
-                // Title, with DRAFT / group badges after it.
-                string titleText = Ellipsize((string.IsNullOrEmpty(ann.Title) ? Msg("NoTitle", player) : ann.Title).ToUpper(), ann.Draft || !string.IsNullOrEmpty(ann.Group) ? 34 : 46);
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = titleText, FontSize = 12, Align = TextAnchor.MiddleLeft, Color = ann.Draft ? c.TextNormal : c.TextTitle, Font = FontBold },
-                    RectTransform = { AnchorMin = "0.065 0.45", AnchorMax = "0.49 0.9" }
-                }, itemPanel);
-                float badgeRight = 0.49f;
-                if (!string.IsNullOrEmpty(ann.Group))
-                {
-                    string groupText = Msg("GroupOnly", player, ann.Group.ToUpper());
-                    float groupWidth = Math.Min(0.12f, (groupText.Length * 5f + 14f) / 827f);
-                    AddPill(container, itemPanel, groupText, Anchor(badgeRight - groupWidth, 0.56f), Anchor(badgeRight, 0.82f), Blend("1 1 1 0.12", rowColor), c.TextTitle, 8);
-                    badgeRight -= groupWidth + 0.006f;
-                }
-                if (ann.Draft)
-                    AddPill(container, itemPanel, Msg("DraftBadge", player), Anchor(badgeRight - 0.05f, 0.56f), Anchor(badgeRight, 0.82f), Blend("1 1 1 0.16", rowColor), c.TextTitle, 8);
-
-                string meta = $"{ann.Date ?? ""}  /  {ann.Author ?? Msg("Unknown", player)}  /  <color={RgbaToHex(typeColor)}>{ann.Type.ToString().ToUpper()}</color>";
-                if (!string.IsNullOrEmpty(ann.EditedDate)) meta += $"  /  {Msg("EditedTag", player)}";
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = meta, FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted },
-                    RectTransform = { AnchorMin = "0.065 0.25", AnchorMax = "0.49 0.48" }
-                }, itemPanel);
-
-                // Stats, then when the post deletes itself / the poll closes.
-                string stats = HasPoll(ann) ? Msg("ReadsLikesVotes", player, ann.ReadByPlayers?.Count ?? 0, ann.LikedPlayers?.Count ?? 0, ann.PollVotes.Count) : Msg("ReadsLikes", player, ann.ReadByPlayers?.Count ?? 0, ann.LikedPlayers?.Count ?? 0);
-                long nowTicks = NowTicks;
-                if (!ann.Draft && ann.ExpiresAt > nowTicks) stats += "  •  " + Msg("AdminDeletesIn", player, FormatSpan(ann.ExpiresAt - nowTicks, player).ToUpper());
-                if (!ann.Draft && HasPoll(ann) && !ann.PollClosed && ann.PollEndsAt > nowTicks) stats += "  •  " + Msg("AdminPollClosesIn", player, FormatSpan(ann.PollEndsAt - nowTicks, player).ToUpper());
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = stats, FontSize = 8, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = FontRegular },
-                    RectTransform = { AnchorMin = "0.065 0.04", AnchorMax = "0.49 0.27" }
-                }, itemPanel);
-
-                // Buttons: RESEND (PUBLISH for a draft), PIN, COPY, EDIT, DEL.
-                if (ann.Draft)
-                    AddPrimaryButton(container, itemPanel, Msg("PublishButton", player), $"news.admin.publish {ann.Id} {page}", "0.5 0.24", "0.586 0.76", c.ButtonPrimary, "1 1 1 1", 9);
-                else
-                    AddGhostButton(container, itemPanel, Msg("ResendButton", player), $"news.admin.resend {ann.Id} {page}", "0.5 0.24", "0.586 0.76", c.TextNormal, 9);
-
-                if (ann.Pinned)
-                    AddPrimaryButton(container, itemPanel, Msg("UnpinButton", player), $"news.admin.togglepin {ann.Id} {page}", "0.596 0.24", "0.682 0.76", PinGold, PinGoldText, 9);
-                else
-                    AddGhostButton(container, itemPanel, Msg("PinButton", player), $"news.admin.togglepin {ann.Id} {page}", "0.596 0.24", "0.682 0.76", c.TextNormal, 9);
-
-                AddGhostButton(container, itemPanel, Msg("CopyButton", player), $"news.admin.copy {ann.Id}", "0.692 0.24", "0.778 0.76", c.TextNormal, 9);
-                AddPrimaryButton(container, itemPanel, Msg("EditButton", player), $"news.admin.edit {ann.Id}", "0.788 0.24", "0.874 0.76", c.ButtonPrimary, "1 1 1 1", 9);
-                AddGhostButton(container, itemPanel, Msg("DelButton", player), $"news.admin.delconfirm {ann.Id} {page}", "0.884 0.24", "0.97 0.76", "0.95 0.48 0.50 1", 9);
-
-                count++;
-            }
-
-            if (selection.Count > 0)
-            {
-                string bulkPanel = mainPanel + ".Bulk";
-                AddSurface(container, mainPanel, "0.025 0.108", "0.975 0.165", Blend(MixAlpha(c.ButtonPrimary, 0.08f), surface), RadiusCard, null, bulkPanel, MixAlpha(c.ButtonPrimary, 0.35f));
-
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = Msg("SelectedCount", player, selection.Count), FontSize = 11, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
-                    RectTransform = { AnchorMin = "0.02 0", AnchorMax = "0.18 1" }
-                }, bulkPanel);
-
-                AddPrimaryButton(container, bulkPanel, Msg("BulkDelete", player), $"news.admin.bulkdelconfirm {page}", "0.19 0.17", "0.32 0.83", AdminDanger, "1 1 1 1", 10);
-                AddPrimaryButton(container, bulkPanel, Msg("BulkPin", player), $"news.admin.bulkpin 1 {page}", "0.33 0.17", "0.46 0.83", c.ButtonPrimary, "1 1 1 1", 10);
-
-                AddGhostButton(container, bulkPanel, Msg("BulkUnpin", player), $"news.admin.bulkpin 0 {page}", "0.47 0.17", "0.60 0.83", c.TextTitle, 10);
-                AddGhostButton(container, bulkPanel, Msg("ClearSelection", player), $"news.admin.clearsel {page}", "0.61 0.17", "0.74 0.83", c.TextTitle, 10);
-            }
-
-            AddHairline(container, mainPanel, 0.095f, 0.025f, 0.975f);
-
-            container.Add(new CuiButton
-            {
-                Button = { Color = "0 0 0 0", Command = $"news.admin.selectpage {page}" },
-                Text = { Text = Msg("SelectPageToggle", player), FontSize = 9, Align = TextAnchor.MiddleCenter, Color = c.TextMuted },
-                RectTransform = { AnchorMin = "0.02 0.01", AnchorMax = "0.18 0.07" }
-            }, mainPanel);
-
-            container.Add(new CuiLabel
-            {
-                Text = { Text = $"{Msg("PostsCount", player, displayList.Count)}  /  {Msg("Page", player, page + 1, totalPages)}", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = FontRegular },
-                RectTransform = { AnchorMin = "0.39 0", AnchorMax = "0.61 0.08" }
-            }, mainPanel);
-
-            if (page > 0)
-            {
-                AddGhostButton(container, mainPanel, "<", $"news.admin.page {page - 1}", "0.345 0.02", "0.38 0.075", c.TextNormal, 11);
-            }
-            if (page < totalPages - 1)
-            {
-                AddGhostButton(container, mainPanel, ">", $"news.admin.page {page + 1}", "0.62 0.02", "0.655 0.075", c.TextNormal, 11);
-            }
+            AddHairline(container, panel, 56f / AdminHeightUnits, left / AdminWidthUnits, right / AdminWidthUnits);
+            AddAdminFooter(container, player, panel, g, page, totalPages, list, start, end, selection, surface);
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.5f * anim);
             CuiHelper.AddUi(player, container);
+        }
+
+        // Five cards under the header: what is stored and how players respond to it.
+        private void AddAdminStats(CuiElementContainer container, BasePlayer player, string panel, Grid g, string surface)
+        {
+            var c = config.Colors;
+            int published = 0, drafts = 0, pinned = 0, reads = 0, likes = 0, votes = 0, openPolls = 0;
+            foreach (var ann in announcements)
+            {
+                if (ann.Draft) { drafts++; continue; }
+                published++;
+                if (ann.Pinned) pinned++;
+                reads += ann.ReadByPlayers.Count;
+                likes += ann.LikedPlayers.Count;
+                votes += ann.PollVotes.Count;
+                if (IsPollOpen(ann)) openPolls++;
+            }
+
+            string perPost = published > 0 ? ((float)reads / published).ToString("0.#", CultureInfo.InvariantCulture) : "0";
+            int likeRate = reads > 0 ? Math.Min(100, Mathf.RoundToInt(100f * likes / reads)) : 0;
+            var cards = new[]
+            {
+                new[] { Msg("StatPublished", player), published.ToString(), Msg("StatPinnedHint", player, pinned), c.ButtonPrimary },
+                new[] { Msg("StatDrafts", player), drafts.ToString(), Msg("StatDraftsHint", player), "0.62 0.63 0.68 1" },
+                new[] { Msg("StatReads", player), reads.ToString(), Msg("StatReadsHint", player, perPost), "0.2 0.7 0.9 1" },
+                new[] { Msg("StatLikes", player), likes.ToString(), Msg("StatLikesHint", player, likeRate), "0.96 0.40 0.44 1" },
+                new[] { Msg("StatVotes", player), votes.ToString(), Msg("StatVotesHint", player, openPolls), "0.6 0.3 0.8 1" }
+            };
+
+            const float top = 70f, bottom = 126f, between = 10f;
+            float width = (AdminWidthUnits - 2f * AdminSidePad - between * (cards.Length - 1)) / cards.Length;
+            string cardColor = Blend(AdminSurfaceRaised, surface);
+            for (int i = 0; i < cards.Length; i++)
+            {
+                float x = AdminSidePad + i * (width + between);
+                string card = AddSurface(container, panel, g.Min(x, bottom), g.Max(x + width, top), cardColor, RadiusCard);
+                AddAccentBar(container, card, cards[i][3]);
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = cards[i][0], FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = FontBold },
+                    RectTransform = { AnchorMin = "0.12 0.62", AnchorMax = "0.95 0.9" }
+                }, card);
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = cards[i][1], FontSize = 20, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
+                    RectTransform = { AnchorMin = "0.12 0.1", AnchorMax = "0.5 0.64" }
+                }, card);
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = cards[i][2], FontSize = 8, Align = TextAnchor.LowerRight, Color = c.TextMuted, Font = FontBold },
+                    RectTransform = { AnchorMin = "0.4 0.16", AnchorMax = "0.93 0.6" }
+                }, card);
+            }
+        }
+
+        // Tabs with counts on the left, sort order and search on the right.
+        private void AddAdminToolbar(CuiElementContainer container, BasePlayer player, string panel, Grid g, AdminView view)
+        {
+            var c = config.Colors;
+            const float top = 138f, bottom = 168f;
+            string mutedHex = RgbaToHex(c.TextMuted);
+
+            float x = AdminSidePad;
+            foreach (string tab in AdminTabs)
+            {
+                bool selected = tab == view.Tab;
+                string label = Msg("AdminTab" + char.ToUpperInvariant(tab[0]) + tab.Substring(1), player);
+                string count = announcements.Count(a => InAdminTab(a, tab)).ToString();
+                float width = (label.Length + count.Length) * 5.6f + 30f;
+                string chip = AddSurface(container, panel, g.Min(x, bottom), g.Max(x + width, top), selected ? c.ButtonPrimary : Ghost, RadiusButton, "news.admin.filter " + tab);
+                AddLabelIn(container, chip, selected ? $"{label}  {count}" : $"{label}  <color={mutedHex}>{count}</color>", 9, selected ? "1 1 1 1" : c.TextNormal);
+                x += width + 6f;
+            }
+
+            float right = AdminWidthUnits - AdminSidePad;
+            AddCycleButton(container, panel, Msg("Sort" + char.ToUpperInvariant(AdminSorts[view.Sort][0]) + AdminSorts[view.Sort].Substring(1), player), "news.admin.sort",
+                (right - 388f) / AdminWidthUnits, (right - 258f) / AdminWidthUnits, 1f - bottom / AdminHeightUnits, 1f - top / AdminHeightUnits, c, view.Sort != 0);
+            AddSearchField(container, player, panel, g.Min(right - 250f, bottom), g.Max(right, top), view.Query, "news.admin.search", "news.admin.search", null);
+        }
+
+        private void AddUnsavedBanner(CuiElementContainer container, BasePlayer player, string panel, Grid g, EditorSession unsaved, string surface)
+        {
+            var c = config.Colors;
+            const float width = AdminWidthUnits - 2f * AdminSidePad, height = 30f;
+            var b = new Grid(width, height);
+            string color = Blend(MixAlpha(c.ButtonPrimary, 0.10f), surface);
+            string banner = AddSurface(container, panel, g.Min(AdminSidePad, 210f), g.Max(AdminWidthUnits - AdminSidePad, 180f), color, RadiusCard, null, panel + ".Unsaved", MixAlpha(c.ButtonPrimary, 0.40f));
+
+            AddPill(container, banner, Msg("UnsavedBadge", player), b.Min(10f, 22f), b.Max(70f, 8f), c.ButtonPrimary, "1 1 1 1", 8);
+            string title = string.IsNullOrEmpty(unsaved.Draft?.Title) ? Msg("NoTitle", player) : Ellipsize(unsaved.Draft.Title, 44);
+            container.Add(new CuiLabel
+            {
+                Text = { Text = Msg("UnsavedPost", player, title, FormatSpan(NowTicks - unsaved.SavedAt, player)), FontSize = 10, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
+                RectTransform = { AnchorMin = b.Min(80f, height), AnchorMax = b.Max(width - 250f, 0f) }
+            }, banner);
+            AddPrimaryButton(container, banner, Msg("ContinueEditing", player), "news.admin.resume", b.Min(width - 240f, 25f), b.Max(width - 96f, 5f), c.ButtonPrimary, "1 1 1 1", 9);
+            AddGhostButton(container, banner, Msg("Discard", player), "news.admin.discard", b.Min(width - 88f, 25f), b.Max(width - 8f, 5f), c.TextNormal, 9);
+        }
+
+        // One post: select box, picture, title, badges and dates on the left; numbers and buttons on the right.
+        private void AddAdminRow(CuiElementContainer container, BasePlayer player, string panel, Grid g, Announcement ann, string name, float top, float height, int page, bool selected, string surface)
+        {
+            var c = config.Colors;
+            const float width = AdminWidthUnits - 2f * AdminSidePad;
+            var r = new Grid(width, height);
+            float mid = height / 2f;
+            bool compact = height < 46f;
+            string typeColor = GetTypeColor(ann.Type);
+
+            string rowColor = Blend(AdminSurfaceRaised, surface);
+            if (selected) rowColor = Blend(MixAlpha(c.ButtonPrimary, 0.12f), rowColor);
+            else if (ann.Pinned) rowColor = Blend("0.95 0.70 0.20 0.05", rowColor);
+            string rim = selected ? MixAlpha(c.ButtonPrimary, 0.55f) : ann.Pinned ? "0.95 0.70 0.20 0.35" : ann.Draft ? "1 1 1 0.16" : null;
+            AddSurface(container, panel, g.Min(AdminSidePad, top + height), g.Max(AdminWidthUnits - AdminSidePad, top), rowColor, RadiusCard, null, name, rim);
+
+            string check = AddSurface(container, name, r.Min(12f, mid + 9f), r.Max(30f, mid - 9f), selected ? c.ButtonPrimary : rowColor, RadiusPill,
+                $"news.admin.toggleselect {ann.Id} {page}", null, selected ? null : "1 1 1 0.22", 1.5f);
+            if (selected) AddLabelIn(container, check, "✓", 11, "1 1 1 1");
+
+            // Picture, or just the type-colour bar when the post has none.
+            float textLeft = 54f;
+            if (config.General.ArchiveThumbnails && !string.IsNullOrEmpty(ann.ImageUrl))
+            {
+                float thumbHeight = Math.Min(54f, height - 14f), thumbWidth = thumbHeight * 1.6f;
+                string thumb = name + ".Thumb";
+                AddSurface(container, name, r.Min(42f, mid + thumbHeight / 2f), r.Max(42f + thumbWidth, mid - thumbHeight / 2f), Blend("0 0 0 0.45", rowColor), RadiusButton, null, thumb);
+                container.Add(new CuiElement
+                {
+                    Parent = thumb,
+                    Components = { BuildRawImage(ann.ImageUrl), new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" } }
+                });
+                AddCornerMasks(container, thumb, rowColor, RadiusButton);
+                textLeft = 42f + thumbWidth + 12f;
+            }
+            else
+            {
+                float inset = Math.Min(14f, height * 0.22f);
+                string bar = container.Add(Piece("0 0 0 0", r.Min(42f, height - inset), r.Max(45f, inset), "0 0", "0 0", 0f), name);
+                AddRoundedFill(container, bar, typeColor, 1.5f);
+            }
+
+            // Right side, from the edge inwards: five buttons, then three numbers.
+            const float buttonWidth = 46f, buttonGap = 5f, statWidth = 40f;
+            float actionsLeft = width - 12f - (5f * buttonWidth + 4f * buttonGap);
+            float statsLeft = actionsLeft - 14f - 3f * statWidth;
+            float textRight = statsLeft - 10f;
+
+            string title = Ellipsize((string.IsNullOrEmpty(ann.Title) ? Msg("NoTitle", player) : ann.Title).ToUpper(), (int)((textRight - textLeft) / 6.9f));
+            container.Add(new CuiLabel
+            {
+                Text = { Text = title, FontSize = compact ? 12 : 13, Align = TextAnchor.LowerLeft, Color = ann.Draft ? c.TextNormal : c.TextTitle, Font = FontBold },
+                RectTransform = { AnchorMin = r.Min(textLeft, mid), AnchorMax = r.Max(textRight, Math.Max(1f, mid - 22f)) }
+            }, name);
+
+            // Second line: badges, then date, author and what is scheduled.
+            float lineTop = mid + (compact ? 2f : 4f), pillBottom = Math.Min(height - 2f, lineTop + 14f);
+            float x = textLeft;
+            x = AddRowPill(container, name, r, ann.Type.ToString().ToUpper(), typeColor, "1 1 1 1", x, lineTop, pillBottom);
+            if (ann.Pinned) x = AddRowPill(container, name, r, Msg("PinnedBadge", player), PinGold, PinGoldText, x, lineTop, pillBottom);
+            if (ann.Draft) x = AddRowPill(container, name, r, Msg("DraftBadge", player), Blend("1 1 1 0.16", rowColor), c.TextTitle, x, lineTop, pillBottom);
+            if (HasPoll(ann)) x = AddRowPill(container, name, r, Msg("PollLabel", player), Blend(MixAlpha(c.ButtonPrimary, 0.22f), rowColor), c.ButtonPrimary, x, lineTop, pillBottom);
+            if (!string.IsNullOrEmpty(ann.Group)) x = AddRowPill(container, name, r, Msg("GroupOnly", player, ann.Group.ToUpper()), Blend("1 1 1 0.12", rowColor), c.TextTitle, x, lineTop, pillBottom);
+
+            long now = NowTicks;
+            string meta = $"{ann.Date}  •  {Ellipsize(string.IsNullOrEmpty(ann.Author) ? Msg("Unknown", player) : ann.Author, 18)}";
+            if (!string.IsNullOrEmpty(ann.EditedDate)) meta += $"  •  {Msg("EditedTag", player)}";
+            if (!ann.Draft && ann.ExpiresAt > now) meta += $"  •  <color={RgbaToHex(HintWarn)}>{Msg("AdminDeletesIn", player, FormatSpan(ann.ExpiresAt - now, player).ToUpper())}</color>";
+            if (!ann.Draft && IsPollOpen(ann) && ann.PollEndsAt > 0) meta += $"  •  <color={RgbaToHex(HintWarn)}>{Msg("AdminPollClosesIn", player, FormatSpan(ann.PollEndsAt - now, player).ToUpper())}</color>";
+            container.Add(new CuiLabel
+            {
+                Text = { Text = meta, FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = FontRegular },
+                RectTransform = { AnchorMin = r.Min(x + 3f, pillBottom), AnchorMax = r.Max(textRight, lineTop) }
+            }, name);
+
+            // Numbers. A draft has none yet; votes only when there is a poll.
+            string[] values =
+            {
+                ann.Draft ? "–" : ann.ReadByPlayers.Count.ToString(),
+                ann.Draft ? "–" : ann.LikedPlayers.Count.ToString(),
+                HasPoll(ann) && !ann.Draft ? ann.PollVotes.Count.ToString() : "–"
+            };
+            string[] captions = { Msg("ColReads", player), Msg("ColLikes", player), Msg("ColVotes", player) };
+            for (int i = 0; i < values.Length; i++)
+            {
+                float columnLeft = statsLeft + i * statWidth;
+                bool empty = values[i] == "–";
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = values[i], FontSize = 13, Align = TextAnchor.LowerCenter, Color = empty ? c.TextMuted : c.TextTitle, Font = FontBold },
+                    RectTransform = { AnchorMin = r.Min(columnLeft, mid + 1f), AnchorMax = r.Max(columnLeft + statWidth, Math.Max(1f, mid - 19f)) }
+                }, name);
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = captions[i], FontSize = 7, Align = TextAnchor.UpperCenter, Color = c.TextMuted, Font = FontBold },
+                    RectTransform = { AnchorMin = r.Min(columnLeft, Math.Min(height - 1f, mid + 14f)), AnchorMax = r.Max(columnLeft + statWidth, mid + 2f) }
+                }, name);
+            }
+
+            // Buttons: RESEND (PUBLISH for a draft), PIN, COPY, EDIT, DEL. Only PUBLISH is filled.
+            float buttonHeight = Math.Min(28f, height - 10f);
+            float buttonTop = mid - buttonHeight / 2f, buttonBottom = mid + buttonHeight / 2f;
+            float step = buttonWidth + buttonGap;
+            if (ann.Draft)
+                AddPrimaryButton(container, name, Msg("PublishButton", player), $"news.admin.publish {ann.Id} {page}", r.Min(actionsLeft, buttonBottom), r.Max(actionsLeft + buttonWidth, buttonTop), c.ButtonPrimary, "1 1 1 1", 8);
+            else
+                AddGhostButton(container, name, Msg("ResendButton", player), $"news.admin.resend {ann.Id} {page}", r.Min(actionsLeft, buttonBottom), r.Max(actionsLeft + buttonWidth, buttonTop), c.TextNormal, 8);
+            AddGhostButton(container, name, Msg(ann.Pinned ? "UnpinButton" : "PinButton", player), $"news.admin.togglepin {ann.Id} {page}", r.Min(actionsLeft + step, buttonBottom), r.Max(actionsLeft + step + buttonWidth, buttonTop), ann.Pinned ? PinGold : c.TextNormal, 8);
+            AddGhostButton(container, name, Msg("CopyButton", player), $"news.admin.copy {ann.Id}", r.Min(actionsLeft + 2f * step, buttonBottom), r.Max(actionsLeft + 2f * step + buttonWidth, buttonTop), c.TextNormal, 8);
+            AddGhostButton(container, name, Msg("EditButton", player), $"news.admin.edit {ann.Id}", r.Min(actionsLeft + 3f * step, buttonBottom), r.Max(actionsLeft + 3f * step + buttonWidth, buttonTop), c.ButtonPrimary, 8);
+            AddGhostButton(container, name, Msg("DelButton", player), $"news.admin.delconfirm {ann.Id} {page}", r.Min(actionsLeft + 4f * step, buttonBottom), r.Max(actionsLeft + 4f * step + buttonWidth, buttonTop), "0.95 0.48 0.50 1", 8);
+        }
+
+        // Small badge on a row's second line; returns where the next one starts.
+        private float AddRowPill(CuiElementContainer container, string row, Grid r, string text, string background, string textColor, float left, float top, float bottom)
+        {
+            float width = text.Length * 4.6f + 12f;
+            AddPill(container, row, text, r.Min(left, bottom), r.Max(left + width, top), background, textColor, 8);
+            return left + width + 5f;
+        }
+
+        // Footer: select the page and act on the selection on the left, pages on the right.
+        private void AddAdminFooter(CuiElementContainer container, BasePlayer player, string panel, Grid g, int page, int totalPages, List<Announcement> list, int start, int end, HashSet<string> selection, string surface)
+        {
+            var c = config.Colors;
+            const float top = AdminHeightUnits - 44f, bottom = AdminHeightUnits - 14f;
+            const float left = AdminSidePad, right = AdminWidthUnits - AdminSidePad;
+
+            bool pageSelected = end > start;
+            for (int i = start; i < end && pageSelected; i++) pageSelected = selection.Contains(list[i].Id);
+
+            string select = container.Add(new CuiButton
+            {
+                Button = { Color = "0 0 0 0", Command = $"news.admin.selectpage {page}" },
+                Text = { Text = "" },
+                RectTransform = { AnchorMin = g.Min(left, bottom), AnchorMax = g.Max(left + 112f, top) }
+            }, panel);
+            var s = new Grid(112f, 30f);
+            string box = AddSurface(container, select, s.Min(12f, 24f), s.Max(30f, 6f), pageSelected ? c.ButtonPrimary : surface, RadiusPill, null, null, pageSelected ? null : "1 1 1 0.22", 1.5f);
+            if (pageSelected) AddLabelIn(container, box, "✓", 11, "1 1 1 1");
+            container.Add(new CuiLabel
+            {
+                Text = { Text = Msg("SelectPageToggle", player), FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = FontBold },
+                RectTransform = { AnchorMin = s.Min(38f, 30f), AnchorMax = s.Max(112f, 0f) }
+            }, select);
+
+            if (selection.Count > 0)
+            {
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = Msg("SelectedCount", player, selection.Count), FontSize = 10, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold },
+                    RectTransform = { AnchorMin = g.Min(left + 124f, bottom), AnchorMax = g.Max(left + 206f, top) }
+                }, panel);
+                float x = left + 210f;
+                AddGhostButton(container, panel, Msg("BulkPin", player), $"news.admin.bulkpin 1 {page}", g.Min(x, bottom - 2f), g.Max(x + 70f, top + 2f), c.TextTitle, 9);
+                AddGhostButton(container, panel, Msg("BulkUnpin", player), $"news.admin.bulkpin 0 {page}", g.Min(x + 76f, bottom - 2f), g.Max(x + 154f, top + 2f), c.TextTitle, 9);
+                AddPrimaryButton(container, panel, Msg("BulkDelete", player), $"news.admin.bulkdelconfirm {page}", g.Min(x + 160f, bottom - 2f), g.Max(x + 230f, top + 2f), AdminDanger, "1 1 1 1", 9);
+                AddGhostButton(container, panel, Msg("ClearSelection", player), $"news.admin.clearsel {page}", g.Min(x + 236f, bottom - 2f), g.Max(x + 296f, top + 2f), c.TextNormal, 9);
+            }
+
+            container.Add(new CuiLabel
+            {
+                Text = { Text = $"{Msg("PostsCount", player, list.Count)}  /  {Msg("Page", player, page + 1, totalPages)}", FontSize = 9, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = FontBold },
+                RectTransform = { AnchorMin = g.Min(right - 196f, bottom), AnchorMax = g.Max(right - 36f, top) }
+            }, panel);
+            if (page > 0)
+                AddGhostButton(container, panel, "<", $"news.admin.page {page - 1}", g.Min(right - 230f, bottom - 2f), g.Max(right - 200f, top + 2f), c.TextNormal, 11);
+            if (page < totalPages - 1)
+                AddGhostButton(container, panel, ">", $"news.admin.page {page + 1}", g.Min(right - 30f, bottom - 2f), g.Max(right, top + 2f), c.TextNormal, 11);
         }
 
         private void AddEditorLabel(CuiElementContainer container, string parent, string text, float bottom, float top, UIColors c, float left = 0.05f, float right = 0.95f)
@@ -4349,7 +4897,7 @@ namespace Oxide.Plugins
         }
 
         // A button that steps through choices on each click: the current choice, and a "›".
-        private void AddEditorCycle(CuiElementContainer container, string parent, string value, string command, float left, float right, float bottom, float top, UIColors c, bool active)
+        private void AddCycleButton(CuiElementContainer container, string parent, string value, string command, float left, float right, float bottom, float top, UIColors c, bool active)
         {
             string button = AddSurface(container, parent, Anchor(left, bottom), Anchor(right, top), active ? MixAlpha(c.ButtonPrimary, 0.14f) : Ghost, RadiusButton, command);
             container.Add(new CuiLabel
@@ -4527,6 +5075,7 @@ namespace Oxide.Plugins
                 float headingWidth = (heading.Length * 8.4f + 14f) / EditorWidthUnits;
                 AddPill(container, editorPanel, Msg("DraftBadge", player), Anchor(0.035f + headingWidth, 0.935f), Anchor(0.035f + headingWidth + 0.055f, 0.975f), "1 1 1 0.14", c.TextTitle, 9);
             }
+            container.Add(new CuiLabel { Text = { Text = Msg("AutosaveHint", player), FontSize = 9, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = FontBold }, RectTransform = { AnchorMin = "0.6 0.932", AnchorMax = "0.925 0.978" } }, editorPanel);
             AddGhostButton(container, editorPanel, "✕", "news.editor.cancel", "0.94 0.932", "0.965 0.978", c.TextNormal, 12);
             AddHairline(container, editorPanel, 0.91f, 0.035f, 0.965f);
 
@@ -4592,9 +5141,9 @@ namespace Oxide.Plugins
             AddEditorLabel(container, editorPanel, Msg("AudienceLabel", player), 0.595f, 0.635f, c, R, RM);
             AddEditorLabel(container, editorPanel, Msg("ExpireLabel", player), 0.595f, 0.635f, c, RM + 0.0075f, RR);
             string audience = string.IsNullOrEmpty(ann.Group) ? Msg("AudienceEveryone", player) : Msg("GroupOnly", player, ann.Group.ToUpper());
-            AddEditorCycle(container, editorPanel, audience, "news.editor.toggle audience", R, RM - 0.0075f, 0.54f, 0.595f, c, !string.IsNullOrEmpty(ann.Group));
+            AddCycleButton(container, editorPanel, audience, "news.editor.toggle audience", R, RM - 0.0075f, 0.54f, 0.595f, c, !string.IsNullOrEmpty(ann.Group));
             string expire = ann.ExpireDays <= 0 ? Msg("ExpireNever", player) : ann.ExpireDays == 1 ? Msg("ExpireAfterDay", player) : Msg("ExpireAfterDays", player, ann.ExpireDays);
-            AddEditorCycle(container, editorPanel, expire, "news.editor.toggle expire", RM + 0.0075f, RR, 0.54f, 0.595f, c, ann.ExpireDays > 0);
+            AddCycleButton(container, editorPanel, expire, "news.editor.toggle expire", RM + 0.0075f, RR, 0.54f, 0.595f, c, ann.ExpireDays > 0);
 
             string expireInfo = string.Empty;
             long now = NowTicks;
@@ -4623,7 +5172,7 @@ namespace Oxide.Plugins
                     : ann.PollHours == 24 ? Msg("PollTimerDay", player)
                     : ann.PollHours % 24 == 0 ? Msg("PollTimerDays", player, ann.PollHours / 24)
                     : Msg("PollTimerHours", player, ann.PollHours);
-                AddEditorCycle(container, editorPanel, pollTimer, "news.editor.toggle polltimer", R, RM - 0.0075f, 0.16f, 0.215f, c, ann.PollHours > 0);
+                AddCycleButton(container, editorPanel, pollTimer, "news.editor.toggle polltimer", R, RM - 0.0075f, 0.16f, 0.215f, c, ann.PollHours > 0);
                 if (!session.Publishes)
                     AddEditorToggle(container, editorPanel, Msg("OptionPollClosed", player), "news.editor.toggle pollclosed", session.PollClosed, RM + 0.0075f, RR, c, 0.16f, 0.215f);
             }
@@ -4849,7 +5398,7 @@ namespace Oxide.Plugins
             AddHairline(container, mainPanel, headerBottom, 0.05f, 0.95f);
             container.Add(new CuiLabel { Text = { Text = Msg("SelectTheme", player), FontSize = 16, Align = TextAnchor.MiddleLeft, Color = c.TextTitle, Font = FontBold }, RectTransform = { AnchorMin = Anchor(0.05f, headerBottom), AnchorMax = "0.7 1" } }, mainPanel);
 
-            AddGhostButton(container, mainPanel, Msg("Back", player), "news.admin", Anchor(0.80f, 1f - headerH * 0.78f / panelH), Anchor(0.95f, 1f - headerH * 0.22f / panelH), c.TextNormal, 10);
+            AddGhostButton(container, mainPanel, Msg("Back", player), "news.admin.page 0", Anchor(0.80f, 1f - headerH * 0.78f / panelH), Anchor(0.95f, 1f - headerH * 0.22f / panelH), c.TextNormal, 10);
 
             const float gridLeft = 0.05f, gridRight = 0.95f, gap = 0.02f;
             float cardWidth = (gridRight - gridLeft - gap) / 2f;
