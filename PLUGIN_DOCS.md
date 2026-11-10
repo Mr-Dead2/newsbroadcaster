@@ -69,6 +69,13 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 - UI layout broke on servers whose system language uses a comma as the decimal separator.
 - An ImageLibrary placeholder showed while an image was still downloading.
 - The data file was rewritten on every like or read; saves are now batched and flushed on server save and unload.
+- `news.show "Title" - Restart in 5` read the `5` as a post type and cut it from the text.
+- `news.trigger` counted posts differently from `news.list` when drafts were stored, and said "triggered" even when the player could not see the post. It now takes the same index or id as the other commands and tells you when the player can't see it.
+- **Mark all read** also marked group posts the player could not see yet.
+- A poll whose timer had run out could still be clicked for up to 30 seconds (the vote was ignored).
+- A toast for a post that had been deleted stayed on screen when clicked.
+- A language file with a broken `{0}` placeholder could stop a command from working.
+- Players who never came back stayed in the data file forever; old "last seen" markers are now cleaned up on load.
 
 ### New config options
 `UnreadReminderOnConnect`, `RequireViewPermission`, `StripLinksFromBody`, `PopupImageFrame` (`Tall` / `Wide`), `ArchiveThumbnails`, `RoundedCorners`, `Notification.Position` (now six positions), `Notification.OffsetX` / `OffsetY`, `Discord.AvatarUrl`, `Discord.PostGroupOnlyPosts`, `Discord.PostPollResults`, `Polls.AllowVoteChange`, `Polls.ShowResultsBeforeVoting`, `Polls.AnnounceResults`. All are added to your config with their defaults on first load.
@@ -126,7 +133,7 @@ oxide.grant user <SteamID> newsbroadcaster.admin
 | `news.publish <index\|id>` | Admin | Publish a draft (notifies players, posts to Discord) |
 | `news.delete <index\|id>` | Admin | Delete an announcement |
 | `news.resend <index\|id>` | Admin | Re-send the notification for an announcement to online players |
-| `news.trigger <SteamID/Name> [index]` | Admin | Force-show a popup to one player |
+| `news.trigger <SteamID/Name> [index\|id]` | Admin | Force-show a popup to one player: the newest post they can see, or the one with that `news.list` index / id |
 | `news.admin` | Admin | Open the in-game admin panel |
 
 Index `0` is always the newest announcement.
@@ -206,7 +213,7 @@ These are run by CUI buttons. They address announcements by their stable id, not
 | `news.admin.bulkpin <0\|1> [page]`, `news.admin.bulkdelconfirm [page]`, `news.admin.bulkdel [page]` | Bulk actions |
 | `news.admin.themes [page]` / `news.admin.settheme "Name" [page]` | Theme picker |
 | `news.editor.input <title\|image\|text\|poll1-poll4\|cdlabel\|cdtime> <value>` | Editor field |
-| `news.editor.settype <Type>` / `news.editor.type` | Set / cycle the type |
+| `news.editor.settype <Type>` | Set the type |
 | `news.editor.toggle <pin\|notify\|discord\|poll\|pollclosed\|audience\|expire\|polltimer>` | Editor options (the last three step through their choices) |
 | `news.editor.preview` / `news.editor.back` | Preview and return |
 | `news.editor.save` / `news.editor.savedraft` / `news.editor.cancel` | Publish or save changes / save as draft / cancel |
@@ -482,7 +489,7 @@ Stores announcements, each player's last-seen marker, each player's "mark all re
 
 ## Localization
 
-All player-facing text is in Oxide's lang system (`oxide/lang/<lang>/NewsBroadcaster.json`). New keys are added to your existing lang file automatically. Keys whose meaning changed in 2.0.0 were renamed so the new text shows up (`TypeLabel`, `BodyHint`, `NoPostsYet`, `PublishedNoNotify`, `ActiveBadge`); the old keys can be deleted from your lang file. The editor now uses `BodyHintShort`, and `/news help` adds `ChatHelpSettings`.
+All player-facing text is in Oxide's lang system (`oxide/lang/<lang>/NewsBroadcaster.json`). New keys are added to your existing lang file automatically. Keys whose meaning changed in 2.0.0 were renamed so the new text shows up (`TypeLabel`, `NoPostsYet`, `PublishedNoNotify`, `ActiveBadge`); the old keys can be deleted from your lang file. The editor now uses `BodyHintShort`, and `/news help` adds `ChatHelpSettings`. `BodyHint`, `ReadMore`, `Close` and `SettingsColumn` are no longer used and can be deleted too. The "Posted by" footer and the "truncated" note of the Discord embed are lang keys as well (`DiscordPostedBy`, `DiscordTruncated`).
 
 ---
 

@@ -1055,6 +1055,97 @@ static class Tests
         H.Console(stranger, "news.settings.toggle popups");
         Check(dialogRoot > 0 && IdOf(stranger, "NewsConfirmUI") == dialogRoot && Sim.Ui(stranger).CursorGrabs == 1, "settings opened from chat: switches don't recreate the cursor either");
         // ---------------------------------------------------------------
+        Section("Console details: types, news.trigger, stale toasts");
+        Fresh();
+        Post("First live", "x");
+        H.Console(null, "news.show \"Wipe\" - Restart in 5");
+        var wipe = H.AnnByTitle("Wipe");
+        Check((string)H.AGet(wipe, "Text") == "Restart in 5" && H.AGet(wipe, "Type").ToString() == "Info", "a number at the end of news.show is text, not a post type");
+        H.Console(null, "news.show \"Typed\" - Hello warning");
+        var typed = H.AnnByTitle("Typed");
+        Check((string)H.AGet(typed, "Text") == "Hello" && H.AGet(typed, "Type").ToString() == "Warning", "a type name at the end still sets the type");
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.settype 9");
+        H.Console(admin, "news.editor.input title Hidden draft");
+        H.Console(admin, "news.editor.savedraft");
+        var hidden = H.AnnByTitle("Hidden draft");
+        Check(H.AGet(hidden, "Type").ToString() == "Info", "the editor ignores type numbers that are not a type");
+        H.Console(admin, "news.close");
+
+        H.Console(player, "news.close.notif");
+        H.Console(null, "news.trigger Survivor 0");
+        Check(Sim.ConsoleReplies.Last().StartsWith("Survivor cannot see that announcement") && !UiOpen(player), "news.trigger says so when the player can't see the post (index 0 is the draft)");
+        H.Console(null, "news.trigger Survivor 1");
+        Check(Sim.ConsoleReplies.Last() == "News popup triggered for Survivor" && H.Texts(player).Contains("TYPED"), "news.trigger uses the same index as news.list");
+        H.Console(null, $"news.trigger Survivor {H.Id(wipe)}");
+        Check(H.Texts(player).Contains("WIPE"), "news.trigger accepts an id");
+        H.Console(player, "news.close");
+        H.Console(null, "news.trigger Survivor");
+        Check(H.Texts(player).Contains("TYPED"), "news.trigger without an index shows the newest post the player can see");
+        H.Console(player, "news.close");
+        H.Console(null, "news.trigger Survivor 99");
+        Check(Sim.ConsoleReplies.Last().StartsWith("Invalid index") && !UiOpen(player), "news.trigger rejects an unknown index");
+
+        Post("Short lived", "x");
+        Check(ToastOpen(player), "toast for the new post");
+        string shortId = H.Id(H.AnnByTitle("Short lived"));
+        H.Console(null, $"news.delete {shortId}");
+        H.Console(player, $"news.view {shortId}");
+        Check(!ToastOpen(player) && !UiOpen(player), "clicking the toast of a deleted post just removes the toast");
+
+        // ---------------------------------------------------------------
+        Section("Mark all read only covers what the player can see");
+        Fresh();
+        Sim.Permission.CreateGroup("vip", "VIP", 0);
+        Post("For everyone", "x");
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.input title VIP only news");
+        H.Console(admin, "news.editor.toggle audience");
+        H.Console(admin, "news.editor.toggle audience");
+        H.Console(admin, "news.editor.save");
+        H.Console(admin, "news.close");
+        Check((string)H.AGet(H.AnnByTitle("VIP only news"), "Group") == "vip", "a newer post for the vip group");
+        H.Chat(player, "news", "read");
+        Check(LastChat(player) == "Marked 1 announcement(s) as read." && (int)H.Call("CountUnread", player) == 0, "/news read marks the one visible post");
+        Sim.Permission.AddUserGroup(player.UserIDString, "vip");
+        Check((int)H.Call("CountUnread", player) == 1, "a group post the player gets access to later is still unread");
+
+        // ---------------------------------------------------------------
+        Section("Poll whose timer ran out but is not closed yet");
+        Fresh();
+        H.Console(null, "news.poll \"Late poll\" \"x\" \"Yes|No\"");
+        var latePoll = H.AnnByTitle("Late poll");
+        H.ASet(latePoll, "PollEndsAt", DateTime.UtcNow.Ticks - 1);
+        H.Console(player, "news.close.notif");
+        H.Console(player, $"news.view {H.Id(latePoll)}");
+        Check(!(bool)H.AGet(latePoll, "PollClosed") && H.Texts(player).Contains("VOTING CLOSED") && !H.Commands(player).Any(c => c.StartsWith("news.vote")), "the popup already shows it closed, with nothing to click");
+
+        // ---------------------------------------------------------------
+        Section("Broken translations and stale player markers");
+        Fresh();
+        Post("Anything", "x");
+        var langMessages = (Dictionary<string, Dictionary<string, string>>)H.AGet(H.Get("lang"), "messages");
+        langMessages["en"]["MarkedAllRead"] = "Marked {0} of {3} as read";
+        H.Chat(player, "news", "read");
+        Check(LastChat(player) == "Marked {0} of {3} as read", "a lang line with a bad placeholder is sent as it is instead of breaking the command");
+
+        Fresh(preBoot: () =>
+        {
+            Sim.DataFiles["NewsBroadcaster_Data"] = @"{
+              ""Announcements"": [
+                { ""Id"": ""n2"", ""Title"": ""Newer"", ""Text"": ""b"", ""Timestamp"": 2000 },
+                { ""Id"": ""n1"", ""Title"": ""Older"", ""Text"": ""a"", ""Timestamp"": 1000 }
+              ],
+              ""LastSeenNews"": { ""76561198000000002"": 1000, ""76561198000000050"": 400 },
+              ""ReadAllUpTo"": { ""76561198000000002"": 2000, ""76561198000000051"": 999 }
+            }";
+        });
+        var storedAfterLoad = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"]);
+        Check(storedAfterLoad["LastSeenNews"]["76561198000000050"] == null && storedAfterLoad["ReadAllUpTo"]["76561198000000051"] == null, "markers older than the oldest post are dropped on load");
+        Check(storedAfterLoad["LastSeenNews"]["76561198000000002"] != null && storedAfterLoad["ReadAllUpTo"]["76561198000000002"] != null, "markers that still matter are kept");
+        Check((int)H.Call("CountUnread", player) == 0, "...and still work");
+
+        // ---------------------------------------------------------------
         Section("Global checks");
         var warns = CuiWarnings();
         Check(warns.Count == 0, "no CUI warnings (unknown parents / duplicate names)" + (warns.Count > 0 ? ": " + string.Join(" | ", warns.Distinct().Take(5)) : ""));

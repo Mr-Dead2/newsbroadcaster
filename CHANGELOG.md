@@ -56,6 +56,13 @@
 - UI layout broke on servers whose system language uses a comma as the decimal separator.
 - An ImageLibrary placeholder showed while an image was still downloading.
 - The data file was rewritten on every like or read; saves are now batched and flushed on server save and unload.
+- `news.show "Title" - Restart in 5` read the `5` as a post type and cut it from the text.
+- `news.trigger` counted posts differently from `news.list` when drafts were stored, and said "triggered" even when the player could not see the post. It now takes the same index or id as the other commands and tells you when the player can't see it.
+- **Mark all read** also marked group posts the player could not see yet.
+- A poll whose timer had run out could still be clicked for up to 30 seconds (the vote was ignored).
+- A toast for a post that had been deleted stayed on screen when clicked.
+- A language file with a broken `{0}` placeholder could stop a command from working.
+- Players who never came back stayed in the data file forever; old "last seen" markers are now cleaned up on load.
 
 #### New config options
 `UnreadReminderOnConnect`, `RequireViewPermission`, `StripLinksFromBody`, `PopupImageFrame` (`Tall` / `Wide`), `ArchiveThumbnails`, `RoundedCorners`, `Notification.Position` (six positions; `Left` / `Right` still work), `Notification.OffsetX` / `OffsetY`, `Discord.AvatarUrl`, `Discord.PostGroupOnlyPosts`, `Discord.PostPollResults`, `Polls.AllowVoteChange`, `Polls.ShowResultsBeforeVoting`, `Polls.AnnounceResults`. All are added to your config with their defaults on first load.
