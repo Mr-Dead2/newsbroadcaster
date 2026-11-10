@@ -287,7 +287,7 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
 <body>
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="#top"><b>NewsBroadcaster</b><span class="ver">2.0.0</span></a>
+    <a class="brand" href="#top"><img src="favicon.svg" width="30" height="30" alt=""><b>NewsBroadcaster</b><span class="ver">1.0.0</span></a>
     <nav class="nav" aria-label="Sections">
       <a href="#features">Features</a>
       <a href="#screens">Screens</a>
@@ -312,7 +312,7 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
           <a class="btn btn-primary" href="#screens">See every screen</a>
           <a class="btn btn-ghost" href="#install">Install in 3 steps</a>
         </div>
-        <p class="meta"><span>Version 2.0.0</span><span>by DEDA</span><span>Needs Oxide (uMod)</span></p>
+        <p class="meta"><span>Version 1.0.0</span><span>by DEDA</span><span>Needs Oxide (uMod)</span></p>
       </div>
 
       <div class="stage">
@@ -340,7 +340,7 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
   <div class="facts">
     <div class="wrap">
       <div class="fact"><h3>What it needs</h3><p>Oxide (uMod). RP rewards need ServerRewards and currency rewards need Economics.</p></div>
-      <div class="fact"><h3>Drop-in update</h3><p>Your 1.x config, themes, language file and posts carry over on the first load.</p></div>
+      <div class="fact"><h3>Drop-in update</h3><p>Config, themes, language file and posts from an earlier build carry over on the first load.</p></div>
       <div class="fact"><h3>Current Rust</h3><p>Built for the November 2026 Rust update and its new file storage.</p></div>
       <div class="fact"><h3>Tested on every build</h3><p>276 automated checks, and it compiles as C# 6 and C# 7.</p></div>
     </div>
@@ -494,7 +494,7 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
       <div class="head">
         <p class="eyebrow">Install</p>
         <h2>Up and running in three steps</h2>
-        <p>Works on any Oxide server on the current Rust version. Updating from 1.x is the same: replace the file.</p>
+        <p>Works on any Oxide server on the current Rust version. Updating from an earlier build is the same: replace the file.</p>
       </div>
       <ol class="steps">
         <li>
@@ -729,11 +729,11 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
       <div class="faq">
         <div><h3>Which other plugins do I need?</h3><p>Only Oxide to run it. Add ServerRewards for RP rewards, Economics for currency rewards and Notify for Notify-style notifications. ImageLibrary is optional and only makes pictures load faster.</p></div>
         <div><h3>Do I need another plugin for the rounded corners?</h3><p>No. NewsBroadcaster draws the corner images itself when the server starts. ImageLibrary is optional and only caches post pictures.</p></div>
-        <div><h3>Will my old posts and config survive the update?</h3><p>Yes. Config, themes, the language file and posts from 1.x load as they are, and new options are added with their defaults.</p></div>
+        <div><h3>Will my old posts and config survive the update?</h3><p>Yes. Config, themes, the language file and posts from earlier builds load as they are, and new options are added with their defaults.</p></div>
         <div><h3>Why doesn't my picture show in game?</h3><p>Rust needs a direct link to a PNG or JPG. The editor warns about imgur pages, Discord links, which stop working after about a day, and GIFs.</p></div>
         <div><h3>How do I make a post only VIPs can see?</h3><p>Create the group with <code>oxide.group add vip</code>, add players with <code>oxide.usergroup add</code>, then pick VIP ONLY under WHO CAN SEE IT.</p></div>
         <div><h3>Can players turn the notifications off?</h3><p>Yes, with <code>/news settings</code>: the sound, the pop-ups (they get a chat line instead) and the post shown when joining.</p></div>
-        <div><h3>Does it work after the November 2026 Rust update?</h3><p>Yes. 2.0.0 uses the new file storage that update introduced, so it compiles and loads on current servers.</p></div>
+        <div><h3>Does it work after the November 2026 Rust update?</h3><p>Yes. 1.0.0 uses the new file storage that update introduced, so it compiles and loads on current servers.</p></div>
         <div><h3>Can I schedule a post for later?</h3><p>Save it as a draft and press PUBLISH when it's time, from News Management or with <code>news.publish</code> over RCON.</p></div>
       </div>
     </div>
@@ -743,12 +743,12 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
     <div class="wrap">
       <div class="head">
         <p class="eyebrow">Changelog</p>
-        <h2>What's new in 2.0.0</h2>
-        <p>A big update of 1.2.0. Replace the file; everything you have carries over.</p>
+        <h2>What's in 1.0.0</h2>
+        <p>The first release of the new NewsBroadcaster. Coming from an earlier build? Replace the file; everything you have carries over.</p>
       </div>
       <div class="log">
         <div>
-          <h3>A premium new look</h3>
+          <h3>A premium look</h3>
           <ul>
             <li>Rounded, anti-aliased corners on panels, buttons and pictures</li>
             <li>Soft layered shadows, a blurred background and a glass highlight</li>
@@ -757,7 +757,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
           </ul>
         </div>
         <div>
-          <h3>New for players</h3>
+          <h3>For players</h3>
           <ul>
             <li>Polls with live results, a timer and announced winners</li>
             <li>Unread tracking, NEW badges and Mark all read</li>
@@ -766,7 +766,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
           </ul>
         </div>
         <div>
-          <h3>New for admins</h3>
+          <h3>For admins</h3>
           <ul>
             <li>Two-column editor with preview, counters and an image link check</li>
             <li>Drafts, copy post, posts for one group and auto-delete</li>
@@ -775,7 +775,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
           </ul>
         </div>
         <div>
-          <h3>Fixes</h3>
+          <h3>Fixed since the earlier builds</h3>
           <ul>
             <li>Clicking a button made the menu blink and the mouse jump to the centre; now it stays put</li>
             <li>Long titles were cut off at the top of the popup</li>
@@ -792,7 +792,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
 
 <footer>
   <div class="wrap">
-    <span><b>NewsBroadcaster</b> 2.0.0 by DEDA</span>
+    <span><b>NewsBroadcaster</b> 1.0.0 by DEDA</span>
     <span>Oxide / uMod plugin for Rust</span>
   </div>
 </footer>

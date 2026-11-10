@@ -14,7 +14,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("NewsBroadcaster", "DEDA", "2.0.0")]
+    [Info("NewsBroadcaster", "DEDA", "1.0.0")]
     [Description("In-game news announcements with notifications, archive, polls, likes, rewards and Discord webhooks")]
     public class NewsBroadcaster : RustPlugin
     {
@@ -1110,7 +1110,7 @@ namespace Oxide.Plugins
                     collapsed += DeduplicateConsecutiveRewardItems(config.Rewards.LikeRewards?.Items);
                     if (collapsed > 0)
                     {
-                        PrintWarning($"Cleaned up {collapsed} duplicate reward item(s) from config (pre-1.1.1 deserialization bug).");
+                        PrintWarning($"Cleaned up {collapsed} duplicate reward item(s) from the config (left there by an old build of the plugin).");
                         needsSave = true;
                     }
                 }
@@ -1263,7 +1263,7 @@ namespace Oxide.Plugins
 
         private static readonly string[] ToastPositions = { "TopRight", "TopLeft", "TopCenter", "BottomRight", "BottomLeft", "BottomCenter" };
 
-        // One of ToastPositions; the 1.x values "Left" / "Right" mean the top corners.
+        // One of ToastPositions; the old values "Left" / "Right" mean the top corners.
         private static string NormalizeToastPosition(string value)
         {
             value = (value ?? string.Empty).Replace(" ", string.Empty).Replace("-", string.Empty);
@@ -4653,7 +4653,7 @@ namespace Oxide.Plugins
             {
                 float x = AdminSidePad + i * (width + between);
                 string card = AddSurface(container, panel, g.Min(x, bottom), g.Max(x + width, top), cardColor, RadiusCard);
-                AddAccentBar(container, card, cards[i][3]);
+                container.Add(Piece(cards[i][3], "0 0", "0 1", "8 14", "11 -14", 0f), card);
                 container.Add(new CuiLabel
                 {
                     Text = { Text = cards[i][0], FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = FontBold },
@@ -4753,9 +4753,9 @@ namespace Oxide.Plugins
             }
             else
             {
+                // A plain bar: at 3 units wide its rounded ends would cost seven elements a row for nothing.
                 float inset = Math.Min(14f, height * 0.22f);
-                string bar = container.Add(Piece("0 0 0 0", r.Min(42f, height - inset), r.Max(45f, inset), "0 0", "0 0", 0f), name);
-                AddRoundedFill(container, bar, typeColor, 1.5f);
+                container.Add(Piece(typeColor, r.Min(42f, height - inset), r.Max(45f, inset), "0 0", "0 0", 0f), name);
             }
 
             // Right side, from the edge inwards: five buttons, then three numbers.
