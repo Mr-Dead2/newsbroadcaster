@@ -75,9 +75,11 @@ namespace Oxide.Plugins
 
         private string[] cornerFill;
         private string[] cornerMask;
+        private readonly Dictionary<string, float[]> parsedColors = new Dictionary<string, float[]>();
+        private readonly HashSet<string> warnedRewardProblems = new HashSet<string>();
+        private const int MaxCachedColors = 1024;
 
         private bool dataDirty;
-        private Timer saveTimer;
 
         private const string DateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
@@ -89,7 +91,6 @@ namespace Oxide.Plugins
         private const float RedrawCooldownSeconds = 0.4f;
         private const int MaxPollOptions = 4;
         private const int MaxPollOptionChars = 60;
-        private const float SaveDebounceSeconds = 15f;
         private const int ThemesPerPage = 8;
         private const float MinScheduleSeconds = 1f;
         private const float MaxScheduleSeconds = 3600f;
@@ -1251,11 +1252,6 @@ namespace Oxide.Plugins
             ScheduleNextCheck();
 
             dataDirty = false;
-            if (saveTimer != null)
-            {
-                saveTimer.Destroy();
-                saveTimer = null;
-            }
             Interface.Oxide.DataFileSystem.WriteObject(DataFile, storedData);
         }
 
@@ -1290,12 +1286,6 @@ namespace Oxide.Plugins
         private void MarkDataDirty()
         {
             dataDirty = true;
-            if (saveTimer != null && !saveTimer.Destroyed) return;
-            saveTimer = timer.Once(SaveDebounceSeconds, () =>
-            {
-                saveTimer = null;
-                if (dataDirty) SaveAnnouncements();
-            });
         }
 
         private void LoadAnnouncements()
@@ -1419,8 +1409,6 @@ namespace Oxide.Plugins
             surfaceColors.Clear();
 
             if (dataDirty) SaveAnnouncements();
-            saveTimer?.Destroy();
-            saveTimer = null;
             scheduleTimer?.Destroy();
             scheduleTimer = null;
         }
@@ -3341,9 +3329,11 @@ namespace Oxide.Plugins
                 string w = F(rimWidth), nw = F(-rimWidth);
                 container.Add(Piece(SolidOn(rim, under ?? (IsOpaque(fill) ? fill : null)), anchorMin, anchorMax, $"{nw} {nw}", $"{w} {w}", 0f), parent);
             }
-            return command != null
+            string box = command != null
                 ? container.Add(new CuiButton { Button = { Color = fill, Command = command }, Text = { Text = "" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name)
                 : container.Add(new CuiPanel { Image = { Color = fill }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name);
+            SetSurface(container, box, fill);
+            return box;
         }
 
         private readonly List<KeyValuePair<CuiElementContainer, Dictionary<string, string>>> surfaceColors = new List<KeyValuePair<CuiElementContainer, Dictionary<string, string>>>();
@@ -3388,9 +3378,9 @@ namespace Oxide.Plugins
             return null;
         }
 
-        private static bool IsOpaque(string rgba) => ParseColor(rgba)[3] >= 0.999f;
+        private bool IsOpaque(string rgba) => ParseColor(rgba)[3] >= 0.999f;
 
-        private static string SolidOn(string color, string under) => IsOpaque(color) || under == null || ParseColor(color)[3] <= 0.001f ? color : Blend(color, under);
+        private string SolidOn(string color, string under) => IsOpaque(color) || under == null || ParseColor(color)[3] <= 0.001f ? color : Blend(color, under);
 
         private void AddTopSheen(CuiElementContainer container, string parent, float radius)
         {
@@ -3420,28 +3410,34 @@ namespace Oxide.Plugins
             return button;
         }
 
-        private static string Blend(string top, string under)
+        private string Blend(string top, string under)
         {
             float[] t = ParseColor(top), u = ParseColor(under);
             float a = t[3];
             return $"{F(t[0] * a + u[0] * (1 - a))} {F(t[1] * a + u[1] * (1 - a))} {F(t[2] * a + u[2] * (1 - a))} 1";
         }
 
-        private static string Opaque(string rgba)
+        private string Opaque(string rgba)
         {
             float[] c = ParseColor(rgba);
             return $"{F(c[0])} {F(c[1])} {F(c[2])} 1";
         }
 
-        private static float[] ParseColor(string rgba)
+        private float[] ParseColor(string rgba)
         {
-            var result = new float[] { 1f, 1f, 1f, 1f };
-            var parts = (rgba ?? string.Empty).Split(' ');
+            rgba = rgba ?? string.Empty;
+            float[] result;
+            if (parsedColors.TryGetValue(rgba, out result)) return result;
+
+            result = new float[] { 1f, 1f, 1f, 1f };
+            var parts = rgba.Split(' ');
             for (int i = 0; i < 4 && i < parts.Length; i++)
             {
                 float value;
                 if (float.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out value)) result[i] = value;
             }
+            if (parsedColors.Count >= MaxCachedColors) parsedColors.Clear();
+            parsedColors[rgba] = result;
             return result;
         }
 
@@ -4166,7 +4162,7 @@ namespace Oxide.Plugins
             return ImageLibrary.Call<string>("GetImage", url);
         }
 
-        private static string RgbaToHex(string rgba)
+        private string RgbaToHex(string rgba)
         {
             float[] c = ParseColor(rgba);
             return $"#{ToByte(c[0]):X2}{ToByte(c[1]):X2}{ToByte(c[2]):X2}";
@@ -5186,7 +5182,8 @@ namespace Oxide.Plugins
             string reason;
             if (!CanGrantRewardBundle(bundle, out reason))
             {
-                PrintWarning($"Reward for {player.UserIDString} was not recorded: {reason}.");
+                if (warnedRewardProblems.Add(reason))
+                    PrintWarning($"Rewards are not being paid (and not recorded, so they can be paid later): {reason}. This is only reported once.");
                 return false;
             }
 

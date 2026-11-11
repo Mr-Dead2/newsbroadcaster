@@ -38,6 +38,8 @@ namespace HarnessRuntime
         public static readonly List<string> ConsoleReplies = new List<string>();
         public static readonly Dictionary<ulong, ClientUi> Clients = new Dictionary<ulong, ClientUi>();
         public static bool Quiet;
+        // Benchmarks: the plugin still builds and serialises its UI, the simulated client ignores it.
+        public static bool SkipClient;
 
         public static readonly HashSet<string> RootLayers = new HashSet<string> { "Overlay", "Hud", "Hud.Menu", "Under", "Overall", "OverlayNonScaled", "HudNonScaled", "UnderNonScaled", "Inventory" };
 

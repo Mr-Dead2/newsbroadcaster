@@ -60,7 +60,7 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 ### Light on the server
 - **Small screens.** An archive page is about 160 UI elements (about 100 with `RoundedCorners` off), a popup about 60, a toast about 35.
 - **Redraw cooldown.** Page, filter, search and sort clicks redraw a screen at most once every 0.4 seconds per player. No click is lost: what was clicked in between is drawn together when the cooldown ends.
-- **Batched saves.** Likes, reads, votes and paid rewards are written together, 15 seconds after the first change and on every server save, however many players click.
+- **Saves ride on the server save.** Likes, reads, votes and paid rewards are written together when the server saves (and when the plugin unloads), however many players click. Only admin actions (publish, edit, delete, pin) write at once. On a big server the data file reaches several MB late in a wipe, so it is never rewritten on a timer.
 - **No idle timer.** One timer waits for the next auto-delete or poll closing; when nothing is scheduled, no timer runs.
 - **No LINQ, pooled lists.** Lists built for a screen come from the game's pool and go back to it; the pinned-first order is kept instead of being sorted for every draw.
 
@@ -103,7 +103,7 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 | Notify | Only with `UseNotifyPlugin: true` | Shows the new-post notification in Notify's style. If Notify isn't loaded, the plugin's own toast is shown |
 | ImageLibrary | No | If installed, post pictures are cached through it so they load faster; otherwise the game loads the image link directly |
 
-A reward that includes `Points` or `Currency` isn't paid while its plugin is missing, including any items in the same reward. The console prints a warning, and the reward isn't marked as paid, so it can still be paid after you install the plugin. Item rewards, polls, countdowns, rounded corners and Discord webhooks need nothing but Oxide.
+A reward that includes `Points` or `Currency` isn't paid while its plugin is missing, including any items in the same reward. The console prints a warning (once per problem, not once per player), and the reward isn't marked as paid, so it can still be paid after you install the plugin. Item rewards, polls, countdowns, rounded corners and Discord webhooks need nothing but Oxide.
 
 ---
 
@@ -349,7 +349,7 @@ The embed has a type-coloured side bar, a `TYPE • SERVER NAME` header, the tit
 | `NotifyOnReward` | `true` | Tell the player in chat what they received |
 | `PointsLabel` / `CurrencyLabel` | `"RP"` / `"coins"` | Labels used in that message |
 
-Each bundle can combine **Items** (any shortname, optional `SkinId`), **Points** (ServerRewards) and **Currency** (Economics). Rewards are paid at most once per player per post. Full inventory → items drop at the player's feet. If a needed plugin is missing, the reward is skipped with a console warning and **not** recorded, so it can be paid later. Who has been paid is saved together with likes and reads: 15 seconds after the first change and on every server save, not once per player.
+Each bundle can combine **Items** (any shortname, optional `SkinId`), **Points** (ServerRewards) and **Currency** (Economics). Rewards are paid at most once per player per post. Full inventory → items drop at the player's feet. If a needed plugin is missing, the reward is skipped with a console warning and **not** recorded, so it can be paid later. Who has been paid is saved together with likes and reads on the next server save, not once per player.
 
 ### Polls
 
@@ -376,7 +376,7 @@ Each theme has these `"R G B A"` (0–1) fields: `PanelBg`, `HeaderBg`, `Content
 
 ## Editor autosave
 
-From the first change on, what is in the editor is kept in the data file (written with the usual 15-second delay and on server save). **PUBLISH**, **SAVE DRAFT**, **SAVE CHANGES** and **CANCEL** end it. If the editor goes away any other way (disconnect, crash, server restart, plugin reload), News Management shows an **UNSAVED** bar with the title and how long ago it was changed: **CONTINUE EDITING** opens the editor as it was, **DISCARD** deletes it. If the post you were editing has been deleted meanwhile, it carries on as a new post. An autosave nobody comes back for is removed after 30 days.
+From the first change on, what is in the editor is kept in the data file (written with the next server save, and when the plugin unloads). **PUBLISH**, **SAVE DRAFT**, **SAVE CHANGES** and **CANCEL** end it. If the editor goes away any other way (disconnect, server restart, plugin reload), News Management shows an **UNSAVED** bar with the title and how long ago it was changed: **CONTINUE EDITING** opens the editor as it was, **DISCARD** deletes it. If the post you were editing has been deleted meanwhile, it carries on as a new post. An autosave nobody comes back for is removed after 30 days.
 
 ## Pinned announcements
 

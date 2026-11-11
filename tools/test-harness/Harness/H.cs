@@ -113,6 +113,8 @@ public static class H
         return arg;
     }
 
+    public static List<string> ConsoleCommands() => T.GetMethods(All).SelectMany(m => m.GetCustomAttributes<ConsoleCommandAttribute>()).Select(a => a.Command).OrderBy(c => c).ToList();
+
     public static bool HasConsole(string cmd) => T.GetMethods(All).Any(x => x.GetCustomAttributes<ConsoleCommandAttribute>().Any(a => a.Command == cmd));
 
     public static void Chat(BasePlayer p, string cmd, params string[] args)

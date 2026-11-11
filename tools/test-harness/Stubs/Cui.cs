@@ -25,6 +25,7 @@ namespace Oxide.Game.Rust.Cui
         public static bool AddUi(BasePlayer player, string json)
         {
             if (player?.net == null) return false;
+            if (Sim.SkipClient) return true;
             Sim.ClientAddUi(player, json);
             return true;
         }
@@ -32,6 +33,7 @@ namespace Oxide.Game.Rust.Cui
         public static bool DestroyUi(BasePlayer player, string elem)
         {
             if (player?.net == null) return false;
+            if (Sim.SkipClient) return true;
             Sim.ClientDestroyUi(player, elem);
             return true;
         }

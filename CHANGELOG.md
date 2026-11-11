@@ -46,7 +46,7 @@
 #### Light on the server
 - **Small screens.** An archive page is about 160 UI elements (about 100 with `RoundedCorners` off), a popup about 60, a toast about 35.
 - **Redraw cooldown.** Page, filter, search and sort clicks redraw a screen at most once every 0.4 seconds per player. No click is lost: what was clicked in between is drawn together when the cooldown ends.
-- **Batched saves.** Likes, reads, votes and paid rewards are written together, 15 seconds after the first change and on every server save, however many players click.
+- **Saves ride on the server save.** Likes, reads, votes and paid rewards are written together when the server saves (and when the plugin unloads), however many players click. Only admin actions (publish, edit, delete, pin) write at once. On a big server the data file reaches several MB late in a wipe, so it is never rewritten on a timer.
 - **No idle timer.** One timer waits for the next auto-delete or poll closing; when nothing is scheduled, no timer runs.
 - **No LINQ, pooled lists.** Lists built for a screen come from the game's pool and go back to it; the pinned-first order is kept instead of being sorted for every draw.
 

@@ -170,8 +170,12 @@ static class Tests
         H.Console(player, $"news.like {H.Id(third)}");
         Check(Set(third, "LikedPlayers").Contains(player.userID), "double-click within cooldown ignored");
         Check(Sim.DataWrites == writesBefore, "like does not write the data file immediately");
-        Sim.Advance(16);
-        Check(Sim.DataWrites == writesBefore + 1, "debounced save flushes once");
+        Sim.Advance(600);
+        Check(Sim.DataWrites == writesBefore, "...and not on a timer either");
+        H.Call("OnServerSave");
+        Check(Sim.DataWrites == writesBefore + 1, "it is written with the next server save");
+        H.Call("OnServerSave");
+        Check(Sim.DataWrites == writesBefore + 1, "a server save with nothing changed writes nothing");
         Check(HooksNamed("OnNewsLiked") == 1, "OnNewsLiked fired once");
         H.Console(player, $"news.like {H.Id(third)}");
         Check(!Set(third, "LikedPlayers").Contains(player.userID), "unlike after cooldown");
@@ -203,22 +207,32 @@ static class Tests
         H.Console(player, $"news.view {H.Id(rp)}");
         Sim.Advance(6);
         Check(player.inventory.given.Count == 1, "read reward only once");
-        // After a broadcast everybody reads within the same seconds: paid rewards wait for the delayed save.
+        // After a broadcast everybody reads within the same seconds: paid rewards wait for the server save.
         var readers = Enumerable.Range(0, 6).Select(i => H.MakePlayer(76561198000000100 + (ulong)i, "Reader" + i)).ToList();
-        Sim.Advance(16);
+        H.Call("OnServerSave");
         int rewardWrites = Sim.DataWrites;
         foreach (var reader in readers) H.Console(reader, $"news.view {H.Id(rp)}");
         Sim.Advance(6);
         Check(readers.All(r => r.inventory.given.Count == 1 && Set(rp, "ReadRewardedPlayers").Contains(r.userID)), "six players get the read reward");
         Check(Sim.DataWrites == rewardWrites, "...without a write of the data file for each of them");
-        Sim.Advance(16);
-        Check(Sim.DataWrites == rewardWrites + 1 && Sim.DataFiles["NewsBroadcaster_Data"].Contains("76561198000000105"), "one delayed save stores all of them");
+        H.Call("OnServerSave");
+        Check(Sim.DataWrites == rewardWrites + 1 && Sim.DataFiles["NewsBroadcaster_Data"].Contains("76561198000000105"), "one server save stores all of them");
         readers[0].inventory.FullInventory = true;
         H.CfgSet("Rewards.EnableLikeReward", true);
         H.Console(readers[0], $"news.like {H.Id(rp)}");
         Check(readers[0].dropped.Count == 1 && readers[0].dropped[0].amount == 10 && Set(rp, "LikeRewardedPlayers").Contains(readers[0].userID), "full inventory: the reward is dropped at the player (BasePlayer.GiveItem)");
-        Check(Sim.DataWrites == rewardWrites + 1, "a like reward waits for the delayed save too");
+        Check(Sim.DataWrites == rewardWrites + 1, "a like reward waits for the server save too");
         H.CfgSet("Rewards.EnableLikeReward", false);
+
+        // A reward that can't be paid (its plugin is gone) is reported once, not once for every player.
+        H.Set("ServerRewards", null);
+        int given = readers.Sum(r => r.inventory.given.Count);
+        Post("Second reward", "text");
+        foreach (var reader in readers) { H.Console(reader, "news.close.notif"); H.Console(reader, $"news.view {H.Id(Ann0)}"); }
+        Sim.Advance(6);
+        Check(Sim.LogLines.Count(l => l.StartsWith("WARN") && l.Contains("ServerRewards is not loaded")) == 1 && readers.Sum(r => r.inventory.given.Count) == given && Set(Ann0, "ReadRewardedPlayers").Count == 0 && Set(Ann0, "ReadByPlayers").Count == readers.Count,
+            "a reward that can't be paid: six readers, one console warning, nothing paid or marked as paid");
+        H.Set("ServerRewards", sr);
 
         // ---------------------------------------------------------------
         Section("Like reward once");
@@ -530,7 +544,7 @@ static class Tests
         Check(LastChat(player) == "Marked 1 announcement(s) as read.", "/news read");
         H.Chat(player, "news", "read");
         Check(LastChat(player) == "You have no unread announcements.", "/news read with nothing unread");
-        Sim.Advance(16);
+        H.Call("OnServerSave");
         Check(JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["ReadAllUpTo"][player.UserIDString] != null, "mark-read marker saved");
 
         // ---------------------------------------------------------------
@@ -1143,7 +1157,7 @@ static class Tests
         H.Call("OnPlayerSleepEnded", player);
         Sim.Advance(2.5);
         Check(!UiOpen(player), "join pop-up off: no popup when waking up");
-        Sim.Advance(16);
+        H.Call("OnServerSave");
         Check(Sim.DataFiles["NewsBroadcaster_Data"].Contains("\"PlayerSettings\"") && Sim.DataFiles["NewsBroadcaster_Data"].Contains("\"JoinPopup\": false"), "settings are saved per player");
 
         // ---------------------------------------------------------------
@@ -1305,7 +1319,7 @@ static class Tests
               ""ReadAllUpTo"": { ""76561198000000002"": 2000, ""76561198000000051"": 999 }
             }";
         });
-        Sim.Advance(16);
+        H.Call("OnServerSave");
         var storedAfterLoad = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"]);
         Check(storedAfterLoad["LastSeenNews"]["76561198000000050"] == null && storedAfterLoad["ReadAllUpTo"]["76561198000000051"] == null, "markers older than the oldest post are dropped on load");
         Check(storedAfterLoad["LastSeenNews"]["76561198000000002"] != null && storedAfterLoad["ReadAllUpTo"]["76561198000000002"] != null, "markers that still matter are kept");
@@ -1435,7 +1449,7 @@ static class Tests
                 ""76561198000000001"": { ""Draft"": { ""Title"": ""Ancient"" }, ""SavedAt"": 5 },
                 ""76561198000000009"": { ""Draft"": { ""Title"": ""Yesterday"" }, ""SavedAt"": " + (DateTime.UtcNow.Ticks - TimeSpan.TicksPerDay) + @" } } }";
         });
-        Sim.Advance(16);
+        H.Call("OnServerSave");
         var keptAutosaves = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["EditorAutosaves"];
         Check(keptAutosaves.Count() == 1 && keptAutosaves["76561198000000009"] != null, "autosaves nobody came back for (30 days) are dropped on load, newer ones stay");
 
@@ -1479,6 +1493,161 @@ static class Tests
         Check(!(bool)H.Call("API_ShowNews", player, draftId) && !(bool)H.Call("API_ShowNews", noperm, apiId) && !UiOpen(player), "...but not a draft, and not without permission");
         int deletedHooks = HooksNamed("OnNewsDeleted");
         Check((bool)H.Call("API_DeleteNews", apiId) && H.AnnByTitle("Airdrop event") == null && HooksNamed("OnNewsDeleted") == deletedHooks + 1 && !(bool)H.Call("API_DeleteNews", apiId), "API_DeleteNews");
+
+        // ---------------------------------------------------------------
+        Section("Garbage input: every command, every caller");
+        Fresh();
+        Sim.Permission.CreateGroup("vip", "VIP", 0);
+        H.CfgSet("Rewards.EnableReadReward", true);
+        H.CfgSet("Rewards.EnableLikeReward", true);
+        var crashes = new List<string>();
+        Action<BasePlayer, string> tryConsole = (who, line) =>
+        {
+            try { H.Console(who, line); Sim.Advance(0.5); }
+            catch (Exception ex) { crashes.Add($"{who?.displayName ?? "console"}: {line} -> {ex.InnerException?.GetType().Name ?? ex.GetType().Name}: {(ex.InnerException ?? ex).Message.Split('\n')[0]}"); }
+        };
+        Action stock = () =>
+        {
+            // Keep a few posts of every kind around, whatever the commands before deleted.
+            if (H.Announcements.Count >= 4) return;
+            Post("Stock picture", "body", "Event", "https://img.example/stock.png");
+            H.Console(null, "news.poll \"Stock poll\" \"x\" \"A|B|C\" Update");
+            H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "Stock countdown", ["countdownTo"] = DateTime.UtcNow.Ticks + TimeSpan.TicksPerHour, ["expireDays"] = 1, ["group"] = "vip", ["pinned"] = true });
+            H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "Stock draft", ["draft"] = true });
+        };
+        var commandNames = H.ConsoleCommands();
+        string longText = new string('x', 5000);
+        var junk = new List<Func<string>>
+        {
+            () => "", () => "x", () => "-1", () => "0", () => "1", () => "999999999", () => "99999999999999999999", () => "\"\"", () => "a b c d e f",
+            () => H.Id(H.Ann(0)), () => H.Id(H.Ann(0)) + " -5", () => H.Id(H.Ann(0)) + " 99999", () => H.Id(H.Ann(H.Announcements.Count - 1)) + " archive",
+            () => "title <color=red>rich</color> {0} %TIME_LEFT% \\n", () => "text " + longText, () => "poll1 A", () => "poll9 A", () => "cdtime 2d 4h", () => "cdtime never",
+            () => "image not-a-link", () => "image https://img.example/a.png", () => "polls", () => "event", () => "reset", () => "sound", () => "audience", () => "expire", () => "polltimer", () => "poll", () => "pollclosed",
+            () => "\"Title\" \"-\" \"Body\" Event", () => "\"Title\" \"Body\" \"A|B\"", () => "\"Title\" \"Body\" \"|\"", () => "Ocean 0", () => "Survivor", () => "Survivor 0", () => "Nobody 5"
+        };
+        int ran = 0;
+        foreach (var make in junk)
+        {
+            foreach (string command in commandNames)
+            {
+                foreach (var who in new[] { null, noperm, player, admin })
+                {
+                    stock();
+                    tryConsole(who, command + " " + make());
+                    ran++;
+                }
+            }
+            // Between rounds: put everybody on a different screen, so the in-place redraws are hit too.
+            stock();
+            tryConsole(admin, "news.admin.create");
+            tryConsole(player, $"news.view {H.Id(H.AnnByTitle("Stock poll") ?? H.Ann(0))}");
+            Sim.Advance(6);
+        }
+        Check(crashes.Count == 0, $"{ran} commands with junk arguments from the console, a stranger, a player and an admin: no exception" + (crashes.Count > 0 ? $" ({crashes.Count}): " + string.Join(" | ", crashes.Distinct().Take(6)) : ""));
+        Check(!Sim.LogLines.Any(l => l.StartsWith("ERR")), "...and nothing in the error log" + string.Join(" | ", Sim.LogLines.Where(l => l.StartsWith("ERR")).Distinct().Take(3)));
+        var junkWarnings = CuiWarnings();
+        Check(junkWarnings.Count == 0, "...and no broken UI (unknown parents, duplicate names)" + (junkWarnings.Count > 0 ? ": " + string.Join(" | ", junkWarnings.Distinct().Take(5)) : ""));
+        Check(!UiOpen(noperm) && !ToastOpen(noperm), "a player without permission never got a screen out of it");
+        H.Call("OnPlayerDisconnected", admin, "bye"); H.Call("OnPlayerDisconnected", player, "bye"); H.Call("OnPlayerDisconnected", noperm, "bye");
+        H.Call("Unload");
+        Check(Sim.Timers.Count == 0, $"after everybody left and the plugin unloaded, no timer is left ({Sim.Timers.Count})");
+
+        // ---------------------------------------------------------------
+        Section("Config values nobody should set");
+        var themeDefaults = new Func<object>(() => Activator.CreateInstance(H.AGet(H.Config, "Colors").GetType(), true));
+        var sillyConfigs = new List<(string name, Action apply)>
+        {
+            ("AnnouncementsPerPage 0", () => H.CfgSet("General.AnnouncementsPerPage", 0)),
+            ("AnnouncementsPerPage -5", () => H.CfgSet("General.AnnouncementsPerPage", -5)),
+            ("AnnouncementsPerPage 60", () => H.CfgSet("General.AnnouncementsPerPage", 60)),
+            ("MaxStoredAnnouncements 0", () => H.CfgSet("General.MaxStoredAnnouncements", 0)),
+            ("MaxStoredAnnouncements -1", () => H.CfgSet("General.MaxStoredAnnouncements", -1)),
+            ("AutoCloseSeconds 0, popups instead of toasts", () => { H.CfgSet("General.AutoCloseSeconds", 0); H.CfgSet("Notification.Enabled", false); }),
+            ("AutoCloseSeconds -10, popups instead of toasts", () => { H.CfgSet("General.AutoCloseSeconds", -10); H.CfgSet("Notification.Enabled", false); }),
+            ("Notification.Duration 0", () => H.CfgSet("Notification.Duration", 0)),
+            ("Notification.Duration -3", () => H.CfgSet("Notification.Duration", -3)),
+            ("ReadDelaySeconds -5 with rewards", () => { H.CfgSet("Rewards.ReadDelaySeconds", -5); H.CfgSet("Rewards.EnableReadReward", true); H.CfgSet("Rewards.EnableLikeReward", true); }),
+            ("reward bundles null", () => { H.CfgSet("Rewards.ReadRewards", null); H.CfgSet("Rewards.LikeRewards", null); H.CfgSet("Rewards.EnableReadReward", true); H.CfgSet("Rewards.EnableLikeReward", true); }),
+            ("reward item that does not exist", () => { ((System.Collections.IList)H.AGet(H.CfgPath("Rewards.ReadRewards"), "Items")).Clear(); H.ASet(H.CfgPath("Rewards.ReadRewards"), "Items", null); H.CfgSet("Rewards.EnableReadReward", true); }),
+            ("reward labels null", () => { H.CfgSet("Rewards.PointsLabel", null); H.CfgSet("Rewards.CurrencyLabel", null); H.CfgSet("Rewards.EnableReadReward", true); }),
+            ("ServerName null", () => H.CfgSet("General.ServerName", null)),
+            ("PopupImageFrame null", () => H.CfgSet("General.PopupImageFrame", null)),
+            ("Notification.Position null", () => H.CfgSet("Notification.Position", null)),
+            ("NotificationSound null", () => H.CfgSet("Notification.NotificationSound", null)),
+            ("SelectedTheme null", () => H.ASet(H.Config, "SelectedTheme", null)),
+            ("SelectedTheme that does not exist", () => H.ASet(H.Config, "SelectedTheme", "Nope")),
+            ("no themes at all", () => ((System.Collections.IDictionary)H.AGet(H.Config, "Themes")).Clear()),
+            ("theme colours null or garbage", () => { var t = themeDefaults(); H.ASet(t, "PanelBg", null); H.ASet(t, "ButtonPrimary", "blue"); H.ASet(t, "TextTitle", ""); H.ASet(t, "ContentBg", "1 2"); ((System.Collections.IDictionary)H.AGet(H.Config, "Themes"))["Broken"] = t; H.ASet(H.Config, "SelectedTheme", "Broken"); }),
+            ("Discord on with empty names", () => { H.CfgSet("Discord.Enabled", true); H.CfgSet("Discord.WebhookUrl", "https://discord.com/api/webhooks/1/x"); H.CfgSet("Discord.BotName", null); H.CfgSet("Discord.AvatarUrl", null); H.CfgSet("Discord.RoleMention", null); }),
+            ("Notify plugin wanted but not installed", () => H.CfgSet("Notification.UseNotifyPlugin", true)),
+            ("view permission not required", () => H.CfgSet("General.RequireViewPermission", false)),
+        };
+        foreach (var silly in sillyConfigs)
+        {
+            string failed = null;
+            try
+            {
+                Fresh();
+                Sim.Permission.CreateGroup("vip", "VIP", 0);
+                silly.apply();
+                Post("Tour picture", "body text\\nsecond line", "Event", "https://img.example/tour.png");
+                H.Console(null, "news.poll \"Tour poll\" \"x\" \"A|B|C\" Update");
+                H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "Tour countdown", ["countdownTo"] = DateTime.UtcNow.Ticks + TimeSpan.TicksPerHour, ["expireDays"] = 1, ["pollOptions"] = new[] { "Y", "N" }, ["pollHours"] = 1, ["pinned"] = true });
+                for (int i = 0; i < 4; i++) Post("Tour filler " + i, "x");
+                Sim.Advance(1);
+                var joiner2 = H.MakePlayer(76561198000000777, "Joiner");
+                H.Call("OnPlayerSleepEnded", joiner2);
+                Sim.Advance(3);
+                foreach (var who in new[] { player, admin, joiner2 })
+                {
+                    H.Chat(who, "news"); Sim.Advance(1);
+                    foreach (string line in new[] { "news.page 1", "news.page -3", "news.page 999", "news.filter event", "news.search tour", "news.search.clear", "news.markread", "news.settings", "news.settings.toggle sound", "news.confirm.close" })
+                    { H.Console(who, line); Sim.Advance(0.5); }
+                    foreach (var post in H.Announcements.Cast<object>().ToList())
+                    {
+                        H.Console(who, $"news.view {H.Id(post)} archive"); Sim.Advance(0.5);
+                        H.Console(who, $"news.like {H.Id(post)}");
+                        H.Console(who, $"news.vote {H.Id(post)} 1");
+                        H.Console(who, $"news.countdown {H.Id(post)}");
+                        Sim.Advance(7);
+                    }
+                    H.Chat(who, "news", "latest"); H.Chat(who, "news", "read"); H.Chat(who, "news", "help"); H.Chat(who, "news", "settings");
+                    H.Console(who, "news.close");
+                }
+                H.Chat(admin, "news", "admin"); Sim.Advance(1);
+                foreach (string line in new[] { "news.admin.page 1", "news.admin.page -2", "news.admin.filter polls", "news.admin.sort", "news.admin.sort", "news.admin.sort", "news.admin.search tour", "news.admin.filter reset", "news.admin.selectpage 0", "news.admin.bulkpin 1 0", "news.admin.bulkdelconfirm 0", "news.confirm.close", "news.admin.clearsel 0", "news.admin.themes", "news.admin.themes 5", "news.admin.settheme Ocean 0", "news.admin.page 0" })
+                { H.Console(admin, line); Sim.Advance(0.5); }
+                H.Console(admin, "news.admin.create");
+                foreach (string line in new[] { "news.editor.input title Written in the tour", "news.editor.input text Some body", "news.editor.input image https://img.example/e.png", "news.editor.toggle poll", "news.editor.input poll1 One", "news.editor.input poll2 Two", "news.editor.toggle polltimer", "news.editor.toggle expire", "news.editor.toggle audience", "news.editor.toggle pin", "news.editor.input cdtime 2h", "news.editor.settype Alert", "news.editor.preview", "news.editor.back", "news.editor.savedraft" })
+                    H.Console(admin, line);
+                var tourDraft = H.AnnByTitle("Written in the tour");
+                if (tourDraft != null)
+                {
+                    H.Console(admin, $"news.admin.edit {H.Id(tourDraft)}");
+                    H.Console(admin, "news.editor.save");
+                    H.Console(admin, $"news.admin.copy {H.Id(H.Ann(0))}");
+                    H.Console(admin, "news.editor.cancel");
+                    H.Console(admin, $"news.admin.resend {H.Id(H.Ann(0))} 0");
+                    H.Console(admin, $"news.admin.togglepin {H.Id(H.Ann(0))} 0");
+                    H.Console(admin, $"news.admin.delconfirm {H.Id(H.Ann(0))} 0");
+                    H.Console(admin, $"news.admin.del {H.Id(H.Ann(0))} 0");
+                }
+                H.Console(null, "news.list"); H.Console(null, "news.trigger Survivor"); H.Console(null, "news.resend 0"); H.Console(null, "news.delete 0");
+                foreach (var post in H.Announcements.Cast<object>()) { H.ASet(post, "ExpiresAt", DateTime.UtcNow.Ticks - 1); H.ASet(post, "PollEndsAt", DateTime.UtcNow.Ticks - 1); }
+                H.Call("ScheduleNextCheck");
+                Sim.Advance(30);
+                H.Call("OnServerSave");
+                H.Call("OnPlayerDisconnected", joiner2, "bye");
+                H.Call("Unload");
+                var errors = Sim.LogLines.Where(l => l.StartsWith("ERR")).ToList();
+                var uiWarnings = CuiWarnings();
+                if (errors.Count > 0) failed = "error log: " + errors[0];
+                else if (uiWarnings.Count > 0) failed = "broken UI: " + uiWarnings[0];
+            }
+            catch (Exception ex) { failed = (ex.InnerException ?? ex).GetType().Name + ": " + (ex.InnerException ?? ex).Message.Split('\n')[0] + " @ " + ((ex.InnerException ?? ex).StackTrace ?? "").Split('\n').FirstOrDefault(l => l.Contains("NewsBroadcaster"))?.Trim(); }
+            Check(failed == null, $"{silly.name}: every screen and command still works" + (failed != null ? " -> " + failed : ""));
+        }
+        Fresh();
 
         // ---------------------------------------------------------------
         Section("Global checks");
