@@ -56,6 +56,16 @@ public static class H
     public static object Config => Get("config");
 
     public static object Ann(int i) => Announcements[i];
+
+    // The plugin keeps its list newest-first by always adding at the top. A harness that rewrites
+    // timestamps by hand (the screenshots use fixed dates) has to put the list back in that order.
+    public static void KeepNewestFirst()
+    {
+        var sorted = Announcements.Cast<object>().OrderByDescending(a => (long)AGet(a, "Timestamp")).ToList();
+        Announcements.Clear();
+        foreach (var a in sorted) Announcements.Add(a);
+        Set("displayOrderDirty", true);
+    }
     public static object AnnByTitle(string title)
     {
         foreach (var a in Announcements) if ((string)AGet(a, "Title") == title) return a;

@@ -1,16 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Libraries;
 using Oxide.Core.Plugins;
 using Oxide.Game.Rust.Cui;
 using UnityEngine;
+using Pool = Facepunch.Pool;
 
 namespace Oxide.Plugins
 {
@@ -60,17 +59,25 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, HashSet<string>> adminSelections = new Dictionary<ulong, HashSet<string>>();
         private readonly Dictionary<ulong, float> likeCooldowns = new Dictionary<ulong, float>();
         private readonly Dictionary<ulong, float> voteCooldowns = new Dictionary<ulong, float>();
-        private readonly Dictionary<ulong, PopupState> openPopups = new Dictionary<ulong, PopupState>();
+        private readonly Dictionary<ulong, string> openPopups = new Dictionary<ulong, string>();   // id of the post in the open popup
         private readonly Dictionary<ulong, int> archivePages = new Dictionary<ulong, int>();
         private readonly HashSet<ulong> remindedPlayers = new HashSet<ulong>();
         private readonly Dictionary<ulong, UiScreen> currentScreens = new Dictionary<ulong, UiScreen>();
         private readonly Dictionary<ulong, string> toastNames = new Dictionary<ulong, string>();
         private readonly Dictionary<ulong, ArchiveFilter> archiveFilters = new Dictionary<ulong, ArchiveFilter>();
         private readonly Dictionary<ulong, AdminView> adminViews = new Dictionary<ulong, AdminView>();
+        private readonly Dictionary<ulong, float> redrawCooldowns = new Dictionary<ulong, float>();
+        private readonly Dictionary<ulong, Timer> redrawTimers = new Dictionary<ulong, Timer>();
         private int toastCounter;
 
-        // Deletes expired posts and closes timed polls.
+        // Fires when the next post is due to be deleted or the next poll closes (see ScheduleNextCheck).
         private Timer scheduleTimer;
+        private long scheduledFor;      // UTC ticks the timer is waiting for, 0 = nothing scheduled
+        private bool maxStoredWarned;
+
+        // announcements with the pinned posts first (see GetDisplayOrder); rebuilt after a change.
+        private readonly List<Announcement> displayOrder = new List<Announcement>();
+        private bool displayOrderDirty = true;
 
         // Rounded-corner textures (TL, TR, BL, BR) generated at startup and kept in the server FileStorage.
         private string[] cornerFill;
@@ -88,11 +95,13 @@ namespace Oxide.Plugins
         private const int DiscordEmbedDescriptionLimit = 4000;
         private const float LikeCooldownSeconds = 1.25f;
         private const float VoteCooldownSeconds = 0.75f;
+        private const float RedrawCooldownSeconds = 0.4f;   // archive / News Management redraws per player
         private const int MaxPollOptions = 4;
         private const int MaxPollOptionChars = 60;
         private const float SaveDebounceSeconds = 15f;
         private const int ThemesPerPage = 8;
-        private const float ScheduleCheckSeconds = 30f;
+        private const float MinScheduleSeconds = 1f;
+        private const float MaxScheduleSeconds = 3600f;
         private const int TitleLongChars = 80;       // the title counter turns yellow (the title starts to shrink)
         private const int BodyLongChars = 1200;      // the body counter turns yellow (players will need to scroll)
         private const int MaxSearchChars = 40;
@@ -131,7 +140,6 @@ namespace Oxide.Plugins
         private const float RadiusPanel = 12f;
         private const float RadiusCard = 8f;
         private const float RadiusButton = 6f;
-        private const float RadiusPill = 4f;
         private const int CornerTextureSize = 32;
         private const float SeamOverlap = 1f;   // units the side bands of a rounded rect reach into its corner pieces
         private const float BodyTop = 0.71f;
@@ -208,6 +216,7 @@ namespace Oxide.Plugins
             public string Tab = "all";    // one of AdminTabs
             public string Query = string.Empty;
             public int Sort;              // index into AdminSorts
+            public int Page;
         }
 
         class EditorSession
@@ -243,12 +252,6 @@ namespace Oxide.Plugins
         // Which full-screen view a player has open; drives how much a redraw animates.
         enum UiScreen { None, Popup, Archive, Admin, Editor, Themes }
 
-        class PopupState
-        {
-            public string AnnId;
-            public PopupOrigin Origin;
-        }
-
         enum AnnouncementType { Info, Warning, Alert, Event, Update }
 
         class ConfigData
@@ -269,8 +272,9 @@ namespace Oxide.Plugins
                 {
                     if (Themes == null || Themes.Count == 0) return new UIColors();
                     UIColors theme;
-                    if (Themes.TryGetValue(SelectedTheme, out theme)) return theme;
-                    return Themes.Values.First();
+                    if (SelectedTheme != null && Themes.TryGetValue(SelectedTheme, out theme)) return theme;
+                    foreach (var first in Themes.Values) return first;
+                    return new UIColors();
                 }
             }
         }
@@ -296,7 +300,7 @@ namespace Oxide.Plugins
             public bool Enabled { get; set; } = true;
             public bool UseNotifyPlugin { get; set; } = false;
             public int NotifyType { get; set; } = 0;
-            // TopRight, TopLeft, TopCenter, BottomRight, BottomLeft or BottomCenter ("Left" / "Right" still work).
+            // TopRight, TopLeft, TopCenter, BottomRight, BottomLeft or BottomCenter.
             public string Position { get; set; } = "TopRight";
             // Fine-tune the toast position (1280x720 reference units: +X right, +Y up).
             public float OffsetX { get; set; } = 0f;
@@ -800,28 +804,31 @@ namespace Oxide.Plugins
         {
             HashSet<string> set;
             if (!adminSelections.TryGetValue(userId, out set) || set.Count == 0) return;
-            var liveIds = new HashSet<string>(announcements.Select(a => a.Id), StringComparer.Ordinal);
-            set.RemoveWhere(id => !liveIds.Contains(id));
+            set.RemoveWhere(id => FindById(id) == null);
         }
 
+        // Every stored post, pinned ones first, newest first within each group (announcements is kept
+        // newest-first, so no sorting is needed). The list is cached and shared: read it, don't change it.
         private List<Announcement> GetDisplayOrder()
         {
-            return announcements
-                .OrderByDescending(a => a.Pinned)
-                .ThenByDescending(a => a.Timestamp)
-                .ToList();
+            if (!displayOrderDirty && displayOrder.Count == announcements.Count) return displayOrder;
+            displayOrder.Clear();
+            foreach (var ann in announcements) if (ann.Pinned) displayOrder.Add(ann);
+            foreach (var ann in announcements) if (!ann.Pinned) displayOrder.Add(ann);
+            displayOrderDirty = false;
+            return displayOrder;
         }
 
         private bool IsUnread(Announcement ann, ulong userId)
         {
-            if (ann.ReadByPlayers != null && ann.ReadByPlayers.Contains(userId)) return false;
+            if (ann.ReadByPlayers.Contains(userId)) return false;
             long readAll;
             return !(storedData.ReadAllUpTo.TryGetValue(userId, out readAll) && ann.Timestamp <= readAll);
         }
 
-        private static bool HasPoll(Announcement ann) => ann != null && ann.PollOptions != null && ann.PollOptions.Count >= 2;
+        private static bool HasPoll(Announcement ann) => ann != null && ann.PollOptions.Count >= 2;
 
-        // Voting is open until an admin closes it or its timer runs out (the timer sweep may be up to 30 s late).
+        // Voting is open until an admin closes it or its timer runs out.
         private static bool IsPollOpen(Announcement ann) => HasPoll(ann) && !ann.PollClosed && (ann.PollEndsAt <= 0 || NowTicks < ann.PollEndsAt);
 
         private static int[] CountVotes(Announcement ann)
@@ -835,17 +842,27 @@ namespace Oxide.Plugins
         private static int VoteOf(Announcement ann, ulong userId)
         {
             int vote;
-            return ann.PollVotes != null && ann.PollVotes.TryGetValue(userId, out vote) ? vote : -1;
+            return ann.PollVotes.TryGetValue(userId, out vote) ? vote : -1;
         }
 
         // Non-empty, trimmed poll options (max MaxPollOptions).
         private static List<string> CleanPollOptions(IEnumerable<string> options)
         {
-            return options
-                .Where(o => !string.IsNullOrWhiteSpace(o))
-                .Select(o => LimitText(o.Trim(), MaxPollOptionChars))
-                .Take(MaxPollOptions)
-                .ToList();
+            var cleaned = new List<string>(MaxPollOptions);
+            foreach (string option in options)
+            {
+                if (string.IsNullOrWhiteSpace(option)) continue;
+                cleaned.Add(LimitText(option.Trim(), MaxPollOptionChars));
+                if (cleaned.Count == MaxPollOptions) break;
+            }
+            return cleaned;
+        }
+
+        private static int Sum(int[] values)
+        {
+            int total = 0;
+            foreach (int value in values) total += value;
+            return total;
         }
 
         // Unread posts among the ones this player can see.
@@ -870,9 +887,6 @@ namespace Oxide.Plugins
             if (string.IsNullOrEmpty(ann.Group) || CanAdmin(player)) return true;
             return permission.UserHasGroup(player.UserIDString, ann.Group);
         }
-
-        // Everything this player can open: pinned first, then newest.
-        private List<Announcement> VisibleOrder(BasePlayer player) => GetDisplayOrder().Where(a => CanSee(player, a)).ToList();
 
         // The newest post this player can see (the list is kept newest-first).
         private Announcement NewestFor(BasePlayer player)
@@ -908,30 +922,23 @@ namespace Oxide.Plugins
                 || (ann.Text ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        // The archive list for this player with their filter chips and search applied.
-        private List<Announcement> ArchiveOrder(BasePlayer player)
-        {
-            ArchiveFilter filter;
-            archiveFilters.TryGetValue(player.userID, out filter);
-            return VisibleOrder(player).Where(a => MatchesFilter(a, filter)).ToList();
-        }
-
         private static readonly PlayerPrefs DefaultPrefs = new PlayerPrefs();
 
         // A player's /news settings (defaults when never changed). Don't modify the returned default.
         private PlayerPrefs GetPrefs(ulong userId)
         {
             PlayerPrefs prefs;
-            return storedData != null && storedData.PlayerSettings != null && storedData.PlayerSettings.TryGetValue(userId, out prefs) && prefs != null ? prefs : DefaultPrefs;
+            return storedData.PlayerSettings.TryGetValue(userId, out prefs) ? prefs : DefaultPrefs;
         }
 
         // Oxide groups a post can be limited to ("default" is everyone, so it is not offered).
         private List<string> AudienceGroups()
         {
-            return (permission.GetGroups() ?? new string[0])
-                .Where(g => !string.IsNullOrEmpty(g) && !string.Equals(g, "default", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(g => g, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var groups = new List<string>();
+            foreach (string group in permission.GetGroups())
+                if (!string.IsNullOrEmpty(group) && !string.Equals(group, "default", StringComparison.OrdinalIgnoreCase)) groups.Add(group);
+            groups.Sort(StringComparer.OrdinalIgnoreCase);
+            return groups;
         }
 
         // "2d 4h", "3h 12m", "8m".
@@ -1021,10 +1028,10 @@ namespace Oxide.Plugins
                 ["date"] = ann.Date,
                 ["text"] = ann.Text,
                 ["imageUrl"] = ann.ImageUrl,
-                ["likes"] = ann.LikedPlayers?.Count ?? 0,
+                ["likes"] = ann.LikedPlayers.Count,
                 ["pinned"] = ann.Pinned,
                 ["pollOptions"] = HasPoll(ann) ? ann.PollOptions.ToArray() : new string[0],
-                ["pollVotes"] = ann.PollVotes?.Count ?? 0,
+                ["pollVotes"] = ann.PollVotes.Count,
                 ["group"] = ann.Group ?? string.Empty,
                 ["expiresAt"] = ann.ExpiresAt,
                 ["pollEndsAt"] = ann.PollEndsAt,
@@ -1090,187 +1097,15 @@ namespace Oxide.Plugins
             base.LoadConfig();
             try
             {
-                bool needsSave = false;
-
-                JObject raw = null;
-                try { raw = Config.ReadObject<JObject>(); }
-                catch { }
-
-                if (raw != null && MigrateLegacyRewardArrays(raw)) needsSave = true;
-
-                if (raw != null && raw["Rewards"] == null) needsSave = true;
-
-                config = raw != null ? raw.ToObject<ConfigData>() : Config.ReadObject<ConfigData>();
-                if (config == null) throw new Exception("config is empty");
-
-                if (config.Rewards != null)
-                {
-                    int collapsed = 0;
-                    collapsed += DeduplicateConsecutiveRewardItems(config.Rewards.ReadRewards?.Items);
-                    collapsed += DeduplicateConsecutiveRewardItems(config.Rewards.LikeRewards?.Items);
-                    if (collapsed > 0)
-                    {
-                        PrintWarning($"Cleaned up {collapsed} duplicate reward item(s) from the config (left there by an old build of the plugin).");
-                        needsSave = true;
-                    }
-                }
-
-                if (config.Themes == null) config.Themes = new Dictionary<string, UIColors>();
-
-                if (config.Themes.Count == 0)
-                {
-                    UIColors legacyColors = ExtractLegacyColors(raw);
-                    config.Themes = BuildDefaultThemes();
-                    if (legacyColors != null) config.Themes["Default"] = legacyColors;
-                    config.SelectedTheme = "Default";
-                    needsSave = true;
-                }
-
-                if (ValidateConfig()) needsSave = true;
-
-                // Write back when the file is missing options added in newer versions.
-                if (raw != null && !needsSave && !JToken.DeepEquals(raw, JObject.FromObject(config))) needsSave = true;
-
-                if (needsSave) SaveConfig();
+                config = Config.ReadObject<ConfigData>();
+                if (config == null) throw new JsonException("the file is empty");
+                SaveConfig();   // writes options the file does not have yet
             }
             catch (Exception ex)
             {
-                PrintWarning($"Configuration was invalid and has been reset: {ex.Message}");
+                PrintError($"The configuration file could not be read, using the default settings: {ex.Message}");
                 LoadDefaultConfig();
-                SaveConfig();
             }
-        }
-
-        private static bool MigrateLegacyRewardArrays(JObject raw)
-        {
-            var rewards = raw?["Rewards"] as JObject;
-            if (rewards == null) return false;
-
-            bool changed = false;
-            foreach (var key in new[] { "ReadRewards", "LikeRewards" })
-            {
-                var legacyItems = rewards[key] as JArray;
-                if (legacyItems != null)
-                {
-                    rewards[key] = new JObject
-                    {
-                        ["Items"] = legacyItems,
-                        ["Points"] = 0,
-                        ["Currency"] = 0.0
-                    };
-                    changed = true;
-                }
-            }
-            return changed;
-        }
-
-        private static int DeduplicateConsecutiveRewardItems(List<RewardItem> items)
-        {
-            if (items == null || items.Count < 2) return 0;
-            int removed = 0;
-            for (int i = items.Count - 1; i > 0; i--)
-            {
-                var a = items[i];
-                var b = items[i - 1];
-                if (a == null || b == null) continue;
-                if (string.Equals(a.Shortname, b.Shortname, StringComparison.Ordinal)
-                    && a.Amount == b.Amount
-                    && a.SkinId == b.SkinId)
-                {
-                    items.RemoveAt(i);
-                    removed++;
-                }
-            }
-            return removed;
-        }
-
-        private static UIColors ExtractLegacyColors(JObject raw)
-        {
-            try
-            {
-                var colorsToken = raw?["Colors"];
-                if (colorsToken == null || colorsToken.Type != JTokenType.Object) return null;
-                return colorsToken.ToObject<UIColors>();
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private bool ValidateConfig()
-        {
-            bool changed = false;
-
-            if (config.General == null) { config.General = new GeneralSettings(); changed = true; }
-            if (config.Notification == null) { config.Notification = new NotificationSettings(); changed = true; }
-            if (config.Discord == null) { config.Discord = new DiscordSettings(); changed = true; }
-            if (config.Rewards == null) { config.Rewards = new RewardSettings(); changed = true; }
-            if (config.Polls == null) { config.Polls = new PollSettings(); changed = true; }
-
-            int perPage = Math.Max(1, Math.Min(8, config.General.AnnouncementsPerPage));
-            int maxStored = Math.Max(1, Math.Min(500, config.General.MaxStoredAnnouncements));
-            int autoClose = Math.Max(1, Math.Min(3600, config.General.AutoCloseSeconds));
-            int notificationDuration = Math.Max(1, Math.Min(300, config.Notification.Duration));
-            int readDelay = Math.Max(1, Math.Min(3600, config.Rewards.ReadDelaySeconds));
-
-            if (config.General.AnnouncementsPerPage != perPage) { config.General.AnnouncementsPerPage = perPage; changed = true; }
-            if (config.General.MaxStoredAnnouncements != maxStored) { config.General.MaxStoredAnnouncements = maxStored; changed = true; }
-            if (config.General.AutoCloseSeconds != autoClose) { config.General.AutoCloseSeconds = autoClose; changed = true; }
-            if (config.Notification.Duration != notificationDuration) { config.Notification.Duration = notificationDuration; changed = true; }
-            if (config.Rewards.ReadDelaySeconds != readDelay) { config.Rewards.ReadDelaySeconds = readDelay; changed = true; }
-
-            if (config.General.ServerName == null) { config.General.ServerName = "SERVER NEWS"; changed = true; }
-            string frame = string.Equals(config.General.PopupImageFrame, "Wide", StringComparison.OrdinalIgnoreCase) ? "Wide" : "Tall";
-            if (config.General.PopupImageFrame != frame) { config.General.PopupImageFrame = frame; changed = true; }
-
-            string position = NormalizeToastPosition(config.Notification.Position);
-            if (config.Notification.Position != position) { config.Notification.Position = position; changed = true; }
-            float offsetX = Mathf.Clamp(config.Notification.OffsetX, -640f, 640f), offsetY = Mathf.Clamp(config.Notification.OffsetY, -360f, 360f);
-            if (config.Notification.OffsetX != offsetX || config.Notification.OffsetY != offsetY)
-            {
-                config.Notification.OffsetX = offsetX;
-                config.Notification.OffsetY = offsetY;
-                changed = true;
-            }
-
-            if (config.Rewards.ReadRewards == null) { config.Rewards.ReadRewards = new RewardBundle(); changed = true; }
-            if (config.Rewards.LikeRewards == null) { config.Rewards.LikeRewards = new RewardBundle(); changed = true; }
-            if (config.Rewards.ReadRewards.Items == null) { config.Rewards.ReadRewards.Items = new List<RewardItem>(); changed = true; }
-            if (config.Rewards.LikeRewards.Items == null) { config.Rewards.LikeRewards.Items = new List<RewardItem>(); changed = true; }
-
-            if (config.Themes == null) { config.Themes = new Dictionary<string, UIColors>(); changed = true; }
-            foreach (var key in config.Themes.Where(x => string.IsNullOrWhiteSpace(x.Key) || x.Value == null).Select(x => x.Key).ToList())
-            {
-                config.Themes.Remove(key);
-                changed = true;
-            }
-
-            if (config.Themes.Count == 0)
-            {
-                config.Themes["Default"] = new UIColors();
-                changed = true;
-            }
-
-            if (string.IsNullOrEmpty(config.SelectedTheme) || !config.Themes.ContainsKey(config.SelectedTheme))
-            {
-                config.SelectedTheme = config.Themes.Keys.First();
-                changed = true;
-            }
-
-            return changed;
-        }
-
-        private static readonly string[] ToastPositions = { "TopRight", "TopLeft", "TopCenter", "BottomRight", "BottomLeft", "BottomCenter" };
-
-        // One of ToastPositions; the old values "Left" / "Right" mean the top corners.
-        private static string NormalizeToastPosition(string value)
-        {
-            value = (value ?? string.Empty).Replace(" ", string.Empty).Replace("-", string.Empty);
-            if (string.Equals(value, "Left", StringComparison.OrdinalIgnoreCase)) return "TopLeft";
-            foreach (var known in ToastPositions)
-                if (string.Equals(value, known, StringComparison.OrdinalIgnoreCase)) return known;
-            return "TopRight";
         }
 
         protected override void SaveConfig() => Config.WriteObject(config, true);
@@ -1356,33 +1191,69 @@ namespace Oxide.Plugins
         {
             GenerateCornerTextures();
             RegisterAllImages();
-            scheduleTimer?.Destroy();
-            scheduleTimer = timer.Every(ScheduleCheckSeconds, CheckScheduled);
             CheckScheduled();
         }
 
-        // Removes posts whose auto-delete time has passed and closes polls whose timer ran out.
+        private static bool HasExpiry(Announcement ann) => !ann.Draft && ann.ExpiresAt > 0;
+
+        private static bool HasPollTimer(Announcement ann) => !ann.Draft && !ann.PollClosed && ann.PollEndsAt > 0 && HasPoll(ann);
+
+        // Removes posts whose auto-delete time has passed, closes polls whose timer ran out,
+        // and sets the timer for whatever is due next.
         private void CheckScheduled()
         {
-            if (storedData == null) return;
             long now = NowTicks;
             bool changed = false;
 
-            foreach (var ann in announcements.Where(a => !a.Draft && a.ExpiresAt > 0 && now >= a.ExpiresAt).ToList())
+            for (int i = announcements.Count - 1; i >= 0; i--)
             {
-                RemoveAnnouncement(ann);
-                changed = true;
-            }
-
-            foreach (var ann in announcements.ToList())
-            {
-                if (ann.Draft || ann.PollClosed || ann.PollEndsAt <= 0 || now < ann.PollEndsAt || !HasPoll(ann)) continue;
-                ann.PollClosed = true;
-                changed = true;
-                AnnouncePollResults(ann);
+                if (i >= announcements.Count) continue;   // a hook removed posts meanwhile
+                var ann = announcements[i];
+                if (HasExpiry(ann) && now >= ann.ExpiresAt)
+                {
+                    RemoveAnnouncement(ann);
+                    changed = true;
+                }
+                else if (HasPollTimer(ann) && now >= ann.PollEndsAt)
+                {
+                    ann.PollClosed = true;
+                    changed = true;
+                    AnnouncePollResults(ann);
+                }
             }
 
             if (changed) SaveAnnouncements();
+            ScheduleNextCheck();
+        }
+
+        // One timer, set for the next auto-delete or poll closing. Nothing scheduled: no timer at all.
+        // Called after every change to the stored posts (SaveAnnouncements), so it always matches them.
+        private void ScheduleNextCheck()
+        {
+            long next = 0;
+            foreach (var ann in announcements)
+            {
+                if (HasExpiry(ann) && (next == 0 || ann.ExpiresAt < next)) next = ann.ExpiresAt;
+                if (HasPollTimer(ann) && (next == 0 || ann.PollEndsAt < next)) next = ann.PollEndsAt;
+            }
+
+            bool running = scheduleTimer != null && !scheduleTimer.Destroyed;
+            if (next == scheduledFor && running == (next != 0)) return;
+
+            scheduleTimer?.Destroy();
+            scheduleTimer = null;
+            scheduledFor = next;
+            if (next == 0) return;
+
+            // A far-away time is reached in steps of MaxScheduleSeconds: the check finds nothing due and
+            // sets the timer again (this also keeps up with changes to the server clock).
+            double seconds = (next - NowTicks) / (double)TimeSpan.TicksPerSecond;
+            float delay = (float)Math.Max(MinScheduleSeconds, Math.Min(MaxScheduleSeconds, seconds));
+            scheduleTimer = timer.Once(delay, () =>
+            {
+                scheduleTimer = null;
+                CheckScheduled();
+            });
         }
 
         // A poll just closed (its timer ran out or an admin closed voting): tell the players who can see it.
@@ -1391,7 +1262,7 @@ namespace Oxide.Plugins
             Interface.CallHook("OnNewsPollClosed", BuildHookData(ann));
             if (!config.Polls.AnnounceResults) return;
 
-            foreach (var p in BasePlayer.activePlayerList.ToList())
+            foreach (var p in BasePlayer.activePlayerList)
                 if (p != null && p.IsConnected && CanView(p) && CanSee(p, ann))
                     SendReply(p, PollResultText(ann, p));
 
@@ -1402,12 +1273,24 @@ namespace Oxide.Plugins
         private string PollResultText(Announcement ann, BasePlayer player)
         {
             int[] counts = CountVotes(ann);
-            int total = counts.Sum();
+            int total = 0, best = 0, winner = -1, winners = 0;
+            for (int i = 0; i < counts.Length; i++)
+            {
+                total += counts[i];
+                if (counts[i] > best) { best = counts[i]; winner = i; winners = 1; }
+                else if (counts[i] == best) winners++;
+            }
             if (total == 0) return Msg("PollResultNoVotes", player, ann.Title);
-            int best = counts.Max();
-            var winners = Enumerable.Range(0, counts.Length).Where(i => counts[i] == best).Select(i => ann.PollOptions[i]).ToList();
-            if (winners.Count > 1) return Msg("PollResultTie", player, ann.Title, string.Join(" / ", winners.ToArray()), best);
-            return Msg(best == 1 ? "PollResultWinnerOne" : "PollResultWinner", player, ann.Title, winners[0], Mathf.RoundToInt(100f * best / total), best);
+            if (winners == 1) return Msg(best == 1 ? "PollResultWinnerOne" : "PollResultWinner", player, ann.Title, ann.PollOptions[winner], Mathf.RoundToInt(100f * best / total), best);
+
+            var tied = new StringBuilder();
+            for (int i = 0; i < counts.Length; i++)
+            {
+                if (counts[i] != best) continue;
+                if (tied.Length > 0) tied.Append(" / ");
+                tied.Append(ann.PollOptions[i]);
+            }
+            return Msg("PollResultTie", player, ann.Title, tied.ToString(), best);
         }
 
         private void OnPluginLoaded(Plugin plugin)
@@ -1424,11 +1307,9 @@ namespace Oxide.Plugins
         {
             if (ImageLibrary == null || !ImageLibrary.IsLoaded) return;
 
-            var imageUrls = announcements
-                .Where(x => !string.IsNullOrEmpty(x.ImageUrl))
-                .Select(x => x.ImageUrl)
-                .Distinct()
-                .ToDictionary(x => x, x => x);
+            var imageUrls = new Dictionary<string, string>();
+            foreach (var ann in announcements)
+                if (!string.IsNullOrEmpty(ann.ImageUrl)) imageUrls[ann.ImageUrl] = ann.ImageUrl;
 
             if (imageUrls.Count > 0)
                 ImageLibrary.Call("ImportImageList", Title, imageUrls, 0UL, false);
@@ -1442,22 +1323,10 @@ namespace Oxide.Plugins
 
         private void SaveAnnouncements()
         {
-            int max = config.General.MaxStoredAnnouncements;
-            if (storedData.Announcements.Count > max)
-            {
-                // Pinned announcements and drafts are kept first, then the newest ones.
-                var keep = storedData.Announcements
-                    .OrderByDescending(x => x.Pinned || x.Draft)
-                    .ThenByDescending(x => x.Timestamp)
-                    .Take(max)
-                    .ToList();
-                var kept = new HashSet<Announcement>(keep);
-                var dropped = storedData.Announcements.Where(x => !kept.Contains(x)).ToList();
-                storedData.Announcements = keep.OrderByDescending(x => x.Timestamp).ToList();
-                foreach (var old in dropped) Interface.CallHook("OnNewsDeleted", BuildHookData(old));
-            }
+            TrimToMaxStored();
+            displayOrderDirty = true;
+            ScheduleNextCheck();
 
-            announcements = storedData.Announcements;
             dataDirty = false;
             if (saveTimer != null)
             {
@@ -1465,6 +1334,37 @@ namespace Oxide.Plugins
                 saveTimer = null;
             }
             Interface.Oxide.DataFileSystem.WriteObject(DataFile, storedData);
+        }
+
+        // MaxStoredAnnouncements: the oldest published, unpinned posts go first. Pinned posts and drafts are
+        // never removed here, and neither is the newest post, so when pinned posts and drafts use up the
+        // whole limit a post that was just published still stays (it replaces the previous one).
+        private void TrimToMaxStored()
+        {
+            int over = announcements.Count - config.General.MaxStoredAnnouncements;
+            if (over <= 0) return;
+
+            int newest = -1;   // the list is newest-first
+            for (int i = 0; i < announcements.Count && newest < 0; i++)
+                if (!announcements[i].Draft && !announcements[i].Pinned) newest = i;
+
+            var dropped = Pool.Get<List<Announcement>>();
+            for (int i = announcements.Count - 1; i > newest && over > 0 && newest >= 0; i--)
+            {
+                var old = announcements[i];
+                if (old.Draft || old.Pinned) continue;
+                announcements.RemoveAt(i);
+                dropped.Add(old);
+                over--;
+            }
+            foreach (var old in dropped) Interface.CallHook("OnNewsDeleted", BuildHookData(old));
+            Pool.FreeUnmanaged(ref dropped);
+
+            if (over > 0 && !maxStoredWarned)
+            {
+                maxStoredWarned = true;
+                PrintWarning($"MaxStoredAnnouncements ({config.General.MaxStoredAnnouncements}) is used up by pinned posts and drafts, which are never removed automatically. Only the newest other post is kept until some are unpinned or deleted, or the limit is raised.");
+            }
         }
 
         private void MarkDataDirty()
@@ -1483,91 +1383,13 @@ namespace Oxide.Plugins
             try { storedData = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(DataFile); }
             catch (Exception ex)
             {
-                PrintWarning($"Failed to read Data File! It may be corrupted or contain invalid JSON. Exception: {ex.Message}");
+                PrintError($"The data file could not be read, starting without stored announcements: {ex.Message}");
             }
 
-            if (storedData == null || (storedData.Announcements == null && storedData.LastSeenNews == null))
-            {
-                try
-                {
-                    var oldList = Interface.Oxide.DataFileSystem.ReadObject<List<Announcement>>(DataFile);
-                    storedData = new StoredData();
-                    if (oldList != null) storedData.Announcements = oldList;
-                }
-                catch { storedData = new StoredData(); }
-            }
-
-            if (storedData.Announcements == null) storedData.Announcements = new List<Announcement>();
-            if (storedData.LastSeenNews == null) storedData.LastSeenNews = new Dictionary<ulong, long>();
-            if (storedData.ReadAllUpTo == null) storedData.ReadAllUpTo = new Dictionary<ulong, long>();
-            if (storedData.PlayerSettings == null) storedData.PlayerSettings = new Dictionary<ulong, PlayerPrefs>();
-            if (storedData.EditorAutosaves == null) storedData.EditorAutosaves = new Dictionary<ulong, EditorSession>();
-
+            if (storedData == null) storedData = new StoredData();
             announcements = storedData.Announcements;
 
-            long baseTime = NowTicks;
-            bool changed = false;
-            int removedNulls = announcements.RemoveAll(x => x == null);
-            if (removedNulls > 0)
-            {
-                PrintWarning($"Removed {removedNulls} invalid null announcement record(s) from stored data.");
-                changed = true;
-            }
-            var seenIds = new HashSet<string>(StringComparer.Ordinal);
-            for (int i = 0; i < announcements.Count; i++)
-            {
-                var ann = announcements[i];
-                if (ann.Timestamp == 0)
-                {
-                    ann.Timestamp = baseTime - (i * 10000);
-                    changed = true;
-                }
-
-                if (ann.LikedPlayers == null) { ann.LikedPlayers = new HashSet<ulong>(); changed = true; }
-                if (ann.ReadRewardedPlayers == null) { ann.ReadRewardedPlayers = new HashSet<ulong>(); changed = true; }
-                if (ann.LikeRewardedPlayers == null) { ann.LikeRewardedPlayers = new HashSet<ulong>(); changed = true; }
-                if (ann.ReadByPlayers == null)
-                {
-                    ann.ReadByPlayers = new HashSet<ulong>(ann.ReadRewardedPlayers);
-                    changed = true;
-                }
-                if (ann.PollOptions == null) { ann.PollOptions = new List<string>(); changed = true; }
-                if (ann.PollVotes == null) { ann.PollVotes = new Dictionary<ulong, int>(); changed = true; }
-                if (ann.Group == null) { ann.Group = string.Empty; changed = true; }
-                if (ann.CountdownLabel == null) { ann.CountdownLabel = string.Empty; changed = true; }
-
-                if (string.IsNullOrEmpty(ann.Id) || !seenIds.Add(ann.Id))
-                {
-                    ann.Id = NewAnnouncementId();
-                    seenIds.Add(ann.Id);
-                    changed = true;
-                }
-
-                // Links are only stripped when posts are written, never retroactively on load.
-                string normalizedText = NormalizeBodyText(ann.Text, false);
-                if (ann.Text != normalizedText)
-                {
-                    ann.Text = normalizedText;
-                    changed = true;
-                }
-            }
-
-            // Keep the list newest-first so index 0 is always the latest announcement.
-            for (int i = 1; i < announcements.Count; i++)
-            {
-                if (announcements[i].Timestamp > announcements[i - 1].Timestamp)
-                {
-                    storedData.Announcements = announcements.OrderByDescending(x => x.Timestamp).ToList();
-                    announcements = storedData.Announcements;
-                    changed = true;
-                    break;
-                }
-            }
-
-            if (PruneStaleMarkers() > 0) changed = true;
-            if (RepairAutosaves()) changed = true;
-
-            if (changed) SaveAnnouncements();
+            if (PruneStaleMarkers() + PruneOldAutosaves() > 0) MarkDataDirty();
         }
 
         // "Last seen" / "read all up to" markers older than the oldest stored post say nothing any more
@@ -1575,35 +1397,34 @@ namespace Oxide.Plugins
         // Without this the two lists only ever grow, one entry per player who ever joined.
         private int PruneStaleMarkers()
         {
-            long oldest = announcements.Count > 0 ? announcements.Min(a => a.Timestamp) : long.MaxValue;
+            long oldest = long.MaxValue;
+            foreach (var ann in announcements)
+                if (ann.Timestamp < oldest) oldest = ann.Timestamp;
             return PruneBelow(storedData.LastSeenNews, oldest) + PruneBelow(storedData.ReadAllUpTo, oldest);
-        }
-
-        // Drops autosaved editor sessions that are broken or that nobody came back for.
-        private bool RepairAutosaves()
-        {
-            long oldest = NowTicks - AutosaveKeepDays * TimeSpan.TicksPerDay;
-            var stale = storedData.EditorAutosaves.Where(e => e.Value == null || e.Value.Draft == null || e.Value.SavedAt < oldest).Select(e => e.Key).ToList();
-            foreach (var userId in stale) storedData.EditorAutosaves.Remove(userId);
-
-            foreach (var session in storedData.EditorAutosaves.Values)
-            {
-                if (session.EditingId == null) session.EditingId = string.Empty;
-                if (session.CountdownInput == null) session.CountdownInput = string.Empty;
-                if (session.PollOptions == null || session.PollOptions.Length != MaxPollOptions) Array.Resize(ref session.PollOptions, MaxPollOptions);
-                var draft = session.Draft;
-                if (draft.LikedPlayers == null) draft.LikedPlayers = new HashSet<ulong>();
-                if (draft.PollOptions == null) draft.PollOptions = new List<string>();
-                if (draft.PollVotes == null) draft.PollVotes = new Dictionary<ulong, int>();
-            }
-            return stale.Count > 0;
         }
 
         private static int PruneBelow(Dictionary<ulong, long> markers, long oldest)
         {
-            var stale = markers.Where(m => m.Value < oldest).Select(m => m.Key).ToList();
-            foreach (var userId in stale) markers.Remove(userId);
-            return stale.Count;
+            var stale = Pool.Get<List<ulong>>();
+            foreach (var marker in markers)
+                if (marker.Value < oldest) stale.Add(marker.Key);
+            int removed = stale.Count;
+            foreach (ulong userId in stale) markers.Remove(userId);
+            Pool.FreeUnmanaged(ref stale);
+            return removed;
+        }
+
+        // Drops autosaved editor sessions that nobody came back for.
+        private int PruneOldAutosaves()
+        {
+            long oldest = NowTicks - AutosaveKeepDays * TimeSpan.TicksPerDay;
+            var stale = Pool.Get<List<ulong>>();
+            foreach (var entry in storedData.EditorAutosaves)
+                if (entry.Value.SavedAt < oldest) stale.Add(entry.Key);
+            int removed = stale.Count;
+            foreach (ulong userId in stale) storedData.EditorAutosaves.Remove(userId);
+            Pool.FreeUnmanaged(ref stale);
+            return removed;
         }
 
         private void OnPlayerSleepEnded(BasePlayer player)
@@ -1633,7 +1454,9 @@ namespace Oxide.Plugins
 
                 if (wantReminder)
                 {
-                    int fresh = announcements.Count(a => a.Timestamp > seenBefore && CanSee(player, a) && IsUnread(a, userId));
+                    int fresh = 0;
+                    foreach (var a in announcements)
+                        if (a.Timestamp > seenBefore && CanSee(player, a) && IsUnread(a, userId)) fresh++;
                     if (showPopup && current.Timestamp > seenBefore && IsUnread(current, userId)) fresh--;
                     if (fresh > 0) SendReply(player, Msg(showPopup ? "UnreadReminderMore" : "UnreadReminder", player, fresh));
                 }
@@ -1662,6 +1485,7 @@ namespace Oxide.Plugins
             foreach (var t in autoCloseTimers.Values) t?.Destroy();
             foreach (var t in notificationTimers.Values) t?.Destroy();
             foreach (var t in readRewardTimers.Values) t?.Destroy();
+            foreach (var t in redrawTimers.Values) t?.Destroy();
             autoCloseTimers.Clear();
             notificationTimers.Clear();
             readRewardTimers.Clear();
@@ -1677,13 +1501,15 @@ namespace Oxide.Plugins
             toastNames.Clear();
             archiveFilters.Clear();
             adminViews.Clear();
+            redrawCooldowns.Clear();
+            redrawTimers.Clear();
             surfaceColors.Clear();
-            scheduleTimer?.Destroy();
-            scheduleTimer = null;
 
-            if (dataDirty && storedData != null) SaveAnnouncements();
+            if (dataDirty) SaveAnnouncements();
             saveTimer?.Destroy();
             saveTimer = null;
+            scheduleTimer?.Destroy();
+            scheduleTimer = null;
         }
 
         private void OnPlayerDisconnected(BasePlayer player, string reason)
@@ -1702,6 +1528,8 @@ namespace Oxide.Plugins
             toastNames.Remove(id);
             archiveFilters.Remove(id);
             adminViews.Remove(id);
+            redrawCooldowns.Remove(id);
+            CancelRedraw(id);
             CancelReadRewardTimer(id);
             CancelAutoClose(id);
             CancelNotificationTimer(id);
@@ -1714,7 +1542,7 @@ namespace Oxide.Plugins
         {
             if (ann == null || ann.Draft) return 0;
             int reached = 0;
-            foreach (var p in BasePlayer.activePlayerList.ToList())
+            foreach (var p in BasePlayer.activePlayerList)
             {
                 if (p == null || !p.IsConnected || !CanView(p) || !CanSee(p, ann)) continue;
                 reached++;
@@ -1759,6 +1587,7 @@ namespace Oxide.Plugins
         private void RemoveAnnouncement(Announcement ann)
         {
             if (!announcements.Remove(ann)) return;
+            displayOrderDirty = true;
             Interface.CallHook("OnNewsDeleted", BuildHookData(ann));
         }
 
@@ -1810,7 +1639,8 @@ namespace Oxide.Plugins
             }
 
             string image = values[1] == "-" ? string.Empty : values[1];
-            string text = string.Join(" ", values.Skip(2).ToArray());
+            string text = values[2];
+            for (int i = 3; i < values.Count; i++) text += " " + values[i];
 
             var ann = CreateAnnouncement(values[0], image, text, type, AuthorOf(arg), false);
             SendToDiscord(ann);
@@ -1985,7 +1815,7 @@ namespace Oxide.Plugins
                 if (!string.IsNullOrEmpty(a.Group)) sb.Append($" [GROUP {a.Group}]");
                 if (a.ExpiresAt > 0) sb.Append($" [DELETES {LocalTime(a.ExpiresAt)}]");
                 if (HasPoll(a) && !a.PollClosed && a.PollEndsAt > 0) sb.Append($" [POLL CLOSES {LocalTime(a.PollEndsAt)}]");
-                sb.AppendLine($"  (id {a.Id}, {a.ReadByPlayers?.Count ?? 0} reads, {a.LikedPlayers?.Count ?? 0} likes)");
+                sb.AppendLine($"  (id {a.Id}, {a.ReadByPlayers.Count} reads, {a.LikedPlayers.Count} likes)");
             }
             SendReply(arg, sb.ToString().TrimEnd());
         }
@@ -2053,7 +1883,8 @@ namespace Oxide.Plugins
             if (!RequireView(player)) return;
 
             if (string.Equals(arg.GetString(1), "reset", StringComparison.OrdinalIgnoreCase)) archiveFilters.Remove(player.userID);
-            ShowHistory(player, arg.GetInt(0, 0));
+            archivePages[player.userID] = arg.GetInt(0, 0);
+            RedrawThrottled(player, UiScreen.Archive);
         }
 
         [ConsoleCommand("news.filter")]
@@ -2067,7 +1898,8 @@ namespace Oxide.Plugins
             var filter = GetArchiveFilter(player.userID);
             if (value == "polls") filter.Type = "polls";
             else filter.Type = TryParseType(value, out type) ? type.ToString() : "all";
-            ShowHistory(player, 0);
+            archivePages[player.userID] = 0;
+            RedrawThrottled(player, UiScreen.Archive);
         }
 
         [ConsoleCommand("news.search")]
@@ -2078,7 +1910,8 @@ namespace Oxide.Plugins
 
             string query = arg.Args == null ? string.Empty : string.Join(" ", arg.Args).Trim();
             GetArchiveFilter(player.userID).Query = LimitText(query, MaxSearchChars).Trim();
-            ShowHistory(player, 0);
+            archivePages[player.userID] = 0;
+            RedrawThrottled(player, UiScreen.Archive);
         }
 
         [ConsoleCommand("news.search.clear")]
@@ -2088,7 +1921,62 @@ namespace Oxide.Plugins
             if (!RequireView(player)) return;
 
             archiveFilters.Remove(player.userID);
-            ShowHistory(player, 0);
+            archivePages[player.userID] = 0;
+            RedrawThrottled(player, UiScreen.Archive);
+        }
+
+        // The archive and News Management are big screens, and every page, filter or search click sends one
+        // again. Such redraws are limited to one per RedrawCooldownSeconds per player. No click is lost:
+        // the command has already stored what was picked, and a redraw that comes too soon is sent once
+        // when the cooldown ends, with whatever is picked by then.
+        private void RedrawThrottled(BasePlayer player, UiScreen screen)
+        {
+            ulong userId = player.userID;
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            float nextAllowed;
+            if (!redrawCooldowns.TryGetValue(userId, out nextAllowed) || now >= nextAllowed)
+            {
+                CancelRedraw(userId);
+                redrawCooldowns[userId] = now + RedrawCooldownSeconds;
+                Redraw(player, screen);
+                return;
+            }
+
+            CancelRedraw(userId);
+            redrawTimers[userId] = timer.Once(nextAllowed - now, () =>
+            {
+                redrawTimers.Remove(userId);
+                if (player == null || !player.IsConnected) return;
+                redrawCooldowns[userId] = UnityEngine.Time.realtimeSinceStartup + RedrawCooldownSeconds;
+                Redraw(player, screen);
+            });
+        }
+
+        private void Redraw(BasePlayer player, UiScreen screen)
+        {
+            if (screen == UiScreen.Archive) ShowHistory(player, GetArchivePage(player.userID));
+            else if (CanAdmin(player)) ShowAdminList(player, GetAdminView(player.userID).Page);
+        }
+
+        // A dialog is about to open over the screen: a redraw that is still waiting is drawn first,
+        // because drawing it later would close the dialog again.
+        private void FlushRedraw(BasePlayer player)
+        {
+            ulong userId = player.userID;
+            if (!redrawTimers.ContainsKey(userId)) return;
+            CancelRedraw(userId);
+            UiScreen screen;
+            if (currentScreens.TryGetValue(userId, out screen) && (screen == UiScreen.Archive || screen == UiScreen.Admin)) Redraw(player, screen);
+        }
+
+        private void CancelRedraw(ulong userId)
+        {
+            Timer t;
+            if (redrawTimers.TryGetValue(userId, out t))
+            {
+                t?.Destroy();
+                redrawTimers.Remove(userId);
+            }
         }
 
         [ConsoleCommand("news.view")]
@@ -2145,7 +2033,7 @@ namespace Oxide.Plugins
             }
 
             // Up to the newest post this player can see: a group post they get access to later stays unread.
-            storedData.ReadAllUpTo[userId] = announcements.Where(a => CanSee(player, a)).Max(a => a.Timestamp);
+            storedData.ReadAllUpTo[userId] = NewestFor(player).Timestamp;
             MarkDataDirty();
             SendReply(player, Msg("MarkedAllRead", player, unread));
             return unread;
@@ -2182,8 +2070,7 @@ namespace Oxide.Plugins
             Interface.CallHook("OnNewsPollVote", player, BuildHookData(ann), option);
             StopAutoClose(player);
 
-            PopupState state;
-            if (playersWithUiOpen.Contains(userId) && openPopups.TryGetValue(userId, out state) && state.AnnId == ann.Id)
+            if (IsPopupOpen(userId, ann.Id))
             {
                 // Only the poll block is redrawn, so the reader keeps their scroll position.
                 var container = new CuiElementContainer();
@@ -2215,25 +2102,18 @@ namespace Oxide.Plugins
             bool addedLike = !ann.LikedPlayers.Remove(userId);
             if (addedLike) ann.LikedPlayers.Add(userId);
 
-            bool rewarded = false;
-            if (addedLike && config.Rewards.EnableLikeReward)
-            {
-                if (ann.LikeRewardedPlayers == null) ann.LikeRewardedPlayers = new HashSet<ulong>();
-                if (!ann.LikeRewardedPlayers.Contains(userId) && GiveRewards(player, config.Rewards.LikeRewards, "RewardLike"))
-                {
-                    ann.LikeRewardedPlayers.Add(userId);
-                    rewarded = true;
-                }
-            }
+            if (addedLike && config.Rewards.EnableLikeReward && !ann.LikeRewardedPlayers.Contains(userId)
+                && GiveRewards(player, config.Rewards.LikeRewards, "RewardLike"))
+                ann.LikeRewardedPlayers.Add(userId);
 
-            if (rewarded) SaveAnnouncements();
-            else MarkDataDirty();
+            // Saved with the usual delay, also when a reward was paid: after a broadcast many players
+            // like and read within seconds, and each of them must not rewrite the whole data file.
+            MarkDataDirty();
 
             Interface.CallHook("OnNewsLiked", player, BuildHookData(ann), addedLike);
             StopAutoClose(player);
 
-            PopupState state;
-            if (playersWithUiOpen.Contains(userId) && openPopups.TryGetValue(userId, out state) && state.AnnId == ann.Id)
+            if (IsPopupOpen(userId, ann.Id))
             {
                 // Only swap the like button so the reader keeps their scroll position.
                 var container = new CuiElementContainer();
@@ -2254,11 +2134,8 @@ namespace Oxide.Plugins
             var player = arg.Player();
             if (!RequireView(player)) return;
 
-            PopupState state;
             var ann = FindById(arg.GetString(0));
-            if (ann == null || ann.CountdownTo <= 0 || !playersWithUiOpen.Contains(player.userID)
-                || !openPopups.TryGetValue(player.userID, out state) || state.AnnId != ann.Id)
-                return;
+            if (ann == null || ann.CountdownTo <= 0 || !IsPopupOpen(player.userID, ann.Id)) return;
 
             var container = new CuiElementContainer();
             AddCountdownBlock(container, player, ann, string.IsNullOrEmpty(ann.ImageUrl) ? 0.03f : 0.5f);
@@ -2281,7 +2158,7 @@ namespace Oxide.Plugins
             if (!RequireView(player)) return;
 
             PlayerPrefs prefs;
-            if (!storedData.PlayerSettings.TryGetValue(player.userID, out prefs) || prefs == null)
+            if (!storedData.PlayerSettings.TryGetValue(player.userID, out prefs))
             {
                 prefs = new PlayerPrefs();
                 storedData.PlayerSettings[player.userID] = prefs;
@@ -2321,7 +2198,8 @@ namespace Oxide.Plugins
             var view = GetAdminView(player.userID);
             if (tab == "reset") view.Query = string.Empty;
             view.Tab = Array.IndexOf(AdminTabs, tab) >= 0 ? tab : "all";
-            ShowAdminList(player, 0);
+            view.Page = 0;
+            RedrawThrottled(player, UiScreen.Admin);
         }
 
         [ConsoleCommand("news.admin.search")]
@@ -2331,8 +2209,10 @@ namespace Oxide.Plugins
             if (player == null) return;
 
             string query = arg.Args == null ? string.Empty : string.Join(" ", arg.Args);
-            GetAdminView(player.userID).Query = LimitText(query.Trim(), MaxSearchChars).Trim();
-            ShowAdminList(player, 0);
+            var view = GetAdminView(player.userID);
+            view.Query = LimitText(query.Trim(), MaxSearchChars).Trim();
+            view.Page = 0;
+            RedrawThrottled(player, UiScreen.Admin);
         }
 
         [ConsoleCommand("news.admin.sort")]
@@ -2343,7 +2223,8 @@ namespace Oxide.Plugins
 
             var view = GetAdminView(player.userID);
             view.Sort = (view.Sort + 1) % AdminSorts.Length;
-            ShowAdminList(player, 0);
+            view.Page = 0;
+            RedrawThrottled(player, UiScreen.Admin);
         }
 
         // Back into the post this admin was writing when the editor went away.
@@ -2396,7 +2277,10 @@ namespace Oxide.Plugins
         private void CmdNewsAdminPage(ConsoleSystem.Arg arg)
         {
             var player = AdminPlayer(arg);
-            if (player != null) ShowAdminList(player, arg.GetInt(0, 0));
+            if (player == null) return;
+
+            GetAdminView(player.userID).Page = arg.GetInt(0, 0);
+            RedrawThrottled(player, UiScreen.Admin);
         }
 
         [ConsoleCommand("news.admin.create")]
@@ -2446,13 +2330,13 @@ namespace Oxide.Plugins
                     Pinned = original.Pinned,
                     LikedPlayers = new HashSet<ulong>(original.LikedPlayers),
                     Draft = original.Draft,
-                    Group = original.Group ?? string.Empty,
+                    Group = original.Group,
                     ExpireDays = original.ExpireDays,
                     ExpiresAt = original.ExpiresAt,
                     PollHours = original.PollHours,
                     PollEndsAt = original.PollEndsAt,
                     CountdownTo = original.CountdownTo,
-                    CountdownLabel = original.CountdownLabel ?? string.Empty
+                    CountdownLabel = original.CountdownLabel
                 },
                 EditingId = original.Id,
                 IsDraft = original.Draft,
@@ -2489,11 +2373,11 @@ namespace Oxide.Plugins
                     Type = original.Type,
                     Author = player.displayName,
                     Date = Now(),
-                    Group = original.Group ?? string.Empty,
+                    Group = original.Group,
                     ExpireDays = original.ExpireDays,
                     PollHours = original.PollHours,
                     CountdownTo = futureCountdown ? original.CountdownTo : 0,
-                    CountdownLabel = original.CountdownLabel ?? string.Empty
+                    CountdownLabel = original.CountdownLabel
                 },
                 Discord = DiscordConfigured,
                 Poll = HasPoll(original),
@@ -2574,10 +2458,11 @@ namespace Oxide.Plugins
 
             int page = arg.GetInt(0, 0);
             int perPage = config.General.AnnouncementsPerPage;
-            var displayList = AdminOrder(player.userID);
+            var displayList = Pool.Get<List<Announcement>>();
+            FillAdminOrder(player.userID, displayList);
             var sel = GetAdminSelection(player.userID);
 
-            int start = page * perPage;
+            int start = Math.Max(0, page * perPage);
             int end = Math.Min(start + perPage, displayList.Count);
 
             bool allSelected = true;
@@ -2588,6 +2473,7 @@ namespace Oxide.Plugins
                 if (allSelected) sel.Remove(displayList[i].Id);
                 else sel.Add(displayList[i].Id);
             }
+            Pool.FreeUnmanaged(ref displayList);
 
             ShowAdminList(player, page);
         }
@@ -2615,21 +2501,23 @@ namespace Oxide.Plugins
             var sel = GetAdminSelection(player.userID);
             if (sel.Count == 0) { ShowAdminList(player, page); return; }
 
-            int changed = 0;
-            foreach (var id in sel.ToList())
+            var edited = Pool.Get<List<Announcement>>();
+            foreach (string id in sel)
             {
                 var ann = FindById(id);
                 if (ann == null || ann.Pinned == pin) continue;
                 ann.Pinned = pin;
-                changed++;
-                Interface.CallHook("OnNewsEdited", BuildHookData(ann));
+                edited.Add(ann);
             }
 
+            int changed = edited.Count;
             if (changed > 0)
             {
                 SaveAnnouncements();
+                foreach (var ann in edited) Interface.CallHook("OnNewsEdited", BuildHookData(ann));
                 SendReply(player, Msg(pin ? "BulkPinned" : "BulkUnpinned", player, changed));
             }
+            Pool.FreeUnmanaged(ref edited);
             ShowAdminList(player, page);
         }
 
@@ -2654,7 +2542,7 @@ namespace Oxide.Plugins
             int removed = sel.Count;
             if (removed > 0)
             {
-                foreach (var id in sel) RemoveAnnouncement(FindById(id));
+                foreach (string id in sel) RemoveAnnouncement(FindById(id));
                 adminSelections.Remove(player.userID);
                 SaveAnnouncements();
                 SendReply(player, Msg("BulkDeleted", player, removed));
@@ -2777,7 +2665,7 @@ namespace Oxide.Plugins
             }
             else
             {
-                value = string.Join(" ", arg.Args.Skip(1).ToArray());
+                value = string.Join(" ", arg.Args, 1, arg.Args.Length - 1);
             }
 
             var ann = session.Draft;
@@ -3020,11 +2908,11 @@ namespace Oxide.Plugins
         // Settings from the editor's right-hand column onto the saved post.
         private static void ApplyEditorSettings(Announcement from, Announcement to)
         {
-            to.Group = from.Group ?? string.Empty;
+            to.Group = from.Group;
             to.ExpireDays = from.ExpireDays;
             to.PollHours = HasPoll(to) ? from.PollHours : 0;
             to.CountdownTo = from.CountdownTo;
-            to.CountdownLabel = from.CountdownLabel ?? string.Empty;
+            to.CountdownLabel = from.CountdownLabel;
         }
 
         [ConsoleCommand("news.editor.cancel")]
@@ -3095,7 +2983,10 @@ namespace Oxide.Plugins
             var pollOptions = options.TryGetValue("pollOptions", out value) ? value as System.Collections.IEnumerable : null;
             if (pollOptions != null && !(value is string))
             {
-                var cleaned = CleanPollOptions(pollOptions.Cast<object>().Select(o => o?.ToString()));
+                var texts = Pool.Get<List<string>>();
+                foreach (object option in pollOptions) texts.Add(option?.ToString());
+                var cleaned = CleanPollOptions(texts);
+                Pool.FreeUnmanaged(ref texts);
                 if (cleaned.Count >= 2)
                 {
                     ann.PollOptions = cleaned;
@@ -3128,7 +3019,10 @@ namespace Oxide.Plugins
         // Every published post, newest first.
         private List<Dictionary<string, object>> API_GetNewsList()
         {
-            return announcements.Where(a => !a.Draft && !IsExpired(a)).Select(BuildHookData).ToList();
+            var list = new List<Dictionary<string, object>>();
+            foreach (var ann in announcements)
+                if (!ann.Draft && !IsExpired(ann)) list.Add(BuildHookData(ann));
+            return list;
         }
 
         private int API_GetUnreadCount(BasePlayer player) => player != null && CanView(player) ? CountUnread(player) : 0;
@@ -3172,9 +3066,10 @@ namespace Oxide.Plugins
         private void ToastPlacement(out string anchorMin, out string anchorMax, out string offset)
         {
             const float width = 0.19f, height = 0.085f;
-            string position = NormalizeToastPosition(config.Notification.Position);
-            float x = position.EndsWith("Left") ? 0.01f : position.EndsWith("Center") ? 0.5f - width / 2f : 0.98f - width;
-            float y = position.StartsWith("Bottom") ? 0.17f : 0.845f;
+            string position = config.Notification.Position ?? string.Empty;
+            float x = position.EndsWith("Left", StringComparison.OrdinalIgnoreCase) ? 0.01f
+                : position.EndsWith("Center", StringComparison.OrdinalIgnoreCase) ? 0.5f - width / 2f : 0.98f - width;
+            float y = position.StartsWith("Bottom", StringComparison.OrdinalIgnoreCase) ? 0.17f : 0.845f;
             anchorMin = Anchor(x, y);
             anchorMax = Anchor(x + width, y + height);
             offset = $"{F(config.Notification.OffsetX)} {F(config.Notification.OffsetY)}";
@@ -3232,7 +3127,7 @@ namespace Oxide.Plugins
             }, "Hud", root);
             AddPanelShadow(container, root, "0 0", "1 1", true, RadiusCard);
             AddSurface(container, root, "0 0", "1 1", "0.055 0.064 0.08 1", RadiusCard, $"news.view {ann.Id}", card, PanelRim);
-            AddAccentBar(container, card, typeColor, 0f, 7f);
+            AddAccentBar(container, card, typeColor, 7f);
 
             string kicker = Msg(HasPoll(ann) ? "NewPoll" : "NewAnnouncement", player);
             container.Add(new CuiLabel
@@ -3290,6 +3185,7 @@ namespace Oxide.Plugins
             openPopups.Remove(player.userID);
             CancelAutoClose(player.userID);
             CancelReadRewardTimer(player.userID);
+            CancelRedraw(player.userID);
         }
 
         // The player is interacting with a broadcast popup: keep it open and remove the countdown.
@@ -3328,6 +3224,7 @@ namespace Oxide.Plugins
             openPopups.Remove(player.userID);
             CancelAutoClose(player.userID);
             CancelReadRewardTimer(player.userID);
+            CancelRedraw(player.userID);
             currentScreens[player.userID] = screen;
             playersWithUiOpen.Add(player.userID);
             return fresh ? 1f : previous == screen ? 0f : SwitchFade;
@@ -3382,6 +3279,9 @@ namespace Oxide.Plugins
         // startup and stored in the server's FileStorage (the same store ImageLibrary uses). A rounded
         // rectangle is then three non-overlapping bands plus four corner pieces, so translucent colours stay
         // even. If the textures are unavailable (or RoundedCorners is off) the helpers draw plain rectangles.
+        // That is seven elements a shape, sent to the player on every redraw, so only the things that carry
+        // the look are rounded (AddSurface: panels, cards, the filled main button). Everything small
+        // (buttons, tags, chips, fields, check boxes) is a flat box of one element (AddBox).
         private bool Rounded => cornerFill != null && config.General.RoundedCorners;
 
         private void GenerateCornerTextures()
@@ -3535,7 +3435,7 @@ namespace Oxide.Plugins
             }
             if (!IsOpaque(color))
             {
-                AddSteppedFill(container, parent, color, radius, inset, fade);
+                AddSteppedFill(container, parent, "0 0", "1 1", color, radius, inset, 4, fade);
                 return;
             }
 
@@ -3552,22 +3452,25 @@ namespace Oxide.Plugins
             if (inset <= 0f) SetSurface(container, parent, color);
         }
 
-        // Rounded rectangle made of plain panels only: horizontal slices that step in towards the corners,
-        // without overlapping, so a translucent colour stays even. Used where nothing opaque is below
-        // (shadows over the game view). The slices are spaced evenly around the curve, and larger or
-        // darker shapes get more of them, so the steps stay too small to see.
-        private static void AddSteppedFill(CuiElementContainer container, string parent, string color, float radius, float inset, float fade)
+        // Rounded rectangle made of plain panels only, over the box anchorMin..anchorMax of `parent`: a middle
+        // band plus `steps` slices above and below it that step in towards the corners, without overlapping,
+        // so a translucent colour stays even. Used where nothing opaque is below (shadows over the game view).
+        private static void AddSteppedFill(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, float radius, float inset, int steps, float fade = 0f)
         {
-            int steps = Mathf.Clamp(Mathf.RoundToInt(radius * ParseColor(color)[3] * 4f), 3, 10);
+            int space = anchorMin.IndexOf(' '), spaceMax = anchorMax.IndexOf(' ');
+            string left = anchorMin.Substring(0, space), bottom = anchorMin.Substring(space + 1);
+            string right = anchorMax.Substring(0, spaceMax), top = anchorMax.Substring(spaceMax + 1);
+            string topMin = left + " " + top, bottomMax = right + " " + bottom;
+
             string a = F(inset), na = F(-inset);
-            container.Add(Piece(color, "0 0", "1 1", $"{a} {F(inset + radius)}", $"{na} {F(-(inset + radius))}", fade), parent);
+            container.Add(Piece(color, anchorMin, anchorMax, $"{a} {F(inset + radius)}", $"{na} {F(-(inset + radius))}", fade), parent);
             for (int i = 0; i < steps; i++)
             {
                 float t0 = Mathf.PI / 2f * i / steps, t1 = Mathf.PI / 2f * (i + 1) / steps;
                 float y0 = radius * Mathf.Sin(t0), y1 = radius * Mathf.Sin(t1);       // height above the straight part
                 float x = inset + radius * (1f - Mathf.Cos((t0 + t1) / 2f));          // how far the curve is in there
-                container.Add(Piece(color, "0 1", "1 1", $"{F(x)} {F(-(inset + radius) + y0)}", $"{F(-x)} {F(-(inset + radius) + y1)}", fade), parent);
-                container.Add(Piece(color, "0 0", "1 0", $"{F(x)} {F(inset + radius - y1)}", $"{F(-x)} {F(inset + radius - y0)}", fade), parent);
+                container.Add(Piece(color, topMin, anchorMax, $"{F(x)} {F(-(inset + radius) + y0)}", $"{F(-x)} {F(-(inset + radius) + y1)}", fade), parent);
+                container.Add(Piece(color, anchorMin, bottomMax, $"{F(x)} {F(inset + radius - y1)}", $"{F(-x)} {F(inset + radius - y0)}", fade), parent);
             }
         }
 
@@ -3602,11 +3505,13 @@ namespace Oxide.Plugins
             AddCorners(container, parent, cornerMask, Opaque(backgroundColor), 0f, radius, 0f, true);
         }
 
-        // Rounded card / button. Content added to the returned element draws on top of the fill.
+        // Rounded panel / card / main button. Content added to the returned element draws on top of the fill.
         // rim: a border colour drawn just outside the fill. Translucent colours are blended onto the surface
         // below; a rim over the game view is blended onto the fill itself (a slightly lighter edge).
         private string AddSurface(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, float radius, string command = null, string name = null, string rim = null, float rimWidth = 1f)
         {
+            if (!Rounded) return AddBox(container, parent, anchorMin, anchorMax, color, command, name, rim, rimWidth);
+
             string under = ColorUnder(container, parent);
             string fill = SolidOn(color, under);
             string holder = command != null
@@ -3615,6 +3520,23 @@ namespace Oxide.Plugins
             if (rim != null) AddRoundedFill(container, holder, SolidOn(rim, under ?? (IsOpaque(fill) ? fill : null)), radius + rimWidth, -rimWidth);
             AddRoundedFill(container, holder, fill, radius);
             return holder;
+        }
+
+        // Flat box for the small things: one element (two with a rim) where a rounded surface takes eight.
+        // Content added to the returned element draws on top of it. Colours are blended the same way as for
+        // AddSurface, so both look the same next to each other; the rim is a slightly larger box behind it.
+        private string AddBox(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, string command = null, string name = null, string rim = null, float rimWidth = 1f)
+        {
+            string under = ColorUnder(container, parent);
+            string fill = SolidOn(color, under);
+            if (rim != null)
+            {
+                string w = F(rimWidth), nw = F(-rimWidth);
+                container.Add(Piece(SolidOn(rim, under ?? (IsOpaque(fill) ? fill : null)), anchorMin, anchorMax, $"{nw} {nw}", $"{w} {w}", 0f), parent);
+            }
+            return command != null
+                ? container.Add(new CuiButton { Button = { Color = fill, Command = command }, Text = { Text = "" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name)
+                : container.Add(new CuiPanel { Image = { Color = fill }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name);
         }
 
         // ---- Surface colours ----------------------------------------------------------------
@@ -3685,10 +3607,10 @@ namespace Oxide.Plugins
             }, parent);
         }
 
-        // Rounded label ("pill"): type tags, badges, counters.
+        // Small filled label: type tags, badges, counters.
         private string AddPill(CuiElementContainer container, string parent, string text, string anchorMin, string anchorMax, string background, string textColor, int fontSize = 9)
         {
-            string pill = AddSurface(container, parent, anchorMin, anchorMax, background, RadiusPill);
+            string pill = AddBox(container, parent, anchorMin, anchorMax, background);
             AddLabelIn(container, pill, text, fontSize, textColor);
             return pill;
         }
@@ -3727,20 +3649,20 @@ namespace Oxide.Plugins
             return result;
         }
 
-        // Soft rounded shadow (three layers) around a panel. Add it before the panel itself.
+        // Soft shadow around a panel: two translucent layers with stepped corners (fourteen elements in all).
+        // Add it before the panel itself.
+        private const int ShadowSteps = 3;
         private void AddPanelShadow(CuiElementContainer container, string parent, string anchorMin, string anchorMax, bool small = false, float radius = RadiusPanel)
         {
-            float[] spreads = small ? new[] { 6f, 2.5f } : new[] { 18f, 9f, 3.5f };
-            string[] colors = small ? new[] { "0 0 0 0.10", "0 0 0 0.20" } : new[] { "0 0 0 0.06", "0 0 0 0.11", "0 0 0 0.20" };
-            for (int i = 0; i < spreads.Length; i++)
-            {
-                string layer = container.Add(new CuiPanel
-                {
-                    Image = { Color = "0 0 0 0" },
-                    RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax, OffsetMin = $"{F(-spreads[i])} {F(-spreads[i])}", OffsetMax = $"{F(spreads[i])} {F(spreads[i])}" }
-                }, parent);
-                AddRoundedFill(container, layer, colors[i], radius + spreads[i]);
-            }
+            float outer = small ? 5f : 14f, inner = small ? 2f : 5f;
+            AddShadowLayer(container, parent, anchorMin, anchorMax, small ? "0 0 0 0.10" : "0 0 0 0.08", radius, outer);
+            AddShadowLayer(container, parent, anchorMin, anchorMax, "0 0 0 0.20", radius, inner);
+        }
+
+        private void AddShadowLayer(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, float radius, float spread)
+        {
+            if (Rounded) AddSteppedFill(container, parent, anchorMin, anchorMax, color, radius + spread, -spread, ShadowSteps);
+            else container.Add(Piece(color, anchorMin, anchorMax, $"{F(-spread)} {F(-spread)}", $"{F(spread)} {F(spread)}", 0f), parent);
         }
 
         // 1-unit horizontal divider.
@@ -3749,12 +3671,15 @@ namespace Oxide.Plugins
             container.Add(new CuiPanel { Image = { Color = SolidOn(Hairline, ColorUnder(container, parent)) }, RectTransform = { AnchorMin = Anchor(left, y), AnchorMax = Anchor(right, y), OffsetMin = "0 0", OffsetMax = "0 1" } }, parent);
         }
 
-        // Soft rounded secondary button.
+        // Flat secondary button: the button and its text, two elements.
         private string AddGhostButton(CuiElementContainer container, string parent, string text, string command, string anchorMin, string anchorMax, string textColor, int fontSize = 10, string name = null)
         {
-            string button = AddSurface(container, parent, anchorMin, anchorMax, Ghost, RadiusButton, command, name);
-            AddLabelIn(container, button, text, fontSize, textColor);
-            return button;
+            return container.Add(new CuiButton
+            {
+                Button = { Color = SolidOn(Ghost, ColorUnder(container, parent)), Command = command },
+                Text = { Text = text, FontSize = fontSize, Align = TextAnchor.MiddleCenter, Color = textColor, Font = FontBold },
+                RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax }
+            }, parent, name);
         }
 
         // Same colour with a different alpha ("r g b a").
@@ -3769,20 +3694,19 @@ namespace Oxide.Plugins
         private void AddLikeButton(CuiElementContainer container, BasePlayer player, Announcement ann, bool pop = false)
         {
             bool liked = ann.LikedPlayers.Contains(player.userID);
-            SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));   // also when redrawn on its own
-            string button = container.Add(new CuiButton
+            float fade = pop ? 0.25f : 0f;
+            container.Add(new CuiButton
             {
-                Button = { Color = "0 0 0 0", Command = $"news.like {ann.Id}" },
-                Text = { Text = "" },
+                Button = { Color = Blend(liked ? "0.90 0.30 0.35 0.16" : Ghost, Opaque(config.Colors.PanelBg)), Command = $"news.like {ann.Id}", FadeIn = fade },
+                Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = liked ? "0.96 0.40 0.44 1" : "0.62 0.63 0.68 1", Font = FontBold, FadeIn = fade },
                 RectTransform = { AnchorMin = "0.03 0.028", AnchorMax = "0.135 0.082" }
             }, PopupPanel, LikeButtonName);
-            float fade = pop ? 0.25f : 0f;
-            AddRoundedFill(container, button, liked ? "0.90 0.30 0.35 0.16" : Ghost, RadiusButton, 0f, fade);
-            container.Add(new CuiLabel
-            {
-                Text = { Text = $"❤  {ann.LikedPlayers.Count}", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = liked ? "0.96 0.40 0.44 1" : "0.62 0.63 0.68 1", Font = FontBold, FadeIn = fade },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, button);
+        }
+
+        private bool IsPopupOpen(ulong userId, string annId)
+        {
+            string open;
+            return playersWithUiOpen.Contains(userId) && openPopups.TryGetValue(userId, out open) && open == annId;
         }
 
         private void ShowPopup(BasePlayer player, Announcement ann, PopupOrigin origin, bool playSound = false)
@@ -3794,7 +3718,7 @@ namespace Oxide.Plugins
             bool fresh;
             float anim = OpenScreen(player, UiScreen.Popup, out fresh);
             DestroyNotification(player);
-            if (!preview) openPopups[player.userID] = new PopupState { AnnId = ann.Id, Origin = origin };
+            if (!preview) openPopups[player.userID] = ann.Id;
 
             var container = new CuiElementContainer();
             var c = config.Colors;
@@ -3841,14 +3765,14 @@ namespace Oxide.Plugins
 
             if (hasImage)
             {
-                bool wide = config.General.PopupImageFrame == "Wide";
+                bool wide = string.Equals(config.General.PopupImageFrame, "Wide", StringComparison.OrdinalIgnoreCase);
                 // "Wide" keeps a 16:9 frame (no stretching of widescreen images); "Tall" fills the column.
                 float frameBottom = wide ? 0.29f : BodyBottomDefault;
                 float frameTop = wide ? 0.73f : 0.885f;
                 string imgPanel = mainPanel + ".Img";
 
                 // Picture with rounded corners: drawn square, then the corners are masked with the panel colour.
-                AddSurface(container, mainPanel, Anchor(0.03f, frameBottom), Anchor(0.47f, frameTop), Blend("0 0 0 0.35", panelColor), RadiusCard, null, imgPanel);
+                AddBox(container, mainPanel, Anchor(0.03f, frameBottom), Anchor(0.47f, frameTop), Blend("0 0 0 0.35", panelColor), null, imgPanel);
                 container.Add(new CuiElement
                 {
                     Parent = imgPanel,
@@ -3940,8 +3864,8 @@ namespace Oxide.Plugins
 
             if (preview)
             {
-                string likePreview = AddSurface(container, mainPanel, "0.03 0.028", "0.135 0.082", Ghost, RadiusButton);
-                AddLabelIn(container, likePreview, $"❤  {ann.LikedPlayers?.Count ?? 0}", 12, "0.62 0.63 0.68 0.6");
+                string likePreview = AddBox(container, mainPanel, "0.03 0.028", "0.135 0.082", Ghost);
+                AddLabelIn(container, likePreview, $"❤  {ann.LikedPlayers.Count}", 12, "0.62 0.63 0.68 0.6");
             }
             else if (!string.IsNullOrEmpty(ann.Id))
             {
@@ -3983,9 +3907,7 @@ namespace Oxide.Plugins
                 autoCloseTimers[userId] = timer.Once(config.General.AutoCloseSeconds, () =>
                 {
                     autoCloseTimers.Remove(userId);
-                    PopupState state;
-                    if (player != null && player.IsConnected && openPopups.TryGetValue(userId, out state) && state.AnnId == ann.Id)
-                        DestroyUI(player);
+                    if (player != null && player.IsConnected && IsPopupOpen(userId, ann.Id)) DestroyUI(player);
                 });
             }
 
@@ -4011,7 +3933,7 @@ namespace Oxide.Plugins
             SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));   // also when redrawn on its own
             var c = config.Colors;
             float top = BodyTop - 0.008f, bottom = top - 0.062f;   // the rest of CountdownBlockHeight is space above the body
-            AddSurface(container, PopupPanel, Anchor(contentLeft, bottom), Anchor(0.97f, top), MixAlpha(c.ButtonPrimary, 0.10f), RadiusButton, null, CountdownName, MixAlpha(c.ButtonPrimary, 0.30f));
+            AddSurface(container, PopupPanel, Anchor(contentLeft, bottom), Anchor(0.97f, top), MixAlpha(c.ButtonPrimary, 0.10f), RadiusCard, null, CountdownName, MixAlpha(c.ButtonPrimary, 0.30f));
 
             string label = string.IsNullOrEmpty(ann.CountdownLabel) ? Msg("CountdownDefaultLabel", player) : ann.CountdownLabel.ToUpper();
             container.Add(new CuiLabel
@@ -4083,13 +4005,11 @@ namespace Oxide.Plugins
             PollLayout(ann, out bodyBottom, out pollBottom);
 
             AddSurface(container, PopupPanel, Anchor(left, pollBottom), Anchor(0.97f, pollBottom + h), "1 1 1 0.03", RadiusCard, null, PollPanelName);
-            float rowWidthUnits = (0.97f - left) * PopupWidthUnits * 0.95f;
-
             ulong userId = player.userID;
             int myVote = preview ? -1 : VoteOf(ann, userId);
             int[] counts = CountVotes(ann);
-            int total = counts.Sum();
-            // A poll whose timer ran out counts as closed even before the timer sweep marks it.
+            int total = Sum(counts);
+            // A poll whose timer ran out counts as closed even before the timer marks it.
             bool closed = ann.PollClosed || (!preview && !IsPollOpen(ann));
             bool canVote = !preview && !closed && (myVote < 0 || config.Polls.AllowVoteChange);
             bool showResults = !preview && (myVote >= 0 || closed || config.Polls.ShowResultsBeforeVoting || CanAdmin(player));
@@ -4121,15 +4041,14 @@ namespace Oxide.Plugins
                 string background = mine ? MixAlpha(c.ButtonPrimary, 0.12f) : "1 1 1 0.04";
                 string rowMin = Anchor(0.025f, rowBottom), rowMax = Anchor(0.975f, rowTop);
 
-                AddSurface(container, PollPanelName, rowMin, rowMax, background, RadiusButton, canVote && !mine ? $"news.vote {ann.Id} {i}" : null, row);
+                AddBox(container, PollPanelName, rowMin, rowMax, background, canVote && !mine ? $"news.vote {ann.Id} {i}" : null, row);
 
                 float share = total > 0 ? (float)counts[i] / total : 0f;
                 if (showResults && share > 0f)
                 {
-                    // Rounded result bar (at least as wide as its rounded ends); fades in after voting.
-                    float width = Math.Min(1f, Math.Max(share, RadiusButton * 2f / rowWidthUnits));
-                    string bar = container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = "0 0", AnchorMax = Anchor(width, 1f) } }, row);
-                    AddRoundedFill(container, bar, MixAlpha(c.ButtonPrimary, mine ? 0.45f : 0.2f), RadiusButton, 0f, justVoted ? 0.5f : 0f);
+                    // Result bar; fades in after voting.
+                    string barColor = SolidOn(MixAlpha(c.ButtonPrimary, mine ? 0.45f : 0.2f), ColorUnder(container, row));
+                    container.Add(Piece(barColor, "0 0", Anchor(share, 1f), "0 0", "0 0", justVoted ? 0.5f : 0f), row);
                 }
 
                 container.Add(new CuiLabel
@@ -4152,19 +4071,30 @@ namespace Oxide.Plugins
         private void AddPopupNavigation(CuiElementContainer container, BasePlayer player, Announcement ann, PopupOrigin origin, string mainPanel, UIColors c)
         {
             // From the archive: through the filtered list the player was looking at.
-            var order = origin == PopupOrigin.Archive ? ArchiveOrder(player) : VisibleOrder(player);
-            int index = order.FindIndex(a => a.Id == ann.Id);
-            if (index < 0 || order.Count < 2) return;
+            ArchiveFilter filter = null;
+            if (origin == PopupOrigin.Archive) archiveFilters.TryGetValue(player.userID, out filter);
+
+            int index = -1, count = 0;
+            string previousId = null, nextId = null, lastId = null;
+            foreach (var other in GetDisplayOrder())
+            {
+                if (!CanSee(player, other) || !MatchesFilter(other, filter)) continue;
+                if (other == ann) { index = count; previousId = lastId; }
+                else if (index >= 0 && nextId == null) nextId = other.Id;
+                lastId = other.Id;
+                count++;
+            }
+            if (index < 0 || count < 2) return;
 
             string originArg = origin == PopupOrigin.Archive ? "archive" : "direct";
-            string prevCmd = index > 0 ? $"news.view {order[index - 1].Id} {originArg}" : null;
-            string nextCmd = index < order.Count - 1 ? $"news.view {order[index + 1].Id} {originArg}" : null;
+            string prevCmd = previousId != null ? $"news.view {previousId} {originArg}" : null;
+            string nextCmd = nextId != null ? $"news.view {nextId} {originArg}" : null;
 
             AddNavArrow(container, mainPanel, "<", prevCmd, "0.852 0.928", "0.877 0.972", c);
 
             container.Add(new CuiLabel
             {
-                Text = { Text = Msg("PositionOf", player, index + 1, order.Count), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = FontBold },
+                Text = { Text = Msg("PositionOf", player, index + 1, count), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = c.TextMuted, Font = FontBold },
                 RectTransform = { AnchorMin = "0.877 0.91", AnchorMax = "0.913 0.99" }
             }, mainPanel);
 
@@ -4176,7 +4106,7 @@ namespace Oxide.Plugins
             if (command == null)
             {
                 // At the first/last post: drawn dimmed and not clickable.
-                string box = AddSurface(container, parent, anchorMin, anchorMax, "1 1 1 0.02", RadiusButton);
+                string box = AddBox(container, parent, anchorMin, anchorMax, "1 1 1 0.02");
                 AddLabelIn(container, box, glyph, 12, "1 1 1 0.15");
                 return;
             }
@@ -4205,9 +4135,23 @@ namespace Oxide.Plugins
         {
             if (!CanView(player)) return;
 
-            var visible = VisibleOrder(player);
-            if (visible.Count == 0)
+            ulong userId = player.userID;
+            ArchiveFilter filter;
+            archiveFilters.TryGetValue(userId, out filter);
+
+            // One pass: what this player can see, how much of it is unread, and what the filter leaves.
+            var displayList = Pool.Get<List<Announcement>>();
+            int visible = 0, unread = 0;
+            foreach (var ann in GetDisplayOrder())
             {
+                if (!CanSee(player, ann)) continue;
+                visible++;
+                if (IsUnread(ann, userId)) unread++;
+                if (MatchesFilter(ann, filter)) displayList.Add(ann);
+            }
+            if (visible == 0)
+            {
+                Pool.FreeUnmanaged(ref displayList);
                 DestroyUI(player);
                 SendReply(player, Msg("NoNewsHistory", player));
                 return;
@@ -4218,11 +4162,6 @@ namespace Oxide.Plugins
 
             var container = new CuiElementContainer();
             var c = config.Colors;
-            ulong userId = player.userID;
-
-            ArchiveFilter filter;
-            archiveFilters.TryGetValue(userId, out filter);
-            var displayList = filter == null ? visible : visible.Where(a => MatchesFilter(a, filter)).ToList();
             int perPage = config.General.AnnouncementsPerPage;
             int totalPages = Math.Max(1, Mathf.CeilToInt((float)displayList.Count / perPage));
             if (page < 0) page = 0;
@@ -4244,7 +4183,6 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0.025 0.91", AnchorMax = "0.575 0.99" }
             }, mainPanel);
 
-            int unread = visible.Count(a => IsUnread(a, userId));
             if (unread > 0)
             {
                 AddGhostButton(container, mainPanel, Msg("MarkAllRead", player), "news.markread", "0.585 0.927", "0.715 0.973", c.TextNormal, 10);
@@ -4296,14 +4234,12 @@ namespace Oxide.Plugins
                 float textLeft = 0.03f;
                 if (config.General.ArchiveThumbnails && !string.IsNullOrEmpty(ann.ImageUrl))
                 {
-                    string thumb = itemPanel + ".Thumb";
-                    AddSurface(container, itemPanel, "0.022 0.13", "0.127 0.87", Blend("0 0 0 0.45", rowColor), RadiusButton, null, thumb);
+                    string thumb = AddBox(container, itemPanel, "0.022 0.13", "0.127 0.87", Blend("0 0 0 0.45", rowColor));
                     container.Add(new CuiElement
                     {
                         Parent = thumb,
                         Components = { BuildRawImage(ann.ImageUrl), new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" } }
                     });
-                    AddCornerMasks(container, thumb, rowColor, RadiusButton);
                     textLeft = 0.142f;
                 }
 
@@ -4362,7 +4298,7 @@ namespace Oxide.Plugins
 
                 container.Add(new CuiLabel
                 {
-                    Text = { Text = $"❤ {ann.LikedPlayers?.Count ?? 0}", FontSize = 10, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = FontBold },
+                    Text = { Text = $"❤ {ann.LikedPlayers.Count}", FontSize = 10, Align = TextAnchor.MiddleRight, Color = c.TextMuted, Font = FontBold },
                     RectTransform = { AnchorMin = "0.82 0.12", AnchorMax = "0.93 0.48" }
                 }, itemPanel);
 
@@ -4391,29 +4327,34 @@ namespace Oxide.Plugins
 
             ApplyFadeRamp(container, contentStart, 0.14f * anim, 0.6f * anim);
             CuiHelper.AddUi(player, container);
+            Pool.FreeUnmanaged(ref displayList);
         }
+
+        private static readonly AnnouncementType[] AllTypes = (AnnouncementType[])Enum.GetValues(typeof(AnnouncementType));
 
         // Type chips (ALL, INFO ... UPDATE, POLLS) and the search box under the archive header.
         private void AddArchiveFilters(CuiElementContainer container, BasePlayer player, string mainPanel, ArchiveFilter filter, UIColors c)
         {
             string current = filter?.Type ?? "all";
-            var chips = new List<string[]> { new[] { "all", Msg("FilterAll", player), c.ButtonPrimary } };
-            foreach (AnnouncementType type in Enum.GetValues(typeof(AnnouncementType)))
-                chips.Add(new[] { type.ToString(), type.ToString().ToUpper(), GetTypeColor(type) });
-            chips.Add(new[] { "polls", Msg("FilterPolls", player), c.ButtonPrimary });
-
-            const float bottom = 0.843f, top = 0.889f;
             float left = 0.025f;
-            foreach (var chip in chips)
-            {
-                bool selected = string.Equals(chip[0], current, StringComparison.OrdinalIgnoreCase);
-                float width = (chip[1].Length * 5.6f + 22f) / ArchiveWidthUnits;
-                string box = AddSurface(container, mainPanel, Anchor(left, bottom), Anchor(left + width, top), selected ? chip[2] : Ghost, RadiusButton, $"news.filter {chip[0].ToLowerInvariant()}");
-                AddLabelIn(container, box, chip[1], 9, selected ? "1 1 1 1" : chip[2]);
-                left += width + 0.006f;
-            }
+            left = AddFilterChip(container, mainPanel, "all", Msg("FilterAll", player), c.ButtonPrimary, current, left);
+            foreach (var type in AllTypes)
+                left = AddFilterChip(container, mainPanel, type.ToString(), type.ToString().ToUpper(), GetTypeColor(type), current, left);
+            AddFilterChip(container, mainPanel, "polls", Msg("FilterPolls", player), c.ButtonPrimary, current, left);
 
-            AddSearchField(container, player, mainPanel, Anchor(0.66f, bottom), Anchor(0.975f, top), filter?.Query, "news.search", "news.search.clear", mainPanel + ".Search");
+            AddSearchField(container, player, mainPanel, Anchor(0.66f, FilterRowBottom), Anchor(0.975f, FilterRowTop), filter?.Query, "news.search", "news.search.clear", mainPanel + ".Search");
+        }
+
+        private const float FilterRowBottom = 0.843f, FilterRowTop = 0.889f;
+
+        // One archive filter chip; returns where the next one starts.
+        private float AddFilterChip(CuiElementContainer container, string mainPanel, string key, string label, string color, string current, float left)
+        {
+            bool selected = string.Equals(key, current, StringComparison.OrdinalIgnoreCase);
+            float width = (label.Length * 5.6f + 22f) / ArchiveWidthUnits;
+            string box = AddBox(container, mainPanel, Anchor(left, FilterRowBottom), Anchor(left + width, FilterRowTop), selected ? color : Ghost, "news.filter " + key.ToLowerInvariant());
+            AddLabelIn(container, box, label, 9, selected ? "1 1 1 1" : color);
+            return left + width + 0.006f;
         }
 
         // Search box: typed text is sent when the player presses Enter or clicks away. With text in it,
@@ -4422,7 +4363,7 @@ namespace Oxide.Plugins
         {
             var c = config.Colors;
             query = query ?? string.Empty;
-            string field = AddSurface(container, parent, anchorMin, anchorMax, "1 1 1 0.045", RadiusButton, null, name,
+            string field = AddBox(container, parent, anchorMin, anchorMax, "1 1 1 0.045", null, name,
                 string.IsNullOrEmpty(query) ? null : MixAlpha(c.ButtonPrimary, 0.55f));
             container.Add(new CuiLabel
             {
@@ -4447,11 +4388,10 @@ namespace Oxide.Plugins
             AddPill(container, parent, text, Anchor(left, 0.6f), Anchor(right, 0.82f), background, textColor, 9);
         }
 
-        // Short rounded type-colour bar inside the left edge of a card.
-        private void AddAccentBar(CuiElementContainer container, string parent, string color, float anchorX = 0f, float leftUnits = 8f)
+        // Short type-colour bar inside the left edge of a card.
+        private void AddAccentBar(CuiElementContainer container, string parent, string color, float leftUnits = 8f)
         {
-            string bar = container.Add(Piece("0 0 0 0", Anchor(anchorX, 0f), Anchor(anchorX, 1f), $"{F(leftUnits)} 14", $"{F(leftUnits + 3f)} -14", 0f), parent);
-            AddRoundedFill(container, bar, color, 1.5f);
+            container.Add(Piece(color, "0 0", "0 1", $"{F(leftUnits)} 14", $"{F(leftUnits + 3f)} -14", 0f), parent);
         }
 
         private static string GetTypeColor(AnnouncementType type)
@@ -4524,20 +4464,39 @@ namespace Oxide.Plugins
             }
         }
 
-        // News Management as this admin has it filtered and sorted.
-        private List<Announcement> AdminOrder(ulong userId)
+        // News Management as this admin has it filtered and sorted, into `list`.
+        private void FillAdminOrder(ulong userId, List<Announcement> list)
         {
             AdminView view;
-            if (!adminViews.TryGetValue(userId, out view)) return GetDisplayOrder();
+            if (!adminViews.TryGetValue(userId, out view)) view = DefaultAdminView;
+            string sort = AdminSorts[view.Sort];
 
-            var list = announcements.Where(a => InAdminTab(a, view.Tab) && MatchesQuery(a, view.Query));
-            switch (AdminSorts[view.Sort])
+            // "newest" is the display order (pinned first), "oldest" the stored list backwards.
+            var source = sort == "newest" ? GetDisplayOrder() : announcements;
+            if (sort == "oldest")
             {
-                case "oldest": return list.OrderBy(a => a.Timestamp).ToList();
-                case "reads": return list.OrderByDescending(a => a.ReadByPlayers.Count).ThenByDescending(a => a.Timestamp).ToList();
-                case "likes": return list.OrderByDescending(a => a.LikedPlayers.Count).ThenByDescending(a => a.Timestamp).ToList();
-                default: return list.OrderByDescending(a => a.Pinned).ThenByDescending(a => a.Timestamp).ToList();
+                for (int i = source.Count - 1; i >= 0; i--)
+                    if (InAdminTab(source[i], view.Tab) && MatchesQuery(source[i], view.Query)) list.Add(source[i]);
+                return;
             }
+
+            foreach (var ann in source)
+                if (InAdminTab(ann, view.Tab) && MatchesQuery(ann, view.Query)) list.Add(ann);
+            if (sort == "reads") list.Sort(ByReads);
+            else if (sort == "likes") list.Sort(ByLikes);
+        }
+
+        private static readonly AdminView DefaultAdminView = new AdminView();
+
+        // Most first, then newest; the id settles what is left, so the order is the same on every redraw.
+        private static readonly Comparison<Announcement> ByReads = (a, b) => CompareCounts(a, b, a.ReadByPlayers.Count, b.ReadByPlayers.Count);
+        private static readonly Comparison<Announcement> ByLikes = (a, b) => CompareCounts(a, b, a.LikedPlayers.Count, b.LikedPlayers.Count);
+
+        private static int CompareCounts(Announcement a, Announcement b, int countA, int countB)
+        {
+            if (countA != countB) return countB.CompareTo(countA);
+            if (a.Timestamp != b.Timestamp) return b.Timestamp.CompareTo(a.Timestamp);
+            return string.CompareOrdinal(a.Id, b.Id);
         }
 
         private void ShowAdminList(BasePlayer player, int page)
@@ -4584,11 +4543,13 @@ namespace Oxide.Plugins
             }
             float rowsBottom = AdminHeightUnits - 64f;
 
-            var list = AdminOrder(userId);
+            var list = Pool.Get<List<Announcement>>();
+            FillAdminOrder(userId, list);
             int perPage = config.General.AnnouncementsPerPage;
             int totalPages = Math.Max(1, Mathf.CeilToInt((float)list.Count / perPage));
             if (page < 0) page = 0;
             if (page >= totalPages) page = totalPages - 1;
+            view.Page = page;
 
             PruneAdminSelection(userId);
             var selection = GetAdminSelection(userId);
@@ -4617,6 +4578,7 @@ namespace Oxide.Plugins
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.5f * anim);
             CuiHelper.AddUi(player, container);
+            Pool.FreeUnmanaged(ref list);
         }
 
         // Five cards under the header: what is stored and how players respond to it.
@@ -4679,14 +4641,20 @@ namespace Oxide.Plugins
             const float top = 138f, bottom = 168f;
             string mutedHex = RgbaToHex(c.TextMuted);
 
+            var counts = new int[AdminTabs.Length];
+            foreach (var ann in announcements)
+                for (int i = 0; i < AdminTabs.Length; i++)
+                    if (InAdminTab(ann, AdminTabs[i])) counts[i]++;
+
             float x = AdminSidePad;
-            foreach (string tab in AdminTabs)
+            for (int t = 0; t < AdminTabs.Length; t++)
             {
+                string tab = AdminTabs[t];
                 bool selected = tab == view.Tab;
                 string label = Msg("AdminTab" + char.ToUpperInvariant(tab[0]) + tab.Substring(1), player);
-                string count = announcements.Count(a => InAdminTab(a, tab)).ToString();
+                string count = counts[t].ToString();
                 float width = (label.Length + count.Length) * 5.6f + 30f;
-                string chip = AddSurface(container, panel, g.Min(x, bottom), g.Max(x + width, top), selected ? c.ButtonPrimary : Ghost, RadiusButton, "news.admin.filter " + tab);
+                string chip = AddBox(container, panel, g.Min(x, bottom), g.Max(x + width, top), selected ? c.ButtonPrimary : Ghost, "news.admin.filter " + tab);
                 AddLabelIn(container, chip, selected ? $"{label}  {count}" : $"{label}  <color={mutedHex}>{count}</color>", 9, selected ? "1 1 1 1" : c.TextNormal);
                 x += width + 6f;
             }
@@ -4732,7 +4700,7 @@ namespace Oxide.Plugins
             string rim = selected ? MixAlpha(c.ButtonPrimary, 0.55f) : ann.Pinned ? "0.95 0.70 0.20 0.35" : ann.Draft ? "1 1 1 0.16" : null;
             AddSurface(container, panel, g.Min(AdminSidePad, top + height), g.Max(AdminWidthUnits - AdminSidePad, top), rowColor, RadiusCard, null, name, rim);
 
-            string check = AddSurface(container, name, r.Min(12f, mid + 9f), r.Max(30f, mid - 9f), selected ? c.ButtonPrimary : rowColor, RadiusPill,
+            string check = AddBox(container, name, r.Min(12f, mid + 9f), r.Max(30f, mid - 9f), selected ? c.ButtonPrimary : rowColor,
                 $"news.admin.toggleselect {ann.Id} {page}", null, selected ? null : "1 1 1 0.22", 1.5f);
             if (selected) AddLabelIn(container, check, "✓", 11, "1 1 1 1");
 
@@ -4741,19 +4709,16 @@ namespace Oxide.Plugins
             if (config.General.ArchiveThumbnails && !string.IsNullOrEmpty(ann.ImageUrl))
             {
                 float thumbHeight = Math.Min(54f, height - 14f), thumbWidth = thumbHeight * 1.6f;
-                string thumb = name + ".Thumb";
-                AddSurface(container, name, r.Min(42f, mid + thumbHeight / 2f), r.Max(42f + thumbWidth, mid - thumbHeight / 2f), Blend("0 0 0 0.45", rowColor), RadiusButton, null, thumb);
+                string thumb = AddBox(container, name, r.Min(42f, mid + thumbHeight / 2f), r.Max(42f + thumbWidth, mid - thumbHeight / 2f), Blend("0 0 0 0.45", rowColor));
                 container.Add(new CuiElement
                 {
                     Parent = thumb,
                     Components = { BuildRawImage(ann.ImageUrl), new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" } }
                 });
-                AddCornerMasks(container, thumb, rowColor, RadiusButton);
                 textLeft = 42f + thumbWidth + 12f;
             }
             else
             {
-                // A plain bar: at 3 units wide its rounded ends would cost seven elements a row for nothing.
                 float inset = Math.Min(14f, height * 0.22f);
                 container.Add(Piece(typeColor, r.Min(42f, height - inset), r.Max(45f, inset), "0 0", "0 0", 0f), name);
             }
@@ -4854,7 +4819,7 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = g.Min(left, bottom), AnchorMax = g.Max(left + 112f, top) }
             }, panel);
             var s = new Grid(112f, 30f);
-            string box = AddSurface(container, select, s.Min(12f, 24f), s.Max(30f, 6f), pageSelected ? c.ButtonPrimary : surface, RadiusPill, null, null, pageSelected ? null : "1 1 1 0.22", 1.5f);
+            string box = AddBox(container, select, s.Min(12f, 24f), s.Max(30f, 6f), pageSelected ? c.ButtonPrimary : surface, null, null, pageSelected ? null : "1 1 1 0.22", 1.5f);
             if (pageSelected) AddLabelIn(container, box, "✓", 11, "1 1 1 1");
             container.Add(new CuiLabel
             {
@@ -4899,7 +4864,7 @@ namespace Oxide.Plugins
         // A button that steps through choices on each click: the current choice, and a "›".
         private void AddCycleButton(CuiElementContainer container, string parent, string value, string command, float left, float right, float bottom, float top, UIColors c, bool active)
         {
-            string button = AddSurface(container, parent, Anchor(left, bottom), Anchor(right, top), active ? MixAlpha(c.ButtonPrimary, 0.14f) : Ghost, RadiusButton, command);
+            string button = AddBox(container, parent, Anchor(left, bottom), Anchor(right, top), active ? MixAlpha(c.ButtonPrimary, 0.14f) : Ghost, command);
             container.Add(new CuiLabel
             {
                 Text = { Text = value, FontSize = 10, Align = TextAnchor.MiddleLeft, Color = active ? c.TextTitle : c.TextMuted, Font = FontBold },
@@ -4985,7 +4950,7 @@ namespace Oxide.Plugins
 
         private void AddEditorInput(CuiElementContainer container, string parent, string field, string value, int limit, float bottom, float top, bool multiline, float left = 0.05f, float right = 0.95f, string prefix = null)
         {
-            AddSurface(container, parent, Anchor(left, bottom), Anchor(right, top), "1 1 1 0.045", RadiusButton);
+            AddBox(container, parent, Anchor(left, bottom), Anchor(right, top), "1 1 1 0.045");
 
             float inputLeft = left + 0.01f;
             if (prefix != null)
@@ -5027,20 +4992,12 @@ namespace Oxide.Plugins
 
         private void AddEditorToggle(CuiElementContainer container, string parent, string text, string command, bool on, float left, float right, UIColors c, float bottom = 0.478f, float top = 0.535f)
         {
-            string button = AddSurface(container, parent, Anchor(left, bottom), Anchor(right, top), on ? MixAlpha(c.ButtonPrimary, 0.14f) : Ghost, RadiusButton, command);
+            string button = AddBox(container, parent, Anchor(left, bottom), Anchor(right, top), on ? MixAlpha(c.ButtonPrimary, 0.14f) : Ghost, command);
 
             // Square check box sized from the button width so it stays square at any toggle width.
             float boxW = 0.56f * (top - bottom) * EditorHeightUnits / (Math.Max(0.05f, right - left) * EditorWidthUnits);
-            AddSurface(container, button, Anchor(0.035f, 0.22f), Anchor(0.035f + boxW, 0.78f), on ? c.ButtonPrimary : "1 1 1 0.14", RadiusPill - 1f);
-
-            if (on)
-            {
-                container.Add(new CuiLabel
-                {
-                    Text = { Text = "✓", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1", Font = FontBold },
-                    RectTransform = { AnchorMin = Anchor(0.035f, 0.22f), AnchorMax = Anchor(0.035f + boxW, 0.78f) }
-                }, button);
-            }
+            string check = AddBox(container, button, Anchor(0.035f, 0.22f), Anchor(0.035f + boxW, 0.78f), on ? c.ButtonPrimary : "1 1 1 0.14");
+            if (on) AddLabelIn(container, check, "✓", 11, "1 1 1 1");
             container.Add(new CuiLabel
             {
                 Text = { Text = text, FontSize = 10, Align = TextAnchor.MiddleLeft, Color = on ? c.TextTitle : c.TextMuted, Font = FontBold },
@@ -5108,7 +5065,7 @@ namespace Oxide.Plugins
 
             // Type chips: every type is visible, the selected one is filled with its colour.
             AddEditorLabel(container, editorPanel, Msg("TypeLabel", player), 0.855f, 0.895f, c, R, RR);
-            var types = (AnnouncementType[])Enum.GetValues(typeof(AnnouncementType));
+            var types = AllTypes;
             const float chipGap = 0.006f;
             float chipWidth = (RR - R - chipGap * (types.Length - 1)) / types.Length;
             for (int i = 0; i < types.Length; i++)
@@ -5116,7 +5073,7 @@ namespace Oxide.Plugins
                 bool selected = types[i] == ann.Type;
                 float left = R + i * (chipWidth + chipGap);
                 string typeColor = GetTypeColor(types[i]);
-                string chip = AddSurface(container, editorPanel, Anchor(left, 0.8f), Anchor(left + chipWidth, 0.855f), selected ? typeColor : Ghost, RadiusButton, $"news.editor.settype {types[i]}");
+                string chip = AddBox(container, editorPanel, Anchor(left, 0.8f), Anchor(left + chipWidth, 0.855f), selected ? typeColor : Ghost, $"news.editor.settype {types[i]}");
                 AddLabelIn(container, chip, types[i].ToString().ToUpper(), 9, selected ? "1 1 1 1" : typeColor);
             }
 
@@ -5203,6 +5160,7 @@ namespace Oxide.Plugins
         // "Are you sure?" dialog over the admin list. It replaces any dialog that is already open.
         private void ShowConfirmDialog(BasePlayer player, string title, string body, string confirmCommand)
         {
+            FlushRedraw(player);
             var container = new CuiElementContainer();
             var c = config.Colors;
 
@@ -5252,6 +5210,7 @@ namespace Oxide.Plugins
             var container = new CuiElementContainer();
             if (!redraw)
             {
+                FlushRedraw(player);
                 container.Add(new CuiPanel
                 {
                     Image = { Color = "0 0 0 0.45", Material = BlurMaterial },
@@ -5302,7 +5261,7 @@ namespace Oxide.Plugins
                 }
 
                 // ON / OFF switch: filled when on.
-                string toggle = AddSurface(container, panel, Anchor(0.76f, bottom + 0.03f), Anchor(0.94f, top - 0.03f), on ? c.ButtonPrimary : Ghost, RadiusButton,
+                string toggle = AddBox(container, panel, Anchor(0.76f, bottom + 0.03f), Anchor(0.94f, top - 0.03f), on ? c.ButtonPrimary : Ghost,
                     "news.settings.toggle " + rows[i][1], null, on ? null : "1 1 1 0.14");
                 AddLabelIn(container, toggle, Msg(on ? "SettingOn" : "SettingOff", player), 10, on ? "1 1 1 1" : c.TextMuted);
             }
@@ -5351,11 +5310,13 @@ namespace Oxide.Plugins
 
             string themeName = arg.GetString(0).Trim('"');
             int page = arg.GetInt(1, 0);
-            string matchedTheme = config.Themes.Keys.FirstOrDefault(k => string.Equals(k, themeName, StringComparison.OrdinalIgnoreCase));
+            string matchedTheme = null;
+            foreach (string key in config.Themes.Keys)
+                if (string.Equals(key, themeName, StringComparison.OrdinalIgnoreCase)) { matchedTheme = key; break; }
 
             if (matchedTheme == null)
             {
-                SendReply(player, Msg("ThemeNotFound", player, themeName, string.Join(", ", config.Themes.Keys.ToArray())));
+                SendReply(player, Msg("ThemeNotFound", player, themeName, string.Join(", ", config.Themes.Keys)));
                 return;
             }
 
@@ -5376,7 +5337,8 @@ namespace Oxide.Plugins
             BeginScreen(container, fresh, AdminBackdrop);
             int contentStart = container.Count;
 
-            var names = config.Themes.Keys.ToList();
+            var names = Pool.Get<List<string>>();
+            names.AddRange(config.Themes.Keys);
             int totalPages = Math.Max(1, Mathf.CeilToInt((float)names.Count / ThemesPerPage));
             if (page < 0) page = 0;
             if (page >= totalPages) page = totalPages - 1;
@@ -5430,7 +5392,7 @@ namespace Oxide.Plugins
 
                 // Colour swatches in a rounded tray: panel, header, content, primary button, secondary button, title text.
                 // Drawn opaque so translucent theme colours are still readable.
-                string tray = AddSurface(container, card, "0.06 0.13", "0.94 0.47", Blend("0 0 0 0.35", cardColor), RadiusPill);
+                string tray = AddBox(container, card, "0.06 0.13", "0.94 0.47", Blend("0 0 0 0.35", cardColor));
                 string[] swatches = { theme.PanelBg, theme.HeaderBg, theme.ContentBg, theme.ButtonPrimary, theme.ButtonSecondary, theme.TextTitle };
                 float swatchWidth = (0.96f - 0.012f * (swatches.Length - 1)) / swatches.Length;
                 for (int s = 0; s < swatches.Length; s++)
@@ -5455,6 +5417,7 @@ namespace Oxide.Plugins
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.45f * anim);
             CuiHelper.AddUi(player, container);
+            Pool.FreeUnmanaged(ref names);
         }
         #endregion
 
@@ -5517,28 +5480,20 @@ namespace Oxide.Plugins
                 return false;
             }
 
-            var grantedNames = new List<string>();
+            var grantedNames = Pool.Get<List<string>>();
 
             if (bundle.Items != null)
             {
                 foreach (var r in bundle.Items)
                 {
-                    if (r == null || string.IsNullOrEmpty(r.Shortname) || r.Amount <= 0) continue;
+                    if (r == null || string.IsNullOrWhiteSpace(r.Shortname) || r.Amount <= 0) continue;
 
+                    // The shortname was checked above, so the item exists. GiveItem puts it in the
+                    // inventory, or drops it in front of the player when there is no room.
                     var item = ItemManager.CreateByName(r.Shortname, r.Amount, r.SkinId);
-                    if (item == null)
-                    {
-                        PrintWarning($"Reward for {player.UserIDString} was not recorded because item '{r.Shortname}' could not be created.");
-                        return false;
-                    }
-
-                    string label = item.info?.displayName?.translated;
+                    string label = item.info.displayName.translated;
                     if (string.IsNullOrEmpty(label)) label = r.Shortname;
-
-                    if (!player.inventory.GiveItem(item))
-                    {
-                        item.Drop(player.transform.position + Vector3.up, Vector3.up * 2f);
-                    }
+                    player.GiveItem(item);
 
                     grantedNames.Add($"{r.Amount}× {label}");
                 }
@@ -5557,12 +5512,12 @@ namespace Oxide.Plugins
                 grantedNames.Add($"{bundle.Currency.ToString("0.##", CultureInfo.InvariantCulture)} {config.Rewards.CurrencyLabel}");
             }
 
-            if (grantedNames.Count > 0 && config.Rewards.NotifyOnReward)
-            {
-                SendReply(player, Msg(langKey, player, string.Join(", ", grantedNames.ToArray())));
-            }
+            bool granted = grantedNames.Count > 0;
+            if (granted && config.Rewards.NotifyOnReward)
+                SendReply(player, Msg(langKey, player, string.Join(", ", grantedNames)));
 
-            return grantedNames.Count > 0;
+            Pool.FreeUnmanaged(ref grantedNames);
+            return granted;
         }
 
         private void CancelReadRewardTimer(ulong userId)
@@ -5578,11 +5533,10 @@ namespace Oxide.Plugins
         private void ScheduleReadCompletion(BasePlayer player, Announcement ann)
         {
             if (player == null || ann == null || string.IsNullOrEmpty(ann.Id)) return;
-            if (ann.ReadByPlayers == null) ann.ReadByPlayers = new HashSet<ulong>();
 
             // Nothing left to do for someone who has read it and has had (or can't get) the reward.
             ulong userId = player.userID;
-            bool rewardDone = !config.Rewards.EnableReadReward || (ann.ReadRewardedPlayers != null && ann.ReadRewardedPlayers.Contains(userId));
+            bool rewardDone = !config.Rewards.EnableReadReward || ann.ReadRewardedPlayers.Contains(userId);
             if (ann.ReadByPlayers.Contains(userId) && rewardDone) return;
 
             CancelReadRewardTimer(userId);
@@ -5592,23 +5546,18 @@ namespace Oxide.Plugins
             readRewardTimers[userId] = timer.Once(delay, () =>
             {
                 readRewardTimers.Remove(userId);
-                if (player == null || !player.IsConnected) return;
-
-                PopupState state;
-                if (!playersWithUiOpen.Contains(userId) || !openPopups.TryGetValue(userId, out state) || state.AnnId != targetId) return;
+                if (player == null || !player.IsConnected || !IsPopupOpen(userId, targetId)) return;
 
                 var current = FindById(targetId);
                 if (current == null) return;
-                if (current.ReadByPlayers == null) current.ReadByPlayers = new HashSet<ulong>();
-                if (current.ReadRewardedPlayers == null) current.ReadRewardedPlayers = new HashSet<ulong>();
 
                 bool firstRead = current.ReadByPlayers.Add(userId);
                 bool rewardDue = config.Rewards.EnableReadReward && !current.ReadRewardedPlayers.Contains(userId);
                 bool grantReward = rewardDue && GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
                 if (grantReward) current.ReadRewardedPlayers.Add(userId);
 
-                if (grantReward) SaveAnnouncements();
-                else if (firstRead) MarkDataDirty();
+                // Saved with the usual delay (see news.like): one write for everybody who read it meanwhile.
+                if (grantReward || firstRead) MarkDataDirty();
                 if (firstRead) Interface.CallHook("OnNewsRead", player, BuildHookData(current));
             });
         }
@@ -5643,7 +5592,7 @@ namespace Oxide.Plugins
 
             string timestamp = ann.Timestamp > 0 ? new DateTime(ann.Timestamp, DateTimeKind.Utc).ToString("o", CultureInfo.InvariantCulture) : null;
             var fields = HasPoll(ann)
-                ? new[] { new { name = Msg("PollDiscordField"), value = LimitText(string.Join("\n", ann.PollOptions.Select(o => "• " + o).ToArray()), 1024), inline = false } }
+                ? new[] { new { name = Msg("PollDiscordField"), value = LimitText("• " + string.Join("\n• ", ann.PollOptions), 1024), inline = false } }
                 : null;
 
             var payload = new
@@ -5676,14 +5625,15 @@ namespace Oxide.Plugins
         {
             if (!DiscordConfigured || ann == null || !HasPoll(ann)) return;
             int[] counts = CountVotes(ann);
-            int total = counts.Sum();
-            int best = total > 0 ? counts.Max() : -1;
-            var lines = new List<string>();
+            int total = Sum(counts);
+            int best = -1;
+            if (total > 0) foreach (int count in counts) best = Math.Max(best, count);
+            var lines = new StringBuilder();
             for (int i = 0; i < ann.PollOptions.Count; i++)
             {
                 int pct = total > 0 ? Mathf.RoundToInt(100f * counts[i] / total) : 0;
                 string line = $"{ann.PollOptions[i]}  -  {pct}% ({counts[i]})";
-                lines.Add(counts[i] == best ? "**" + line + "**" : line);
+                lines.Append('\n').Append(counts[i] == best ? "**" + line + "**" : line);
             }
 
             var payload = new
@@ -5697,7 +5647,7 @@ namespace Oxide.Plugins
                     {
                         author = new { name = LimitText($"{Msg("PollDiscordResults").ToUpper()}  •  {config.General.ServerName}", 256) },
                         title = LimitText(ann.Title, 256),
-                        description = LimitText(PollResultText(ann, null) + "\n\n" + string.Join("\n", lines.ToArray()), DiscordEmbedDescriptionLimit),
+                        description = LimitText(PollResultText(ann, null) + "\n" + lines, DiscordEmbedDescriptionLimit),
                         color = 3447003,
                         timestamp = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
                     }

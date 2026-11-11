@@ -69,6 +69,13 @@ static class Tests
     }
     static HashSet<ulong> Set(object ann, string f) => (HashSet<ulong>)H.AGet(ann, f);
 
+    // A click on a page / filter / search / sort control, at a human pace: these redraws have a cooldown.
+    static void Nav(BasePlayer p, string command)
+    {
+        Sim.Advance(0.5);
+        H.Console(p, command);
+    }
+
     static void Post(string title, string text = "Body text", string type = "Info", string img = "-")
         => H.Console(null, $"news.show \"{title}\" \"{img}\" \"{text}\" {type}");
 
@@ -84,44 +91,44 @@ static class Tests
         Check(Sim.DataFiles.ContainsKey("NewsBroadcaster_Data"), "data file created");
 
         // ---------------------------------------------------------------
-        Section("Config migration from 1.2.0 (incl. legacy reward arrays)");
+        Section("Config: plain load and save");
         Fresh(preBoot: () =>
         {
             Sim.ConfigFiles["config:NewsBroadcaster"] = @"{
-              ""General"": { ""AutoCloseSeconds"": 20, ""EnableAutoClose"": true, ""ShowNewsOnConnect"": true, ""ServerName"": ""MY SERVER"", ""AnnouncementsPerPage"": 5, ""MaxStoredAnnouncements"": 50 },
-              ""Notification"": { ""Enabled"": true, ""UseNotifyPlugin"": false, ""NotifyType"": 0, ""Position"": ""Left"", ""Duration"": 8, ""NotificationSound"": ""x.prefab"" },
-              ""Discord"": { ""Enabled"": false, ""WebhookUrl"": """", ""BotName"": ""Server News"", ""RoleMention"": """" },
-              ""Rewards"": { ""EnableReadReward"": true, ""ReadDelaySeconds"": 5, ""ReadRewards"": [ { ""Shortname"": ""wood"", ""Amount"": 100, ""SkinId"": 0 } ], ""EnableLikeReward"": false, ""LikeRewards"": { ""Items"": [], ""Points"": 0, ""Currency"": 0.0 }, ""NotifyOnReward"": true, ""PointsLabel"": ""RP"", ""CurrencyLabel"": ""coins"" },
+              ""General"": { ""AutoCloseSeconds"": 20, ""ServerName"": ""MY SERVER"", ""AnnouncementsPerPage"": 4 },
+              ""Rewards"": { ""EnableReadReward"": true, ""ReadRewards"": { ""Items"": [ { ""Shortname"": ""wood"", ""Amount"": 100, ""SkinId"": 0 } ], ""Points"": 0, ""Currency"": 0.0 } },
               ""SelectedTheme"": ""Ocean"",
               ""Themes"": { ""Default"": { ""PanelBg"": ""0.1 0.1 0.1 1"", ""HeaderBg"": ""0 0 0 1"", ""ContentBg"": ""0 0 0 1"", ""ButtonPrimary"": ""1 0 0 1"", ""ButtonSecondary"": ""0 0 0 1"", ""TextTitle"": ""1 1 1 1"", ""TextNormal"": ""1 1 1 1"", ""TextMuted"": ""1 1 1 1"" },
                             ""Ocean"": { ""PanelBg"": ""0.05 0.09 0.12 0.97"", ""HeaderBg"": ""0.02 0.05 0.07 0.55"", ""ContentBg"": ""0.08 0.13 0.17 0.55"", ""ButtonPrimary"": ""0.20 0.78 0.95 0.95"", ""ButtonSecondary"": ""0.10 0.20 0.26 0.85"", ""TextTitle"": ""0.95 0.98 1.00 1.0"", ""TextNormal"": ""0.82 0.90 0.94 1.0"", ""TextMuted"": ""0.48 0.62 0.72 1.0"" } }
             }";
         });
         cfg = JObject.Parse(Sim.ConfigFiles["config:NewsBroadcaster"]);
-        Check((string)cfg["SelectedTheme"] == "Ocean" && cfg["Themes"].Count() == 2, "existing themes + selection kept");
-        Check((string)cfg["General"]["ServerName"] == "MY SERVER" && (int)cfg["General"]["AutoCloseSeconds"] == 20, "existing values kept");
-        Check(cfg["Rewards"]["ReadRewards"]["Items"][0]["Shortname"]?.ToString() == "wood", "legacy reward array migrated to bundle");
-        Check(cfg["General"]["UnreadReminderOnConnect"] != null && cfg["Discord"]["AvatarUrl"] != null, "new keys added on upgrade");
+        Check((string)cfg["SelectedTheme"] == "Ocean" && cfg["Themes"].Count() == 2, "themes and the selected theme are kept as they are");
+        Check((string)cfg["General"]["ServerName"] == "MY SERVER" && (int)cfg["General"]["AutoCloseSeconds"] == 20 && (int)cfg["General"]["AnnouncementsPerPage"] == 4, "values in the file are kept");
+        Check(cfg["Rewards"]["ReadRewards"]["Items"].Count() == 1 && cfg["Rewards"]["ReadRewards"]["Items"][0]["Shortname"]?.ToString() == "wood", "reward items are read as written (no doubling on load and save)");
+        Check(cfg["General"]["MaxStoredAnnouncements"] != null && cfg["Discord"]["AvatarUrl"] != null && cfg["Polls"] != null, "options the file did not have are written with their defaults");
+        const string brokenConfig = @"{ ""General"": { ""ServerName"": ""MY SERVER"", }, oops";
+        Fresh(preBoot: () => { Sim.ConfigFiles["config:NewsBroadcaster"] = brokenConfig; });
+        Check(Sim.ConfigFiles["config:NewsBroadcaster"] == brokenConfig, "a config file that can't be read is left alone, so the typo can be fixed");
+        Check((string)H.CfgPath("General.ServerName") == "SERVER NEWS" && Sim.LogLines.Any(l => l.StartsWith("ERR") && l.Contains("configuration file could not be read")), "...the defaults are used meanwhile, and the console says so");
+        Sim.LogLines.RemoveAll(l => l.StartsWith("ERR"));
 
         // ---------------------------------------------------------------
-        Section("Data migration from 1.2.0 data file");
+        Section("Data file: loaded as stored");
         Fresh(preBoot: () =>
         {
             Sim.DataFiles["NewsBroadcaster_Data"] = @"{
               ""Announcements"": [
-                { ""Id"": ""a1"", ""Title"": ""Old"", ""ImageUrl"": """", ""Text"": ""old text"", ""Date"": ""2026-01-01 10:00"", ""Author"": ""x"", ""Type"": 0, ""Timestamp"": 100, ""Pinned"": false, ""LikedPlayers"": [1,2], ""ReadByPlayers"": null, ""ReadRewardedPlayers"": [5], ""LikeRewardedPlayers"": null },
-                { ""Id"": ""a1"", ""Title"": ""Newer"", ""ImageUrl"": """", ""Text"": ""visit https://example.com now"", ""Date"": ""2026-02-01 10:00"", ""Author"": ""x"", ""Type"": 3, ""Timestamp"": 200, ""Pinned"": true },
-                null
+                { ""Id"": ""a2"", ""Title"": ""Newer"", ""ImageUrl"": """", ""Text"": ""visit https://example.com now"", ""Date"": ""2026-02-01 10:00"", ""Author"": ""x"", ""Type"": 3, ""Timestamp"": 200, ""Pinned"": true, ""LikedPlayers"": [1,2], ""ReadByPlayers"": [5] },
+                { ""Id"": ""a1"", ""Title"": ""Old"", ""ImageUrl"": """", ""Text"": ""old text"", ""Date"": ""2026-01-01 10:00"", ""Author"": ""x"", ""Type"": 0, ""Timestamp"": 100, ""PollOptions"": [""Yes"", ""No""], ""PollVotes"": { ""76561198000000002"": 1 } }
               ],
               ""LastSeenNews"": { ""76561198000000002"": 200 }
             }";
         });
-        Check(H.Announcements.Count == 2, "null record dropped");
-        Check((string)H.AGet(H.Ann(0), "Title") == "Newer", "list re-sorted newest first");
-        Check(H.Id(H.Ann(0)) != H.Id(H.Ann(1)), "duplicate ids repaired");
-        Check(Set(H.Ann(1), "ReadByPlayers").Contains(5) && Set(H.Ann(1), "LikeRewardedPlayers") != null, "null sets repaired (reads seeded from rewards)");
-        Check(((string)H.AGet(H.Ann(0), "Text")).Contains("https://example.com"), "links in stored posts are not stripped on load");
-        Check(H.AGet(H.Ann(0), "PollOptions") != null && H.AGet(H.Ann(1), "PollVotes") != null, "old posts get empty poll fields");
+        Check(H.Announcements.Count == 2 && (string)H.AGet(H.Ann(0), "Title") == "Newer" && H.Id(H.Ann(1)) == "a1", "posts load in the stored order");
+        Check(Set(H.Ann(0), "LikedPlayers").Count == 2 && Set(H.Ann(0), "ReadByPlayers").Contains(5) && H.AGet(H.Ann(0), "Type").ToString() == "Event", "likes, reads and type are read back");
+        Check(((string)H.AGet(H.Ann(0), "Text")).Contains("https://example.com"), "stored text is not touched on load");
+        Check(((Dictionary<ulong, int>)H.AGet(H.Ann(1), "PollVotes"))[76561198000000002] == 1 && Set(H.Ann(1), "LikeRewardedPlayers").Count == 0, "poll votes are read back, lists the file leaves out start empty");
 
         // ---------------------------------------------------------------
         Section("news.show broadcast, notifications, permissions, sound");
@@ -196,6 +203,22 @@ static class Tests
         H.Console(player, $"news.view {H.Id(rp)}");
         Sim.Advance(6);
         Check(player.inventory.given.Count == 1, "read reward only once");
+        // After a broadcast everybody reads within the same seconds: paid rewards wait for the delayed save.
+        var readers = Enumerable.Range(0, 6).Select(i => H.MakePlayer(76561198000000100 + (ulong)i, "Reader" + i)).ToList();
+        Sim.Advance(16);
+        int rewardWrites = Sim.DataWrites;
+        foreach (var reader in readers) H.Console(reader, $"news.view {H.Id(rp)}");
+        Sim.Advance(6);
+        Check(readers.All(r => r.inventory.given.Count == 1 && Set(rp, "ReadRewardedPlayers").Contains(r.userID)), "six players get the read reward");
+        Check(Sim.DataWrites == rewardWrites, "...without a write of the data file for each of them");
+        Sim.Advance(16);
+        Check(Sim.DataWrites == rewardWrites + 1 && Sim.DataFiles["NewsBroadcaster_Data"].Contains("76561198000000105"), "one delayed save stores all of them");
+        readers[0].inventory.FullInventory = true;
+        H.CfgSet("Rewards.EnableLikeReward", true);
+        H.Console(readers[0], $"news.like {H.Id(rp)}");
+        Check(readers[0].dropped.Count == 1 && readers[0].dropped[0].amount == 10 && Set(rp, "LikeRewardedPlayers").Contains(readers[0].userID), "full inventory: the reward is dropped at the player (BasePlayer.GiveItem)");
+        Check(Sim.DataWrites == rewardWrites + 1, "a like reward waits for the delayed save too");
+        H.CfgSet("Rewards.EnableLikeReward", false);
 
         // ---------------------------------------------------------------
         Section("Like reward once");
@@ -293,7 +316,7 @@ static class Tests
         Section("Admin list: pin, resend, delete (keeps page), bulk");
         Fresh();
         for (int i = 1; i <= 7; i++) Post("Post " + i);
-        H.Console(admin, "news.admin.page 1");
+        Nav(admin, "news.admin.page 1");
         Check(H.Texts(admin).Any(t => t.Contains("PAGE 2 / 2")), "admin page 2");
         var p2 = H.AnnByTitle("Post 1");
         H.Console(admin, $"news.admin.delconfirm {H.Id(p2)} 1");
@@ -329,6 +352,24 @@ static class Tests
         for (int i = 1; i <= 4; i++) Post("Filler " + i);
         Check(H.Announcements.Count == 3 && H.AnnByTitle("Old pinned") != null, "pinned kept, oldest unpinned dropped");
         Check((string)H.AGet(Ann0, "Title") == "Filler 4", "list stays newest-first");
+        // Pinned posts and drafts using up the whole limit: a new post must not vanish as it is published.
+        Fresh();
+        H.CfgSet("General.MaxStoredAnnouncements", 3);
+        Post("Pin A"); Post("Pin B");
+        H.Console(admin, $"news.admin.togglepin {H.Id(H.AnnByTitle("Pin A"))} 0");
+        H.Console(admin, $"news.admin.togglepin {H.Id(H.AnnByTitle("Pin B"))} 0");
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.input title Draft C");
+        H.Console(admin, "news.editor.savedraft");
+        H.Console(player, "news.close.notif");
+        int trimmedBefore = HooksNamed("OnNewsDeleted");
+        Post("Fresh news");
+        Check(H.AnnByTitle("Fresh news") != null && HooksNamed("OnNewsDeleted") == trimmedBefore, "limit used up by pinned posts and drafts: a new post stays");
+        Check(ToastOpen(player) && H.Commands(player).Contains($"news.view {H.Id(H.AnnByTitle("Fresh news"))}"), "...and its toast opens it");
+        Check(Sim.LogLines.Count(l => l.StartsWith("WARN") && l.Contains("MaxStoredAnnouncements (3) is used up by pinned posts and drafts")) == 1, "...and the console says the limit is used up");
+        Post("Fresher news");
+        Check(H.AnnByTitle("Fresher news") != null && H.AnnByTitle("Fresh news") == null && H.Announcements.Count == 4, "the next post replaces it; pinned posts and the draft are never removed");
+        Check(H.AnnByTitle("Pin A") != null && H.AnnByTitle("Pin B") != null && H.AnnByTitle("Draft C") != null && Sim.LogLines.Count(l => l.Contains("is used up by pinned posts")) == 1, "the warning is printed once");
 
         // ---------------------------------------------------------------
         Section("Archive, unread badges, popup navigation");
@@ -336,7 +377,7 @@ static class Tests
         for (int i = 1; i <= 7; i++) Post("News " + i);
         H.Chat(player, "news");
         Check(H.Texts(player).Contains("7 UNREAD") && H.Texts(player).Count(t => t == "NEW") == 5, "unread counter + NEW badges");
-        H.Console(player, "news.page 1");
+        Nav(player, "news.page 1");
         Check(H.Texts(player).Contains("PAGE 2 / 2"), "archive page 2");
         var n2 = H.AnnByTitle("News 2");
         H.Console(player, $"news.view {H.Id(n2)} archive");
@@ -344,7 +385,7 @@ static class Tests
         Check(H.Texts(player).Contains("6 / 7"), "position counter");
         Check(H.Commands(player).Contains($"news.view {H.Id(H.AnnByTitle("News 1"))} archive") && H.Commands(player).Contains($"news.view {H.Id(H.AnnByTitle("News 3"))} archive"), "prev/next navigation keeps origin");
         Sim.Advance(6);
-        H.Console(player, "news.page 1");
+        Nav(player, "news.page 1");
         Check(H.Texts(player).Contains("6 UNREAD"), "read post no longer unread");
 
         // ---------------------------------------------------------------
@@ -433,11 +474,11 @@ static class Tests
         H.Console(admin, "news.admin.create");
         H.Console(admin, $"news.admin.toggleselect {H.Id(Ann0)} 0");
         H.Console(player, $"news.view {H.Id(Ann0)}");
-        H.Console(player, "news.filter event");
+        Nav(player, "news.filter event");
         H.Call("OnPlayerDisconnected", admin, "bye");
         H.Call("OnPlayerDisconnected", player, "bye");
         bool clean = true;
-        foreach (var f in new[] { "editors", "playersWithUiOpen", "adminSelections", "openPopups", "archivePages", "remindedPlayers", "readRewardTimers", "autoCloseTimers", "notificationTimers", "likeCooldowns", "voteCooldowns", "currentScreens", "toastNames", "archiveFilters", "adminViews" })
+        foreach (var f in new[] { "editors", "playersWithUiOpen", "adminSelections", "openPopups", "archivePages", "remindedPlayers", "readRewardTimers", "autoCloseTimers", "notificationTimers", "likeCooldowns", "voteCooldowns", "currentScreens", "toastNames", "archiveFilters", "adminViews", "redrawCooldowns", "redrawTimers" })
         {
             var coll = H.Get(f);
             int n = (int)coll.GetType().GetProperty("Count").GetValue(coll);
@@ -627,8 +668,7 @@ static class Tests
         H.Console(null, "news.poll \"Anim poll\" \"x\" \"A|B\"");
         H.Console(player, $"news.view {H.Id(Ann0)}");
         H.Console(player, $"news.vote {H.Id(Ann0)} 1");
-        var barHolders = H.Live(player).Where(e => (string)e["parent"] == "NewsBroadcasterUI.Poll.Opt1").Select(e => (string)e["name"]).ToHashSet();
-        Check(H.Live(player).Any(e => barHolders.Contains((string)e["parent"]) && Fade(e) == 0.5f), "poll result bars fade in");
+        Check(H.Live(player).Any(e => (string)e["parent"] == "NewsBroadcasterUI.Poll.Opt1" && Fade(e) == 0.5f), "poll result bars fade in");
 
         // ---------------------------------------------------------------
         Section("Rounded corners");
@@ -638,17 +678,17 @@ static class Tests
         var cornerIds = FileStorage.server.Files.Keys.Select(k => k.ToString()).ToHashSet();
         Post("Round", "x", "Info", "https://img.example/wipe-day.png");
         H.Console(player, $"news.view {H.Id(Ann0)}");
-        var cornerPieces = H.Live(player).Where(e => e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.RawImage" && cornerIds.Contains((string)cc["png"]))).ToList();
-        Check(cornerPieces.Count >= 28 && cornerPieces.Count % 4 == 0, $"popup uses rounded corner pieces ({cornerPieces.Count})");
+        Func<BasePlayer, List<JObject>> cornersOf = p => H.Live(p).Where(e => e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.RawImage" && cornerIds.Contains((string)cc["png"]))).ToList();
+        var cornerPieces = cornersOf(player);
+        // Rounded: the panel and its rim, the main button, the picture's corners. Everything small is flat.
+        Check(cornerPieces.Count == 16, $"popup: only the panel, its rim, the main button and the picture are rounded ({cornerPieces.Count} corner pieces)");
         // In game a translucent corner texture is blended differently from a translucent panel (light squares),
         // so every corner piece must be opaque: translucent colours are blended onto the surface below.
         Func<JObject, string> rawColor = e => (string)e["components"].First(cc => (string)cc["type"] == "UnityEngine.UI.RawImage")["color"];
         Check(cornerPieces.All(e => Alpha(rawColor(e)) >= 0.999f), "every corner piece is opaque");
-        var pieceColors = cornerPieces.Select(rawColor).Distinct().ToList();
-        Check(pieceColors.Count >= 4, $"translucent buttons and tags are blended to their own opaque shades ({pieceColors.Count} colours)");
         // Shadows sit over the game view (no known colour below): plain stepped panels, no corner textures.
         var black = H.Live(player).Where(e => e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.Image" && ((string)cc["color"] ?? "").StartsWith("0 0 0 0.") && (string)cc["color"] != "0 0 0 0")).ToList();
-        Check(black.Count >= 20, $"shadow is drawn with stepped panels ({black.Count})");
+        Check(black.Count == 15, $"shadow: two stepped layers, fourteen panels and the backdrop ({black.Count})");
         // In game a texture's bottom row can pick up its top row (wrapping). Fill corners are covered there by
         // the bands; picture masks carry a transparent row at the top and bottom so no line crosses the picture.
         int fills = 0, masks = 0;
@@ -660,13 +700,27 @@ static class Tests
             if (tw == 32 && th == 34 && clearRow(0) && clearRow(33) && !(clearRow(1) && clearRow(32))) masks++;
         }
         Check(fills == 4 && masks == 4, $"corner textures: 4 fills, 4 masks with clear top/bottom rows ({fills}, {masks})");
-        // The like button is redrawn on its own: it still knows the popup colour below it.
+        // The like button is two elements (button + text), also when it is redrawn on its own.
+        int popupSize = H.Live(player).Count();
         H.Console(player, $"news.like {H.Id(Ann0)}");
-        var likePieces = H.Live(player).Where(e => cornerIds.Contains((string)e["components"].FirstOrDefault(cc => (string)cc["type"] == "UnityEngine.UI.RawImage")?["png"] ?? "")).ToList();
-        Check(likePieces.Count == cornerPieces.Count && likePieces.All(e => Alpha(rawColor(e)) >= 0.999f), "like button redrawn in place keeps opaque corners");
-        Check(H.Live(player).Count() < 260, $"popup stays a reasonable size ({H.Live(player).Count()} elements)");
+        Check(H.Live(player).Count() == popupSize && H.Live(player).Count(e => (string)e["name"] == "NewsBroadcasterUI.Like" || (string)e["parent"] == "NewsBroadcasterUI.Like") == 2, "like button: two elements, swapped in place");
+        Check(popupSize < 70, $"popup with a picture stays small ({popupSize} elements)");
+        // What a page costs: the archive with five posts, all unread, with pictures.
+        Fresh();
+        for (int i = 1; i <= 5; i++) Post("Archive post " + i, "text", "Event", "https://img.example/p" + i + ".png");
+        H.Console(player, "news.close.notif");
+        H.Chat(player, "news");
+        int archiveRounded = H.Live(player).Count();
+        Check(archiveRounded < 200, $"archive page with rounded corners ({archiveRounded} elements)");
+        Check(cornersOf(player).Count == 4 * (2 + 5 * 2), "archive: the panel and the cards are rounded (with their rims), nothing else");
+        Check(H.Live(player).Count(e => H.Live(player).Any(t => (string)t["parent"] == (string)e["name"] && t["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.Text"))
+            && e["components"].Any(cc => (string)cc["type"] == "UnityEngine.UI.Button" && ((string)cc["command"] ?? "").StartsWith("news.filter"))) == 7, "filter chips are one button and one text each");
         H.Chat(admin, "news", "admin");
-        Check(H.Live(admin).Count() < 600, $"admin list element count ok ({H.Live(admin).Count()})");
+        Check(H.Live(admin).Count() < 330, $"News Management with five posts ({H.Live(admin).Count()} elements)");
+        H.CfgSet("General.RoundedCorners", false);
+        H.Console(player, "news.close");
+        H.Chat(player, "news");
+        Check(H.Live(player).Count() < 110 && cornersOf(player).Count == 0, $"archive page with RoundedCorners off ({H.Live(player).Count()} elements, was {archiveRounded})");
         // no FileStorage (e.g. API changed): square fallback, no errors
         Fresh(preBoot: () => { CommunityEntity.ServerInstance = null; });
         Post("Square", "x");
@@ -813,8 +867,9 @@ static class Tests
         H.Chat(player, "news");
         Check(!H.Texts(player).Any(t => t.Contains("WEEKEND EVENT")), "an expired post is hidden right away");
         int deletedBefore = HooksNamed("OnNewsDeleted");
-        Sim.Advance(31);
-        Check(H.AnnByTitle("Weekend event") == null && HooksNamed("OnNewsDeleted") == deletedBefore + 1, "the 30 s check deletes it (OnNewsDeleted fired)");
+        H.Call("ScheduleNextCheck");   // the test moved the time by hand
+        Sim.Advance(2);
+        Check(H.AnnByTitle("Weekend event") == null && HooksNamed("OnNewsDeleted") == deletedBefore + 1, "the timer deletes it when it is due (OnNewsDeleted fired)");
         Check(H.AnnByTitle("Draft with expiry") != null, "drafts are never auto-deleted");
 
         // ---------------------------------------------------------------
@@ -839,7 +894,8 @@ static class Tests
         H.Console(player, $"news.vote {H.Id(mapPoll)} 1");
         H.ASet(mapPoll, "PollEndsAt", DateTime.UtcNow.Ticks - 1);
         int webBeforeResults = Sim.WebRequests.Count, closedHooks = HooksNamed("OnNewsPollClosed");
-        Sim.Advance(31);
+        H.Call("ScheduleNextCheck");   // the test moved the time by hand
+        Sim.Advance(2);
         Check((bool)H.AGet(mapPoll, "PollClosed") && HooksNamed("OnNewsPollClosed") == closedHooks + 1, "the timer closes the poll (OnNewsPollClosed fired)");
         Check(H.ChatOf(player).Any(m => m == "Poll closed: Pick a map - winner: Big (100%, 1 vote)."), "players get the result in chat");
         Check(Sim.WebRequests.Count == webBeforeResults + 1 && Sim.WebRequests.Last().Body.Contains("POLL RESULTS") && Sim.WebRequests.Last().Body.Contains("**Big"), "results are posted to Discord");
@@ -856,6 +912,112 @@ static class Tests
         H.Console(admin, "news.editor.toggle pollclosed");
         H.Console(admin, "news.editor.save");
         Check((bool)H.AGet(quick, "PollClosed") && H.ChatOf(player).Last() == "Poll closed: Quick poll - no votes were cast.", "CLOSE VOTING in the editor announces the result too");
+
+        // ---------------------------------------------------------------
+        Section("One timer for what is due next");
+        Fresh();
+        Func<Oxide.Plugins.Timer> scheduleTimer = () => (Oxide.Plugins.Timer)H.Get("scheduleTimer");
+        Func<int> timersRunning = () => Sim.Timers.Count;
+        Post("Nothing scheduled", "x");
+        H.Console(player, "news.close.notif"); H.Console(admin, "news.close.notif");
+        Sim.Advance(20);
+        Check(scheduleTimer() == null && timersRunning() == 0, "no auto-delete and no poll timer anywhere: no timer runs at all");
+        int idleWrites = Sim.DataWrites;
+        Sim.Advance(600);
+        Check(Sim.DataWrites == idleWrites && timersRunning() == 0, "...and nothing happens while the server idles");
+        H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "Gone in a day", ["expireDays"] = 1, ["notify"] = false });
+        Check(scheduleTimer() != null && !scheduleTimer().Destroyed && Math.Abs(scheduleTimer().Delay - 3600f) < 0.01f, "a post with auto-delete starts one timer (far away: checked again within the hour)");
+        var firstTimer = scheduleTimer();
+        H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "Quick poll", ["pollOptions"] = new[] { "Yes", "No" }, ["pollHours"] = 1, ["notify"] = false });
+        Check(!ReferenceEquals(scheduleTimer(), firstTimer) && firstTimer.Destroyed && timersRunning() == 1, "something due sooner replaces it (still one timer)");
+        var pollTimer = scheduleTimer();
+        Post("Unrelated", "x");
+        H.Console(player, "news.close.notif"); H.Console(admin, "news.close.notif");
+        Check(ReferenceEquals(scheduleTimer(), pollTimer), "saving without a change to what is due leaves the timer alone");
+        var quickPoll = H.AnnByTitle("Quick poll");
+        H.ASet(quickPoll, "PollEndsAt", DateTime.UtcNow.Ticks + 20 * TimeSpan.TicksPerSecond);
+        H.Call("ScheduleNextCheck");
+        Check(scheduleTimer().Delay > 18f && scheduleTimer().Delay <= 20f, "the timer is set for the moment the poll closes");
+        H.ASet(quickPoll, "PollEndsAt", DateTime.UtcNow.Ticks - 1);
+        Sim.Advance(21);
+        Check((bool)H.AGet(quickPoll, "PollClosed") && scheduleTimer() != null && Math.Abs(scheduleTimer().Delay - 3600f) < 0.01f, "it closes the poll and waits for the next thing (the auto-delete)");
+        H.Call("API_DeleteNews", H.Id(H.AnnByTitle("Gone in a day")));
+        Check(scheduleTimer() == null && timersRunning() == 0, "nothing left to wait for: the timer is gone");
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.input title Draft with timer");
+        H.Console(admin, "news.editor.toggle expire");
+        H.Console(admin, "news.editor.savedraft");
+        Check(scheduleTimer() == null, "a draft's auto-delete does not start a timer");
+        H.Console(admin, $"news.admin.publish {H.Id(H.AnnByTitle("Draft with timer"))} 0");
+        Check(scheduleTimer() != null, "publishing it does");
+        H.Call("Unload");
+        Check(timersRunning() == 0, "unload stops it");
+        // After a restart: what ran out while the server was down is handled at once.
+        long past = DateTime.UtcNow.Ticks - TimeSpan.TicksPerMinute;
+        Fresh(preBoot: () =>
+        {
+            Sim.DataFiles["NewsBroadcaster_Data"] = @"{ ""Announcements"": [
+                { ""Id"": ""keep"", ""Title"": ""Stays"", ""Text"": ""b"", ""Timestamp"": 3000 },
+                { ""Id"": ""poll"", ""Title"": ""Old poll"", ""Text"": ""b"", ""Timestamp"": 2000, ""PollOptions"": [""A"", ""B""], ""PollEndsAt"": " + past + @" },
+                { ""Id"": ""gone"", ""Title"": ""Expired"", ""Text"": ""a"", ""Timestamp"": 1000, ""ExpiresAt"": " + past + @" } ] }";
+        });
+        Check(H.AnnByTitle("Expired") == null && (bool)H.AGet(H.AnnByTitle("Old poll"), "PollClosed") && H.Get("scheduleTimer") == null, "on load, overdue posts are deleted and overdue polls closed; no timer when nothing else is due");
+
+        // ---------------------------------------------------------------
+        Section("Redraw cooldown: pages, filters, search");
+        Fresh();
+        for (int i = 1; i <= 12; i++) Post("Paged post " + i, i == 7 ? "needle" : "text", i % 2 == 0 ? "Event" : "Info");
+        H.Console(player, "news.close.notif");
+        H.Chat(player, "news");
+        Sim.Advance(1);
+        int draws = Sim.Ui(player).AddCalls;
+        for (int i = 0; i < 10; i++) H.Console(player, "news.page " + (i % 3));
+        Check(Sim.Ui(player).AddCalls == draws + 1 && H.Texts(player).Contains("PAGE 1 / 3"), "ten page clicks in one moment: the first is drawn at once, the rest wait");
+        Sim.Advance(0.5);
+        Check(Sim.Ui(player).AddCalls == draws + 2 && H.Texts(player).Contains("PAGE 1 / 3") && (int)H.Call("GetArchivePage", player.userID.Get()) == 0, "...and are drawn once, with the page clicked last");
+        Sim.Advance(1);
+        draws = Sim.Ui(player).AddCalls;
+        // Typing a search and clicking a chip sends both commands together: neither may be lost.
+        H.Console(player, "news.search needle");
+        H.Console(player, "news.filter info");
+        Check(Sim.Ui(player).AddCalls == draws + 1, "search + chip click together: one redraw now");
+        Sim.Advance(0.5);
+        Check(Sim.Ui(player).AddCalls == draws + 2 && H.Texts(player).Contains("PAGED POST 7") && !H.Texts(player).Contains("PAGED POST 5") && !H.Texts(player).Contains("PAGED POST 8"), "...one after the cooldown, with the search and the filter both applied");
+        Sim.Advance(1);
+        H.Console(player, "news.search.clear");
+        H.Console(player, "news.page 2");
+        H.Console(player, "news.close");
+        Sim.Advance(1);
+        Check(!UiOpen(player), "a redraw that was waiting is dropped when the player closes the menu");
+        H.Chat(player, "news");
+        Sim.Advance(1);
+        H.Console(player, "news.page 1");
+        H.Console(player, "news.page 2");
+        H.Console(player, $"news.view {H.Id(H.AnnByTitle("Paged post 12"))} archive");
+        Sim.Advance(1);
+        Check(H.HasElement(player, "NewsBroadcasterUI.Main") && !H.HasElement(player, "NewsBroadcasterUI.List"), "...and when they open a post meanwhile");
+        H.Console(player, "news.close");
+        H.Chat(player, "news");
+        Sim.Advance(1);
+        H.Console(player, "news.page 1");
+        H.Console(player, "news.page 2");
+        H.Console(player, "news.settings");
+        Sim.Advance(1);
+        Check(H.HasElement(player, "NewsConfirmUI.Settings") && H.Texts(player).Contains("PAGE 3 / 3"), "a dialog opened meanwhile stays open (the waiting page is drawn under it first)");
+        H.Console(player, "news.close");
+        H.Chat(admin, "news", "admin");
+        Sim.Advance(1);
+        draws = Sim.Ui(admin).AddCalls;
+        H.Console(admin, "news.admin.filter published");
+        H.Console(admin, "news.admin.sort");
+        H.Console(admin, "news.admin.search needle");
+        H.Console(admin, "news.admin.page 3");
+        Check(Sim.Ui(admin).AddCalls == draws + 1, "News Management: four clicks together, one redraw now");
+        Sim.Advance(0.5);
+        Check(Sim.Ui(admin).AddCalls == draws + 2 && H.Texts(admin).Contains("OLDEST FIRST") && H.Texts(admin).Any(t => t.StartsWith("1 POSTS")), "...and one with all of them applied");
+        H.Console(admin, "news.admin.page 0");
+        H.Call("OnPlayerDisconnected", admin, "bye");
+        Check(!((Dictionary<ulong, Oxide.Plugins.Timer>)H.Get("redrawTimers")).ContainsKey(admin.userID) && !((Dictionary<ulong, float>)H.Get("redrawCooldowns")).ContainsKey(admin.userID), "a waiting redraw goes with the player");
 
         // ---------------------------------------------------------------
         Section("Live countdown");
@@ -904,18 +1066,18 @@ static class Tests
         H.Chat(player, "news");
         Func<List<string>> rowTitles = () => H.Texts(player).Where(t => t == "RAID EVENT TONIGHT" || t == "PATCH NOTES" || t == "MAP VOTE" || t == "SERVER RULES").ToList();
         Check(H.Commands(player).Contains("news.filter event") && H.Commands(player).Contains("news.filter polls") && rowTitles().Count == 4, "filter chips shown above all posts");
-        H.Console(player, "news.filter event");
+        Nav(player, "news.filter event");
         Check(rowTitles().OrderBy(t => t).SequenceEqual(new[] { "MAP VOTE", "RAID EVENT TONIGHT" }), "EVENT chip shows only events");
-        H.Console(player, "news.filter polls");
+        Nav(player, "news.filter polls");
         Check(rowTitles().SequenceEqual(new[] { "MAP VOTE" }), "POLLS chip shows only polls");
-        H.Console(player, "news.filter all");
-        H.Console(player, "news.search balance");
+        Nav(player, "news.filter all");
+        Nav(player, "news.search balance");
         Check(rowTitles().SequenceEqual(new[] { "PATCH NOTES" }), "search matches the text of a post");
-        H.Console(player, "news.search zzz");
+        Nav(player, "news.search zzz");
         Check(H.Texts(player).Contains("No posts match this filter.") && H.Commands(player).Contains("news.search.clear"), "no matches: message and SHOW ALL");
-        H.Console(player, "news.search.clear");
+        Nav(player, "news.search.clear");
         Check(rowTitles().Count == 4, "clearing shows everything again");
-        H.Console(player, "news.filter event");
+        Nav(player, "news.filter event");
         H.Console(player, $"news.view {H.Id(H.AnnByTitle("Raid event tonight"))} archive");
         Check(H.Texts(player).Contains("2 / 2"), "prev / next stays inside the filter");
         H.Console(player, "news.close");
@@ -986,16 +1148,19 @@ static class Tests
 
         // ---------------------------------------------------------------
         Section("Notification position");
-        Fresh(preBoot: () => { Sim.ConfigFiles["config:NewsBroadcaster"] = @"{ ""Notification"": { ""Enabled"": true, ""Position"": ""Left"", ""OffsetX"": 999, ""Duration"": 8 } }"; });
-        cfg = JObject.Parse(Sim.ConfigFiles["config:NewsBroadcaster"]);
-        Check((string)cfg["Notification"]["Position"] == "TopLeft" && (float)cfg["Notification"]["OffsetX"] == 640f, "1.x \"Left\" becomes TopLeft, offsets are clamped");
+        Fresh();
+        Func<JToken> toastRect = () => H.Live(player).First(e => (string)e["parent"] == "Hud" && ((string)e["name"]).StartsWith("NewsNotificationUI."))["components"].First(cc => (string)cc["type"] == "RectTransform");
         H.CfgSet("Notification.Position", "BottomCenter");
-        H.CfgSet("Notification.OffsetX", 0f);
         H.CfgSet("Notification.OffsetY", 12f);
         Post("Toast here", "x");
-        var toastRoot = H.Live(player).First(e => (string)e["parent"] == "Hud" && ((string)e["name"]).StartsWith("NewsNotificationUI."));
-        var rect = toastRoot["components"].First(cc => (string)cc["type"] == "RectTransform");
-        Check((string)rect["anchormin"] == "0.405 0.17" && (string)rect["offsetmin"] == "0 12", "BottomCenter + OffsetY place the toast");
+        Check((string)toastRect()["anchormin"] == "0.405 0.17" && (string)toastRect()["offsetmin"] == "0 12", "BottomCenter + OffsetY place the toast");
+        H.CfgSet("Notification.Position", "topleft");
+        H.CfgSet("Notification.OffsetY", 0f);
+        Post("Toast there", "x");
+        Check((string)toastRect()["anchormin"] == "0.01 0.845", "the position is read whatever its capitals");
+        H.CfgSet("Notification.Position", "somewhere");
+        Post("Toast anywhere", "x");
+        Check((string)toastRect()["anchormin"] == "0.79 0.845", "an unknown position is the top right corner");
 
         // ---------------------------------------------------------------
         Section("No blinking, the mouse stays put");
@@ -1007,18 +1172,18 @@ static class Tests
         long root = IdOf(player, "NewsBroadcasterUI");
         Check(root > 0 && Sim.Ui(player).CursorGrabs == 1, "opening the archive grabs the cursor once");
         int destroysBefore = Sim.Ui(player).DestroyCalls;
-        H.Console(player, "news.filter event");
+        Nav(player, "news.filter event");
         Check(!H.Live(player).Any(e => (string)e["name"] != "NewsBroadcasterUI" && Fade(e) > 0f), "a click in the same screen redraws instantly (no fade)");
         Check(H.Live(player).Count(e => (string)e["name"] == "NewsBroadcasterUI.Screen") == 1 && !CuiWarnings().Any(), "the old view is swapped out in the same message");
-        H.Console(player, "news.search second");
-        H.Console(player, "news.search.clear");
-        H.Console(player, "news.page 0");
+        Nav(player, "news.search second");
+        Nav(player, "news.search.clear");
+        Nav(player, "news.page 0");
         var thirdPost = H.AnnByTitle("Third");
         H.Console(player, $"news.view {H.Id(thirdPost)} archive");
         Check(H.Live(player).Max(e => (string)e["name"] == "NewsBroadcasterUI" ? 0f : Fade(e)) <= 0.2f, "moving to another screen only fades in briefly");
         H.Console(player, $"news.like {H.Id(thirdPost)}");
         H.Console(player, $"news.view {H.Id(H.AnnByTitle("Second"))} archive");
-        H.Console(player, "news.page 0");
+        Nav(player, "news.page 0");
         H.Console(player, "news.settings");
         H.Console(player, "news.settings.toggle sound");
         H.Console(player, "news.settings.toggle sound");
@@ -1044,7 +1209,7 @@ static class Tests
         H.Console(admin, $"news.admin.delconfirm {H.Id(thirdPost)} 0");
         H.Console(admin, "news.confirm.close");
         H.Console(admin, "news.admin.themes");
-        H.Console(admin, "news.admin.page 0");
+        Nav(admin, "news.admin.page 0");
         Check(IdOf(admin, "NewsBroadcasterUI") == adminRoot && Sim.Ui(admin).CursorGrabs == 1 && !CuiWarnings().Any(), "admin: list, editor, preview, dialogs and themes keep the same cursor");
 
         H.Chat(noperm, "news", "settings");
@@ -1140,6 +1305,7 @@ static class Tests
               ""ReadAllUpTo"": { ""76561198000000002"": 2000, ""76561198000000051"": 999 }
             }";
         });
+        Sim.Advance(16);
         var storedAfterLoad = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"]);
         Check(storedAfterLoad["LastSeenNews"]["76561198000000050"] == null && storedAfterLoad["ReadAllUpTo"]["76561198000000051"] == null, "markers older than the oldest post are dropped on load");
         Check(storedAfterLoad["LastSeenNews"]["76561198000000002"] != null && storedAfterLoad["ReadAllUpTo"]["76561198000000002"] != null, "markers that still matter are kept");
@@ -1164,44 +1330,44 @@ static class Tests
             .Select(e => H.Live(admin).Where(x => (string)x["parent"] == (string)e["name"]).SelectMany(x => x["components"].Children<JObject>()).Where(c => (string)c["type"] == "UnityEngine.UI.Text").Select(c => (string)c["text"]).First(t => !string.IsNullOrEmpty(t) && t != "✓")).ToArray();
         Check(H.Texts(admin).Contains("PUBLISHED") && H.Texts(admin).Contains("1 PINNED") && H.Texts(admin).Contains("1.3 PER POST") && H.Texts(admin).Contains("60% OF READS"), "stat cards: published, pinned, reads per post, like rate");
         Check(RowTitles().SequenceEqual(new[] { "BETA PATCH NOTES", "EPSILON DRAFT", "DELTA POLL", "GAMMA RULES", "ALPHA WIPE NEWS" }), "default order: pinned first, then newest");
-        H.Console(admin, "news.admin.filter drafts");
+        Nav(admin, "news.admin.filter drafts");
         Check(RowTitles().SequenceEqual(new[] { "EPSILON DRAFT" }) && H.Texts(admin).Any(t => t.StartsWith("1 POSTS")), "DRAFTS tab");
-        H.Console(admin, "news.admin.filter polls");
+        Nav(admin, "news.admin.filter polls");
         Check(RowTitles().SequenceEqual(new[] { "DELTA POLL" }), "POLLS tab");
-        H.Console(admin, "news.admin.filter pinned");
+        Nav(admin, "news.admin.filter pinned");
         Check(RowTitles().SequenceEqual(new[] { "BETA PATCH NOTES" }), "PINNED tab");
-        H.Console(admin, "news.admin.filter published");
+        Nav(admin, "news.admin.filter published");
         Check(RowTitles().Length == 4 && !RowTitles().Contains("EPSILON DRAFT"), "PUBLISHED tab");
-        H.Console(admin, "news.admin.search wipe");
+        Nav(admin, "news.admin.search wipe");
         Check(RowTitles().SequenceEqual(new[] { "GAMMA RULES", "ALPHA WIPE NEWS" }), "search looks in titles and text");
         H.Console(admin, "news.admin.selectpage 0");
         Check(H.Texts(admin).Contains("2 SELECTED"), "SELECT PAGE only takes the rows that are listed");
         H.Console(admin, "news.admin.clearsel 0");
-        H.Console(admin, "news.admin.search zzz");
+        Nav(admin, "news.admin.search zzz");
         Check(RowTitles().Length == 0 && H.Texts(admin).Contains("No posts match this filter.") && H.Commands(admin).Contains("news.admin.filter reset"), "nothing found: message and SHOW ALL");
-        H.Console(admin, "news.admin.filter reset");
+        Nav(admin, "news.admin.filter reset");
         Check(RowTitles().Length == 5, "SHOW ALL clears the tab and the search");
-        H.Console(admin, "news.admin.sort");
+        Nav(admin, "news.admin.sort");
         Check(H.Texts(admin).Contains("OLDEST FIRST") && RowTitles().First() == "ALPHA WIPE NEWS", "sort: oldest first");
-        H.Console(admin, "news.admin.sort");
+        Nav(admin, "news.admin.sort");
         Check(H.Texts(admin).Contains("MOST READ") && RowTitles().First() == "ALPHA WIPE NEWS", "sort: most read");
-        H.Console(admin, "news.admin.sort");
+        Nav(admin, "news.admin.sort");
         Check(H.Texts(admin).Contains("MOST LIKED") && RowTitles().First() == "BETA PATCH NOTES", "sort: most liked");
-        H.Console(admin, "news.admin.sort");
+        Nav(admin, "news.admin.sort");
         Check(H.Texts(admin).Contains("NEWEST FIRST"), "sort cycles back");
         long adminMenu = IdOf(admin, "NewsBroadcasterUI");
         int grabsBefore = Sim.Ui(admin).CursorGrabs;
         H.Console(admin, "news.admin.themes");
         string backCommand = H.Commands(admin).First(c => c.StartsWith("news.admin.page"));
-        H.Console(admin, backCommand);
+        Nav(admin, backCommand);
         Check(IdOf(admin, "NewsBroadcasterUI") == adminMenu && Sim.Ui(admin).CursorGrabs == grabsBefore, "BACK from the themes keeps the menu (no blink, mouse stays)");
-        H.Console(admin, "news.admin.filter drafts");
+        Nav(admin, "news.admin.filter drafts");
         H.Chat(admin, "news", "admin");
         Check(RowTitles().Length == 5, "/news admin opens the full list again");
         H.CfgSet("General.AnnouncementsPerPage", 8);
-        H.Console(admin, "news.admin.page 0");
+        Nav(admin, "news.admin.page 0");
         H.CfgSet("General.ArchiveThumbnails", false);
-        H.Console(admin, "news.admin.page 0");
+        Nav(admin, "news.admin.page 0");
         Check(RowTitles().Length == 5 && !CuiWarnings().Any(), "8 rows per page / no thumbnails draw without warnings");
 
         // ---------------------------------------------------------------
@@ -1260,16 +1426,18 @@ static class Tests
         Check(!H.Texts(admin).Contains("UNSAVED") && LastChat(admin) == "Unsaved post discarded.", "DISCARD removes it");
         H.Console(player, "news.admin.resume");
         H.Console(player, "news.admin.discard");
-        H.Console(player, "news.admin.filter drafts");
+        Nav(player, "news.admin.filter drafts");
         Check(!UiOpen(player), "players can't use the admin commands");
 
         Fresh(preBoot: () =>
         {
             Sim.DataFiles["NewsBroadcaster_Data"] = @"{ ""Announcements"": [], ""EditorAutosaves"": {
                 ""76561198000000001"": { ""Draft"": { ""Title"": ""Ancient"" }, ""SavedAt"": 5 },
-                ""76561198000000009"": null } }";
+                ""76561198000000009"": { ""Draft"": { ""Title"": ""Yesterday"" }, ""SavedAt"": " + (DateTime.UtcNow.Ticks - TimeSpan.TicksPerDay) + @" } } }";
         });
-        Check(JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["EditorAutosaves"].Count() == 0, "autosaves nobody came back for (30 days) and broken ones are dropped on load");
+        Sim.Advance(16);
+        var keptAutosaves = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["EditorAutosaves"];
+        Check(keptAutosaves.Count() == 1 && keptAutosaves["76561198000000009"] != null, "autosaves nobody came back for (30 days) are dropped on load, newer ones stay");
 
         // ---------------------------------------------------------------
         Section("API for other plugins");
@@ -1318,6 +1486,9 @@ static class Tests
         Check(warns.Count == 0, "no CUI warnings (unknown parents / duplicate names)" + (warns.Count > 0 ? ": " + string.Join(" | ", warns.Distinct().Take(5)) : ""));
         Check(Sim.MissingLangKeys.Count == 0, "no missing lang keys" + (Sim.MissingLangKeys.Count > 0 ? ": " + string.Join(", ", Sim.MissingLangKeys) : ""));
         Check(!Sim.LogLines.Any(l => l.StartsWith("ERR")), "no errors logged");
+        Check(Facepunch.Pool.Outstanding == 0, $"every pooled list was given back ({Facepunch.Pool.Outstanding} outstanding)");
+        string pluginSource = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "NewsBroadcaster.cs"));
+        Check(!pluginSource.Contains("System.Linq") && !pluginSource.Contains(".ToList()"), "the plugin does not use LINQ");
 
         Console.WriteLine($"\n{pass} passed, {fail} failed");
         foreach (var f in failures) Console.WriteLine("  - " + f);

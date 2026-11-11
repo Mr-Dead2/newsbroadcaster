@@ -8,7 +8,7 @@ NewsBroadcaster pushes clean, modern announcements straight to your players: tit
 
 ## Highlights
 
-- **Premium, modern UI** — rounded anti-aliased corners on every panel, card, button and picture, soft layered shadows, a blurred background and article-style popups, all in your theme colours.
+- **Premium, modern UI** — rounded anti-aliased corners on panels, cards and pictures, soft shadows, a blurred background and article-style popups, all in your theme colours.
 - **Smooth animations** — screens reveal top-to-bottom, archive rows cascade in, toasts fade in and out, likes pop, poll bars fade in, and auto-closing popups show a live countdown. All client-side: no lag, no extra network traffic.
 - **In-game admin panel** — a dashboard with stat cards, tabs, search and sorting; create, edit, preview, pin, resend and delete announcements without leaving the game.
 - **Editor autosave** — a disconnect or restart never loses a half-written post.
@@ -169,4 +169,5 @@ See `CHANGELOG.md` for the full list. Highlights:
 - Popup navigation, live auto-close countdown, archive thumbnails
 - Many fixes (cut-off titles, theme overflow, private sound, ServerRewards on current Rust, comma-locale servers)
 - Built for the November 2026 Rust update
-- Drop-in update: config, themes and posts carry over
+- Light on the server: small screens (an archive page is about 160 UI elements), batched saves, no idle timers
+- First release: files from earlier builds are not converted, so start with a fresh config and data file

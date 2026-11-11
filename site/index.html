@@ -340,9 +340,9 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
   <div class="facts">
     <div class="wrap">
       <div class="fact"><h3>What it needs</h3><p>Oxide (uMod). RP rewards need ServerRewards and currency rewards need Economics.</p></div>
-      <div class="fact"><h3>Drop-in update</h3><p>Config, themes, language file and posts from an earlier build carry over on the first load.</p></div>
+      <div class="fact"><h3>Light on the server</h3><p>Small screens, batched saves, a cooldown on page and search clicks, and no timer running while nothing is scheduled.</p></div>
       <div class="fact"><h3>Current Rust</h3><p>Built for the November 2026 Rust update and its new file storage.</p></div>
-      <div class="fact"><h3>Tested on every build</h3><p>276 automated checks, and it compiles as C# 6 and C# 7.</p></div>
+      <div class="fact"><h3>Tested on every build</h3><p>378 automated checks, and it compiles as C# 6 and C# 7.</p></div>
     </div>
   </div>
 
@@ -385,7 +385,7 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
       <div class="look">
         <div class="tile">
           <h3>Rounded, premium UI</h3>
-          <p>Panels, buttons and even pictures get smooth, anti-aliased corners. The plugin draws the corner images in code when the server starts, so no image plugin is needed.</p>
+          <p>Panels, cards and pictures get smooth, anti-aliased corners. The plugin draws the corner images in code when the server starts, so no image plugin is needed. Small controls stay flat, which keeps every screen light.</p>
           <div class="corner-demo" aria-hidden="true"><div class="sq">Plain CUI</div><div class="rd">NewsBroadcaster</div></div>
         </div>
         <div class="tile">
@@ -494,7 +494,7 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
       <div class="head">
         <p class="eyebrow">Install</p>
         <h2>Up and running in three steps</h2>
-        <p>Works on any Oxide server on the current Rust version. Updating from an earlier build is the same: replace the file.</p>
+        <p>Works on any Oxide server on the current Rust version. Coming from an earlier build? Remove its config and data file first; 1.0.0 starts fresh.</p>
       </div>
       <ol class="steps">
         <li>
@@ -596,12 +596,12 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
               <tr><td><code>UnreadReminderOnConnect</code></td><td class="def">true</td><td>One chat line about posts missed since the last visit</td></tr>
               <tr><td><code>RequireViewPermission</code></td><td class="def">true</td><td>false lets everyone see news</td></tr>
               <tr><td><code>AutoCloseSeconds</code></td><td class="def">15</td><td>Broadcast popups close after this, with a live countdown</td></tr>
-              <tr><td><code>AnnouncementsPerPage</code></td><td class="def">5</td><td>Rows per archive and admin page (1 to 8)</td></tr>
-              <tr><td><code>MaxStoredAnnouncements</code></td><td class="def">50</td><td>Oldest posts go first; pinned posts and drafts are kept</td></tr>
+              <tr><td><code>AnnouncementsPerPage</code></td><td class="def">5</td><td>Rows per archive and admin page (keep it between 1 and 8)</td></tr>
+              <tr><td><code>MaxStoredAnnouncements</code></td><td class="def">50</td><td>Oldest posts go first; pinned posts, drafts and the newest post are kept</td></tr>
               <tr><td><code>StripLinksFromBody</code></td><td class="def">true</td><td>Remove links from new post bodies</td></tr>
               <tr><td><code>PopupImageFrame</code></td><td class="def">"Tall"</td><td>"Wide" uses a 16:9 frame for widescreen pictures</td></tr>
               <tr><td><code>ArchiveThumbnails</code></td><td class="def">true</td><td>Picture thumbnails in the archive</td></tr>
-              <tr><td><code>RoundedCorners</code></td><td class="def">true</td><td>false draws the classic square corners</td></tr>
+              <tr><td><code>RoundedCorners</code></td><td class="def">true</td><td>false draws square corners everywhere, with about 40% fewer UI elements</td></tr>
             </tbody>
           </table></div>
         </div>
@@ -729,7 +729,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
       <div class="faq">
         <div><h3>Which other plugins do I need?</h3><p>Only Oxide to run it. Add ServerRewards for RP rewards, Economics for currency rewards and Notify for Notify-style notifications. ImageLibrary is optional and only makes pictures load faster.</p></div>
         <div><h3>Do I need another plugin for the rounded corners?</h3><p>No. NewsBroadcaster draws the corner images itself when the server starts. ImageLibrary is optional and only caches post pictures.</p></div>
-        <div><h3>Will my old posts and config survive the update?</h3><p>Yes. Config, themes, the language file and posts from earlier builds load as they are, and new options are added with their defaults.</p></div>
+        <div><h3>I ran an earlier build. Can I keep my files?</h3><p>The language file, yes. 1.0.0 does not convert the config and data file of the earlier builds, so remove both before installing it. From 1.0.0 on, your values are kept and new options are added with their defaults.</p></div>
         <div><h3>Why doesn't my picture show in game?</h3><p>Rust needs a direct link to a PNG or JPG. The editor warns about imgur pages, Discord links, which stop working after about a day, and GIFs.</p></div>
         <div><h3>How do I make a post only VIPs can see?</h3><p>Create the group with <code>oxide.group add vip</code>, add players with <code>oxide.usergroup add</code>, then pick VIP ONLY under WHO CAN SEE IT.</p></div>
         <div><h3>Can players turn the notifications off?</h3><p>Yes, with <code>/news settings</code>: the sound, the pop-ups (they get a chat line instead) and the post shown when joining.</p></div>
@@ -744,14 +744,14 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
       <div class="head">
         <p class="eyebrow">Changelog</p>
         <h2>What's in 1.0.0</h2>
-        <p>The first release of the new NewsBroadcaster. Coming from an earlier build? Replace the file; everything you have carries over.</p>
+        <p>The first release of the new NewsBroadcaster. Coming from an earlier build? Remove its config and data file first; they are not converted.</p>
       </div>
       <div class="log">
         <div>
           <h3>A premium look</h3>
           <ul>
-            <li>Rounded, anti-aliased corners on panels, buttons and pictures</li>
-            <li>Soft layered shadows, a blurred background and a glass highlight</li>
+            <li>Rounded, anti-aliased corners on panels, cards and pictures</li>
+            <li>Soft shadows, a blurred background and a glass highlight</li>
             <li>Article-style popup; long titles shrink to fit</li>
             <li>Smooth client-side animations on every screen</li>
           </ul>
@@ -782,7 +782,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
             <li>The notification sound played for everyone nearby; now only the player hears it</li>
             <li>ServerRewards points failed on current Rust builds</li>
             <li>Layout broke on servers whose language uses a decimal comma</li>
-            <li>Pinned posts could be removed by the storage limit</li>
+            <li>Pinned posts could be removed by the storage limit, and a new post could be removed as it was published</li>
           </ul>
         </div>
       </div>

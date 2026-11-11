@@ -55,6 +55,7 @@ static class Previews
         var poll = H.AnnByTitle("Next Wipe: Pick The Map Size");
         H.ASet(poll, "Date", "2026-11-05 20:30");
         H.ASet(poll, "Timestamp", new DateTime(2026, 11, 5, 20, 30, 0).Ticks);
+        H.KeepNewestFirst();
         var pollVotes = (Dictionary<ulong, int>)H.AGet(poll, "PollVotes");
         int[] dist = { 9, 21, 11, 3 };
         ulong voter = 76561198200000000;
@@ -92,6 +93,7 @@ static class Previews
             var raid = H.AnnByTitle("Raid Base Event This Saturday");
             H.ASet(raid, "Date", "2026-11-05 21:15");
             H.ASet(raid, "Timestamp", new DateTime(2026, 11, 5, 21, 15, 0).Ticks);
+            H.KeepNewestFirst();
             H.ASet(raid, "CountdownLabel", "Event starts in");
             H.ASet(raid, "CountdownTo", now + 2 * TimeSpan.TicksPerDay + 4 * TimeSpan.TicksPerHour + 30 * TimeSpan.TicksPerMinute + 12 * TimeSpan.TicksPerSecond);
             H.ASet(poll, "PollHours", 72);
