@@ -170,10 +170,8 @@ static class Tests
         H.Console(player, $"news.like {H.Id(third)}");
         Check(Set(third, "LikedPlayers").Contains(player.userID), "double-click within cooldown ignored");
         Check(Sim.DataWrites == writesBefore, "like does not write the data file immediately");
-        Sim.Advance(600);
-        Check(Sim.DataWrites == writesBefore, "...and not on a timer either");
-        H.Call("OnServerSave");
-        Check(Sim.DataWrites == writesBefore + 1, "it is written with the next server save");
+        Sim.Advance(16);
+        Check(Sim.DataWrites == writesBefore + 1, "debounced save flushes once");
         H.Call("OnServerSave");
         Check(Sim.DataWrites == writesBefore + 1, "a server save with nothing changed writes nothing");
         Check(HooksNamed("OnNewsLiked") == 1, "OnNewsLiked fired once");
@@ -207,21 +205,21 @@ static class Tests
         H.Console(player, $"news.view {H.Id(rp)}");
         Sim.Advance(6);
         Check(player.inventory.given.Count == 1, "read reward only once");
-        // After a broadcast everybody reads within the same seconds: paid rewards wait for the server save.
+        // After a broadcast everybody reads within the same seconds: paid rewards wait for the delayed save.
         var readers = Enumerable.Range(0, 6).Select(i => H.MakePlayer(76561198000000100 + (ulong)i, "Reader" + i)).ToList();
-        H.Call("OnServerSave");
+        Sim.Advance(16);
         int rewardWrites = Sim.DataWrites;
         foreach (var reader in readers) H.Console(reader, $"news.view {H.Id(rp)}");
         Sim.Advance(6);
         Check(readers.All(r => r.inventory.given.Count == 1 && Set(rp, "ReadRewardedPlayers").Contains(r.userID)), "six players get the read reward");
         Check(Sim.DataWrites == rewardWrites, "...without a write of the data file for each of them");
-        H.Call("OnServerSave");
-        Check(Sim.DataWrites == rewardWrites + 1 && Sim.DataFiles["NewsBroadcaster_Data"].Contains("76561198000000105"), "one server save stores all of them");
+        Sim.Advance(16);
+        Check(Sim.DataWrites == rewardWrites + 1 && Sim.DataFiles["NewsBroadcaster_Data"].Contains("76561198000000105"), "one delayed save stores all of them");
         readers[0].inventory.FullInventory = true;
         H.CfgSet("Rewards.EnableLikeReward", true);
         H.Console(readers[0], $"news.like {H.Id(rp)}");
         Check(readers[0].dropped.Count == 1 && readers[0].dropped[0].amount == 10 && Set(rp, "LikeRewardedPlayers").Contains(readers[0].userID), "full inventory: the reward is dropped at the player (BasePlayer.GiveItem)");
-        Check(Sim.DataWrites == rewardWrites + 1, "a like reward waits for the server save too");
+        Check(Sim.DataWrites == rewardWrites + 1, "a like reward waits for the delayed save too");
         H.CfgSet("Rewards.EnableLikeReward", false);
 
         // A reward that can't be paid (its plugin is gone) is reported once, not once for every player.
@@ -544,7 +542,7 @@ static class Tests
         Check(LastChat(player) == "Marked 1 announcement(s) as read.", "/news read");
         H.Chat(player, "news", "read");
         Check(LastChat(player) == "You have no unread announcements.", "/news read with nothing unread");
-        H.Call("OnServerSave");
+        Sim.Advance(16);
         Check(JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["ReadAllUpTo"][player.UserIDString] != null, "mark-read marker saved");
 
         // ---------------------------------------------------------------
@@ -1157,7 +1155,7 @@ static class Tests
         H.Call("OnPlayerSleepEnded", player);
         Sim.Advance(2.5);
         Check(!UiOpen(player), "join pop-up off: no popup when waking up");
-        H.Call("OnServerSave");
+        Sim.Advance(16);
         Check(Sim.DataFiles["NewsBroadcaster_Data"].Contains("\"PlayerSettings\"") && Sim.DataFiles["NewsBroadcaster_Data"].Contains("\"JoinPopup\": false"), "settings are saved per player");
 
         // ---------------------------------------------------------------
@@ -1319,7 +1317,7 @@ static class Tests
               ""ReadAllUpTo"": { ""76561198000000002"": 2000, ""76561198000000051"": 999 }
             }";
         });
-        H.Call("OnServerSave");
+        Sim.Advance(16);
         var storedAfterLoad = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"]);
         Check(storedAfterLoad["LastSeenNews"]["76561198000000050"] == null && storedAfterLoad["ReadAllUpTo"]["76561198000000051"] == null, "markers older than the oldest post are dropped on load");
         Check(storedAfterLoad["LastSeenNews"]["76561198000000002"] != null && storedAfterLoad["ReadAllUpTo"]["76561198000000002"] != null, "markers that still matter are kept");
@@ -1449,7 +1447,7 @@ static class Tests
                 ""76561198000000001"": { ""Draft"": { ""Title"": ""Ancient"" }, ""SavedAt"": 5 },
                 ""76561198000000009"": { ""Draft"": { ""Title"": ""Yesterday"" }, ""SavedAt"": " + (DateTime.UtcNow.Ticks - TimeSpan.TicksPerDay) + @" } } }";
         });
-        H.Call("OnServerSave");
+        Sim.Advance(16);
         var keptAutosaves = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["EditorAutosaves"];
         Check(keptAutosaves.Count() == 1 && keptAutosaves["76561198000000009"] != null, "autosaves nobody came back for (30 days) are dropped on load, newer ones stay");
 

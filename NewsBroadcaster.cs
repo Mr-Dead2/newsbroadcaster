@@ -80,6 +80,7 @@ namespace Oxide.Plugins
         private const int MaxCachedColors = 1024;
 
         private bool dataDirty;
+        private Timer saveTimer;
 
         private const string DateFormat = "yyyy-MM-dd HH:mm";
         private const int MaxContentChars = 32768;
@@ -91,6 +92,7 @@ namespace Oxide.Plugins
         private const float RedrawCooldownSeconds = 0.4f;
         private const int MaxPollOptions = 4;
         private const int MaxPollOptionChars = 60;
+        private const float SaveDebounceSeconds = 15f;
         private const int ThemesPerPage = 8;
         private const float MinScheduleSeconds = 1f;
         private const float MaxScheduleSeconds = 3600f;
@@ -1252,6 +1254,11 @@ namespace Oxide.Plugins
             ScheduleNextCheck();
 
             dataDirty = false;
+            if (saveTimer != null)
+            {
+                saveTimer.Destroy();
+                saveTimer = null;
+            }
             Interface.Oxide.DataFileSystem.WriteObject(DataFile, storedData);
         }
 
@@ -1286,6 +1293,12 @@ namespace Oxide.Plugins
         private void MarkDataDirty()
         {
             dataDirty = true;
+            if (saveTimer != null && !saveTimer.Destroyed) return;
+            saveTimer = timer.Once(SaveDebounceSeconds, () =>
+            {
+                saveTimer = null;
+                if (dataDirty) SaveAnnouncements();
+            });
         }
 
         private void LoadAnnouncements()
@@ -1409,6 +1422,8 @@ namespace Oxide.Plugins
             surfaceColors.Clear();
 
             if (dataDirty) SaveAnnouncements();
+            saveTimer?.Destroy();
+            saveTimer = null;
             scheduleTimer?.Destroy();
             scheduleTimer = null;
         }
