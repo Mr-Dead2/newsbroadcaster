@@ -108,7 +108,7 @@ One file. Needs only Oxide. No web panel, no database.
 
 ### How it looks
 
-Rounded corners on every panel, button and picture, soft shadows, a blurred background, and smooth animations that run on the player's client. The corner images are drawn by the plugin itself, so no other plugin or download is needed.
+Rounded panels, cards and pictures, soft shadows, a blurred background, and smooth animations that run on the player's client. The corner images are drawn by the plugin itself, so no other plugin or download is needed. Small controls are flat, so a whole archive page is about 160 UI elements (about 100 with `RoundedCorners` off).
 
 ### Installation
 
@@ -158,8 +158,8 @@ Types: `Info`, `Warning`, `Alert`, `Event`, `Update`.
 | `UnreadReminderOnConnect` | `true` | One chat line about posts missed while offline |
 | `RequireViewPermission` | `true` | `false` lets everyone see news |
 | `EnableAutoClose` / `AutoCloseSeconds` | `true` / `15` | Broadcast popups close by themselves |
-| `AnnouncementsPerPage` | `5` | Rows per page (1–8) |
-| `MaxStoredAnnouncements` | `50` | Oldest posts are removed above this; pinned posts and drafts stay |
+| `AnnouncementsPerPage` | `5` | Rows per page (keep it between 1 and 8) |
+| `MaxStoredAnnouncements` | `50` | Oldest posts are removed above this; pinned posts, drafts and the newest post stay |
 | `PopupImageFrame` | `Tall` | `Wide` keeps a 16:9 frame for widescreen pictures |
 | `Notification.Position` | `TopRight` | Six toast positions, plus X / Y offsets |
 | `Discord.WebhookUrl` | empty | Paste a webhook URL and set `Enabled` to post to Discord |
@@ -213,14 +213,15 @@ Popups and toasts, polls with timers, event countdowns, archive with filters, se
 
 Put this in the message to the reviewers if the form has a field for it. It answers what a reviewer usually has to work out from the code.
 
-- **What it is:** one C# file, one class (`Oxide.Plugins.NewsBroadcaster : RustPlugin`), about 5,700 lines. No `System.IO`, `System.Net`, reflection or threads.
+- **What it is:** one C# file, one class (`Oxide.Plugins.NewsBroadcaster : RustPlugin`), about 5,700 lines. No LINQ; temporary lists come from `Facepunch.Pool`. No `System.IO`, `System.Net`, reflection or threads.
 - **Network:** the only outgoing request is the Discord webhook, to the URL the server owner puts in the config, through Oxide's `webrequest`. Nothing else is contacted. No licence check, no telemetry, no code is downloaded.
 - **Files:** it writes its own config, lang and data file (`oxide/data/NewsBroadcaster_Data.json`) through Oxide. At startup it stores eight small PNGs (rounded corners, drawn in code) in the server's `FileStorage`.
-- **Server load:** no per-tick or per-frame hooks. One 30-second timer deletes expired posts and closes timed polls. Likes, reads and editor autosaves are written with a 15-second delay, and on server save and unload. UI is sent only when a player clicks.
+- **Server load:** no per-tick or per-frame hooks and no repeating timer. One one-shot timer waits for the next auto-delete or poll closing; when nothing is scheduled, none runs. Likes, reads, votes, paid rewards and editor autosaves are written together with a 15-second delay, and on server save and unload. UI is sent only when a player clicks: an archive page is about 160 elements (about 100 with `RoundedCorners` off), and page, filter and search clicks redraw at most once every 0.4 seconds per player.
+- **Config and data:** the plain Oxide shape (`ReadObject`, `WriteObject`). No migrations: files from the earlier builds are not converted.
 - **Hooks used:** `Init`, `OnServerInitialized`, `OnPluginLoaded`, `OnServerSave`, `OnPlayerSleepEnded`, `OnPlayerDisconnected`, `Unload`.
 - **Permissions:** `newsbroadcaster.view` and `newsbroadcaster.admin`. Every admin command checks the permission on the server, and every player-facing command checks whether that player may see the post.
 - **Optional plugins** (`ImageLibrary`, `Notify`, `ServerRewards`, `Economics`) are null-checked and `IsLoaded`-checked before each call.
-- **Tested:** compiled as C# 6 and C# 7 against the .NET Framework 4.8 API with stand-ins for the Oxide and Rust types, and run through 340 automated checks (commands, permissions, data migration, UI tree, cleanup on disconnect and unload).
+- **Tested:** compiled as C# 6 and C# 7 against the .NET Framework 4.8 API with stand-ins for the Oxide and Rust types, and run through 378 automated checks (commands, permissions, config and data loading, UI tree and element counts, cleanup on disconnect and unload).
 
 ---
 

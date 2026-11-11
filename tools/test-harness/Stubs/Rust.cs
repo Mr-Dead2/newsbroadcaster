@@ -94,7 +94,11 @@ public class BaseNetworkable : BaseMonoBehaviour
     public Network.Networkable net = new Network.Networkable();
     public bool IsDestroyed { get; set; }
 }
-public class BaseEntity : BaseNetworkable { }
+public class BaseEntity : BaseNetworkable
+{
+    public enum GiveItemReason { Generic, ResourceHarvested, PickedUp, Crafted }
+    public virtual void GiveItem(Item item, GiveItemReason reason = GiveItemReason.Generic) { }
+}
 public class BaseCombatEntity : BaseEntity { }
 public class PointEntity : BaseEntity { }
 
@@ -128,6 +132,7 @@ public class BasePlayer : BaseCombatEntity
     public PlayerInventory inventory;
     public bool isAdminFlag;
     public bool connectedFlag = true;
+    public List<Item> dropped = new List<Item>();   // harness: what GiveItem had to drop
 
     public BasePlayer() { inventory = new PlayerInventory { owner = this }; }
 
@@ -139,6 +144,14 @@ public class BasePlayer : BaseCombatEntity
     public bool IsAlive() => true;
 
     public void ChatMessage(string msg) => Sim.Chat(this, msg);
+
+    // Into the inventory, or dropped in front of the player when it is full (like the game does).
+    public override void GiveItem(Item item, GiveItemReason reason = GiveItemReason.Generic)
+    {
+        if (inventory.GiveItem(item)) return;
+        item.Drop(Vector3.zero, Vector3.zero);
+        dropped.Add(item);
+    }
 
     public void SendConsoleCommand(string command, params object[] obj)
     {
@@ -343,5 +356,58 @@ public class ConsoleSystem
         }
 
         public void ReplyWith(string strValue) { Reply = strValue; Sim.ConsoleReply(this, strValue); }
+    }
+}
+
+namespace Facepunch
+{
+    // Object pool (current API: Get<T>() and FreeUnmanaged(ref collection); the old GetList / FreeList are gone).
+    // Outstanding counts what was taken and not given back, so the tests can check nothing leaks.
+    public static class Pool
+    {
+        public interface IPooled { void EnterPool(); void LeavePool(); }
+
+        public static int Outstanding;
+        private static readonly Dictionary<Type, Stack<object>> pools = new Dictionary<Type, Stack<object>>();
+
+        public static T Get<T>() where T : class, new()
+        {
+            Outstanding++;
+            Stack<object> stack;
+            if (pools.TryGetValue(typeof(T), out stack) && stack.Count > 0) return (T)stack.Pop();
+            return new T();
+        }
+
+        private static void Return(Type type, object obj)
+        {
+            Outstanding--;
+            Stack<object> stack;
+            if (!pools.TryGetValue(type, out stack)) pools[type] = stack = new Stack<object>();
+            stack.Push(obj);
+        }
+
+        public static void FreeUnmanaged<T>(ref List<T> obj)
+        {
+            if (obj == null) throw new ArgumentNullException(nameof(obj));
+            obj.Clear();
+            Return(typeof(List<T>), obj);
+            obj = null;
+        }
+
+        public static void FreeUnmanaged<T>(ref HashSet<T> obj)
+        {
+            if (obj == null) throw new ArgumentNullException(nameof(obj));
+            obj.Clear();
+            Return(typeof(HashSet<T>), obj);
+            obj = null;
+        }
+
+        public static void FreeUnmanaged<TKey, TVal>(ref Dictionary<TKey, TVal> obj)
+        {
+            if (obj == null) throw new ArgumentNullException(nameof(obj));
+            obj.Clear();
+            Return(typeof(Dictionary<TKey, TVal>), obj);
+            obj = null;
+        }
     }
 }
