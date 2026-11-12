@@ -26,6 +26,9 @@ namespace HarnessRuntime
         public static readonly Dictionary<string, string> ConfigFiles = new Dictionary<string, string>();
         public static int DataWrites, ConfigWrites, ElementIds;
         public static readonly List<KeyValuePair<string, object[]>> Hooks = new List<KeyValuePair<string, object[]>>();
+        // How often each data file was written (DataWrites counts all of them).
+        public static readonly Dictionary<string, int> FileWrites = new Dictionary<string, int>();
+        public static int WritesOf(string file) => FileWrites.TryGetValue(file, out var count) ? count : 0;
         // Other loaded plugins (the in-game test helper) that Interface.CallHook also calls.
         public static readonly List<object> HookListeners = new List<object>();
         public static readonly List<WebRequestRecord> WebRequests = new List<WebRequestRecord>();
@@ -211,7 +214,7 @@ namespace HarnessRuntime
 
         public static void ResetAll()
         {
-            DataFiles.Clear(); ConfigFiles.Clear(); Hooks.Clear(); HookListeners.Clear(); WebRequests.Clear(); Timers.Clear(); NextTicks.Clear();
+            DataFiles.Clear(); ConfigFiles.Clear(); Hooks.Clear(); HookListeners.Clear(); FileWrites.Clear(); WebRequests.Clear(); Timers.Clear(); NextTicks.Clear();
             LogLines.Clear(); ChatLog.Clear(); ConsoleReplies.Clear(); Clients.Clear(); MissingLangKeys.Clear();
             Permission.UserPerms.Clear(); Permission.DefaultGroupPerms.Clear();
             Permission.GroupMembers.Clear(); Permission.CreateGroup("default", "default", 0); Permission.CreateGroup("admin", "admin", 1);
