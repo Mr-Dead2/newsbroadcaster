@@ -221,7 +221,7 @@ Put this in the message to the reviewers if the form has a field for it. It answ
 - **Hooks used:** `Init`, `OnServerInitialized`, `OnPluginLoaded`, `OnServerSave`, `OnPlayerSleepEnded`, `OnPlayerDisconnected`, `Unload`.
 - **Permissions:** `newsbroadcaster.view` and `newsbroadcaster.admin`. Every admin command checks the permission on the server, and every player-facing command checks whether that player may see the post.
 - **Optional plugins** (`ImageLibrary`, `Notify`, `ServerRewards`, `Economics`) are null-checked and `IsLoaded`-checked before each call.
-- **Tested:** compiled as C# 6 and C# 7 against the .NET Framework 4.8 API with stand-ins for the Oxide and Rust types, and run through 461 automated checks (commands, permissions, config and data loading, UI tree and element counts, cleanup on disconnect and unload), including every console command called with junk arguments by the console, a player without permission, a player and an admin, and every screen under two dozen bad config values.
+- **Tested:** compiled as C# 6 and C# 7 against the .NET Framework 4.8 API with stand-ins for the Oxide and Rust types, and run through 465 automated checks (commands, permissions, config and data loading, UI tree and element counts, cleanup on disconnect and unload), including every console command called with junk arguments by the console, a player without permission, a player and an admin, and every screen under two dozen bad config values.
 
 ---
 

@@ -1720,6 +1720,32 @@ static class Tests
         Sim.HookListeners.Clear();
 
         // ---------------------------------------------------------------
+        Section("Console arguments are StringView on current Rust");
+        Fresh();
+        Post("Raid base event this weekend", "Bring friends");
+        Post("Wipe day", "Fresh map");
+        H.Console(admin, "news.admin.themes 0");
+        var themeButtons = H.Commands(admin).Where(command => command.StartsWith("news.admin.settheme ")).ToList();
+        bool everyTheme = themeButtons.Count == 6;
+        foreach (var button in themeButtons)
+        {
+            H.Console(admin, button);
+            string picked = (string)H.AGet(H.Config, "SelectedTheme");
+            everyTheme &= button.StartsWith("news.admin.settheme " + picked + " ") && H.HasElement(admin, "NewsBroadcasterUI.Themes");
+        }
+        Check(everyTheme && !H.ChatOf(admin).Any(m => m.Contains("not found") || m.Contains("StringView")), "clicking each of the 6 theme cards picks that theme");
+        H.Console(player, "news.page 0 reset");
+        Nav(player, "news.search raid base event");
+        Sim.Advance(1);
+        Check(H.Texts(player).Any(t => t.Contains("RAID BASE EVENT")) && !H.Texts(player).Any(t => t.Contains("WIPE DAY")), "an archive search of several words finds the post");
+        H.Console(admin, "news.admin");
+        Nav(admin, "news.admin.search wipe day");
+        Sim.Advance(1);
+        Check(H.Texts(admin).Any(t => t.Contains("WIPE DAY")) && !H.Texts(admin).Any(t => t.Contains("RAID BASE")), "a News Management search of several words finds the post");
+        Check(!Sim.ConsoleReplies.Concat(Sim.ChatLog.Values.SelectMany(l => l)).Concat(Sim.Clients.Values.SelectMany(c => c.Elements).Select(e => e.ToString())).Any(t => t.Contains("StringView")),
+            "no reply, chat line or screen shows 'StringView'");
+
+        // ---------------------------------------------------------------
         Section("Garbage input: every command, every caller");
         Fresh();
         Sim.Permission.CreateGroup("vip", "VIP", 0);

@@ -277,14 +277,19 @@ public static class EffectNetwork
         => Sim.Log($"[effect -> {target?.username}] {effect.pooledString}");
 }
 
-// Facepunch's lightweight string slice (ConsoleSystem.Arg.FullString). Deliberately no implicit
-// conversion to string, so "arg.FullString ?? ..." or passing it as a string fails here like on a real server.
-public struct StringView
+namespace Facepunch
 {
-    private readonly string value;
-    public StringView(string value) { this.value = value ?? string.Empty; }
-    public int Length => (value ?? string.Empty).Length;
-    public override string ToString() => value ?? string.Empty;
+    // Facepunch's lightweight string slice: what current Rust gives for ConsoleSystem.Arg.FullString AND for every
+    // entry of ConsoleSystem.Arg.Args (an array of these, not of strings). Deliberately no implicit conversion to
+    // string, so "arg.FullString ?? ..." fails to compile here like on a server, and string.Join(" ", arg.Args)
+    // prints "Facepunch.StringView[]" here exactly as it does in game. Read arguments with arg.GetString(i).
+    public struct StringView
+    {
+        private readonly string value;
+        public StringView(string value) { this.value = value ?? string.Empty; }
+        public int Length => (value ?? string.Empty).Length;
+        public override string ToString() => value ?? string.Empty;
+    }
 }
 
 public class ConsoleSystem
@@ -292,7 +297,8 @@ public class ConsoleSystem
     public class Arg
     {
         private readonly string fullString;
-        public string[] Args;
+        // Current Rust: an array of Facepunch.StringView, not string[].
+        public Facepunch.StringView[] Args;
         public Network.Connection Connection { get; }
         public bool IsRcon { get; }
         public string Reply;
@@ -301,12 +307,12 @@ public class ConsoleSystem
         {
             Connection = connection;
             this.fullString = fullString ?? string.Empty;
-            Args = Sim.SplitQuotes(this.fullString);
+            Args = Array.ConvertAll(Sim.SplitQuotes(this.fullString), word => new Facepunch.StringView(word));
             IsRcon = rcon;
         }
 
         // Current Rust returns a StringView here, not a string: only .ToString() works on it.
-        public StringView FullString => new StringView(fullString);
+        public Facepunch.StringView FullString => new Facepunch.StringView(fullString);
         public bool IsAdmin => Connection == null || Connection.authLevel > 0;
         public bool IsServerside => true;
         public bool IsClientside => false;
@@ -316,7 +322,7 @@ public class ConsoleSystem
         public string GetString(int iArg, string def = "")
         {
             if (Args == null || iArg < 0 || iArg >= Args.Length) return def;
-            return Args[iArg];
+            return Args[iArg].ToString();
         }
 
         public int GetInt(int iArg, int def = 0)

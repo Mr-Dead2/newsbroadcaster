@@ -63,6 +63,7 @@
 - ServerRewards points failed to pay on current Rust builds (wrapped player id).
 - Compiles on the November 2026 Rust update (new `FileStorage` API for the rounded-corner images, `StringView` console arguments).
 - `/n` broke normal words such as `w/new`.
+- Picking a theme said "Theme 'Facepunch.StringView[] 0 1' not found", and the archive and News Management searches looked for that text instead of what was typed (current Rust passes command arguments as a new type).
 - A title, name, poll option or search that ended with a backslash stopped the whole screen from drawing (the game cannot read such a text). A space is added after it.
 - Double quotes in a text are sent as typographic quotes, which the game shows as they are.
 - The editor's hint about new lines broke its own line in game.
