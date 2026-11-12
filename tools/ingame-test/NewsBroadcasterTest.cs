@@ -257,10 +257,11 @@ namespace Oxide.Plugins
             bool notify = string.Equals(arg.GetString(0), "notify", StringComparison.OrdinalIgnoreCase);
             var posts = new List<Dictionary<string, object>>
             {
-                new Dictionary<string, object> { ["title"] = "Path C:\\Rust\\", ["author"] = "Admin\\", ["type"] = "Alert", ["text"] = "Ends with a backslash \\", ["pollOptions"] = new[] { "Yes\\", "No \"maybe\"" } },
-                new Dictionary<string, object> { ["title"] = "He said \"hello\" and left", ["type"] = "Info", ["text"] = "Quotes: \"double\", 'single', “curly”. A backslash-n written out: C:\\new folder\\notes" },
-                new Dictionary<string, object> { ["title"] = "Braces {0} {1} and percent %d %TIME_LEFT%", ["type"] = "Warning", ["text"] = "Format strings must show as typed: {0} {name} {{x}} 100%" },
-                new Dictionary<string, object> { ["title"] = "<color=red>Rich</color> <b>text</b> </color>", ["type"] = "Event", ["text"] = "<size=40>big?</size> <color=#ff0000>red?</color> <i>italic</i> </b> stray closing tags" },
+                new Dictionary<string, object> { ["title"] = "Path C:\\Rust\\", ["author"] = "Admin\\", ["type"] = "Alert", ["text"] = "Expected: the pop-up, the toast and the poll draw. Title, author and options all end with a backslash \\", ["pollOptions"] = new[] { "Yes\\", "No \"maybe\"" } },
+                new Dictionary<string, object> { ["title"] = "He said \"hello\" and left", ["type"] = "Info", ["text"] = "Expected: straight double quotes show as curly ones. Quotes: \"double\", 'single', “curly”. A backslash and n written out: C:\\new folder\\notes" },
+                new Dictionary<string, object> { ["title"] = "Braces {0} {1} and percent %d %TIME_LEFT%", ["type"] = "Warning", ["text"] = "Expected: everything shows exactly as typed, here and in the title: {0} {name} {{x}} 100%" },
+                new Dictionary<string, object> { ["title"] = "<color=red>Rich</color> <b>text</b> </color>", ["type"] = "Event", ["text"] = "Expected: tags show as plain text. The title is in capitals (the game only knows lower-case tags) and this text has a stray closing tag, so the game shows it as typed: <size=40>big?</size> <color=#ff0000>red?</color> <i>italic</i> </b>" },
+                new Dictionary<string, object> { ["title"] = "Rich text that works", ["type"] = "Event", ["text"] = "Expected: real formatting. <color=#ff5555>Red</color>, <color=#55ff88>green</color>, <b>bold</b>, <i>italic</i> and <size=22>bigger</size> text, with every tag closed." },
                 new Dictionary<string, object> { ["title"] = "Ünïcödé ✓ ❤ 中文 — ±½", ["type"] = "Update", ["text"] = "Emoji and other scripts: 😀 🔥 Привет مرحبا שלום" },
                 new Dictionary<string, object> { ["title"] = new string('W', 120), ["type"] = "Info", ["text"] = "A 120-character title made of wide letters." },
                 new Dictionary<string, object> { ["title"] = "Empty text and a broken picture link", ["type"] = "Info", ["text"] = "", ["imageUrl"] = "https://example.invalid/missing.png" },

@@ -1679,7 +1679,7 @@ static class Tests
         Check(nbtest(player, "nbtest.seed").Contains("admins only") && H.Announcements.Count == 0, "a normal player can't use it");
 
         Check(nbtest(admin, "nbtest.seed notify").Contains("12 of 12") && H.Announcements.Count == 12 && ToastOpen(player), "nbtest.seed makes 12 posts and announces the last one");
-        Check(nbtest(admin, "nbtest.junk").Contains("8 of 8"), "nbtest.junk makes 8 awkward posts");
+        Check(nbtest(admin, "nbtest.junk").Contains("9 of 9"), "nbtest.junk makes 9 awkward posts");
         var longReply = System.Text.RegularExpressions.Regex.Match(nbtest(admin, "nbtest.long 20000"), @"(\d+) characters stored");
         Check(longReply.Success && int.Parse(longReply.Groups[1].Value) <= 12000 && int.Parse(longReply.Groups[1].Value) > 11000, "nbtest.long: a 20000-character text is cut to at most 12000 (" + longReply.Value + ")");
         nbtest(admin, "nbtest.group");

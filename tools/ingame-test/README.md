@@ -24,7 +24,7 @@ All commands run in the server console, RCON or the F1 console in game (admins o
 |---|---|
 | `nbtest.run` | Self-test: creates posts through the API, checks what comes back (fields, timers, drafts, groups, unread count, hooks), deletes them again. Prints PASS / FAIL. Run it from F1 in game: some checks need a player. |
 | `nbtest.seed [notify]` | 12 sample posts: every type, pictures, a pinned post, two polls (one closes after 1 hour), a 2-minute and a 1-day countdown, a post that deletes itself after a day, a group-only post, a draft, a long title |
-| `nbtest.junk [notify]` | Awkward texts: trailing backslashes, quotes, `{0}` braces, rich-text tags, emoji and other scripts, a 120-character title, an empty text with a broken picture link, links |
+| `nbtest.junk [notify]` | Awkward texts: trailing backslashes, quotes, `{0}` braces, broken and working rich-text tags, emoji and other scripts, a 120-character title, an empty text with a broken picture link, links. Each post's text says what you should see |
 | `nbtest.long [chars]` | One post with a very long text (default 11,500 characters; the plugin keeps at most 12,000) |
 | `nbtest.countdown [sec] [label]` | A countdown that ends in `sec` seconds (default 90), announced to everyone |
 | `nbtest.poll [hours]` | A poll that closes after `hours` (default 1, `0` = no timer), announced to everyone |
@@ -55,7 +55,7 @@ The helper's config (`oxide/config/NewsBroadcasterTest.json`) holds the test gro
    - Open `/news`: three pages, thumbnails only with ImageLibrary, NEW badges, the group post visible to you (you are an admin).
    - Open every post. Look at the rounded corners (no light squares or seams), the pictures (inside their frame), the scrolling of the long post, the title sizes.
    - Leave the "Raid base event" pop-up open until its countdown reaches zero.
-3. **Awkward texts:** `nbtest.junk`, then open each one. Every screen must draw and F1 must stay free of UI errors.
+3. **Awkward texts:** `nbtest.junk`, then open each one. Every screen must draw, F1 must stay free of UI errors, and each post looks the way its text says. Tags in titles and in texts with a stray tag show as plain text (the game only reads a text's tags when they pair up, and titles are in capitals); the "Rich text that works" post shows real colours, bold and size.
 4. **Players' actions:** like, unlike, vote, change your vote. Only the button or the poll redraws; the scroll position stays.
 5. **Hooks:** `nbtest.hooks on`, like and vote again, watch the server console, then `nbtest.hooks off`.
 6. **Admin:** `/news admin`.
