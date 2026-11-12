@@ -110,7 +110,7 @@ Two independent bundles — one for **reading** a post (popup open for `ReadDela
 | `UnreadReminderOnConnect` | `true` | One chat line about posts missed since the last visit |
 | `RequireViewPermission` | `true` | `false` lets everyone see news |
 | `PopupImageFrame` | `"Tall"` | `"Wide"` = 16:9 frame so widescreen images aren't stretched |
-| `ArchiveThumbnails` | `true` | Image thumbnails in the archive |
+| `ArchiveThumbnails` | `true` | Image thumbnails in the archive (needs ImageLibrary) |
 | `StripLinksFromBody` | `true` | Remove links from post bodies |
 | `Notification.Position` | `"TopRight"` | Six toast positions, plus `OffsetX` / `OffsetY` |
 | `Discord.RoleMention` | `""` | Role / `@here` / `@everyone` ping for Discord posts |
@@ -131,7 +131,7 @@ Updating from an older version keeps your config, themes and announcements — n
 | [ServerRewards](https://umod.org/plugins/server-rewards) | For RP rewards (`Points` in the read or like reward) |
 | [Economics](https://umod.org/plugins/economics) | For currency rewards (`Currency` in the read or like reward) |
 | [Notify](https://umod.org/plugins/notify) | Only if you turn on `UseNotifyPlugin`; otherwise the plugin's own notification is used |
-| [ImageLibrary](https://umod.org/plugins/image-library) | Not required. If it's installed, post pictures are cached through it so they load faster |
+| [ImageLibrary](https://umod.org/plugins/image-library) | Not required, but recommended. Pictures are stored once and sent by id; list thumbnails need it |
 
 A reward that includes RP or currency isn't paid while its plugin is missing, including any items in the same reward; the server console says why. It isn't marked as paid, so it can still be paid after you install the plugin. Everything else, including item rewards, rounded corners, polls, countdowns and Discord posts, needs only Oxide.
 
@@ -169,5 +169,5 @@ See `CHANGELOG.md` for the full list. Highlights:
 - Popup navigation, live auto-close countdown, archive thumbnails
 - Many fixes (cut-off titles, theme overflow, private sound, ServerRewards on current Rust, comma-locale servers)
 - Built for the November 2026 Rust update
-- Light on the server: small screens (an archive page is about 160 UI elements), batched saves, no idle timers
+- Light on the server: small screens (an archive page is about 160 UI elements), batched saves, one toast built per broadcast, no idle timers
 - First release: files from earlier builds are not converted, so start with a fresh config and data file

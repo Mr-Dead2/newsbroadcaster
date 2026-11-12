@@ -59,6 +59,7 @@ namespace UnityEngine
         public static int Clamp(int v, int min, int max) => v < min ? min : (v > max ? max : v);
         public static float Clamp(float v, float min, float max) => v < min ? min : (v > max ? max : v);
         public static float Clamp01(float v) => Clamp(v, 0f, 1f);
+        public static float Round(float f) => (float)Math.Round(f, MidpointRounding.ToEven);
         public static int RoundToInt(float f) => (int)Math.Round(f, MidpointRounding.ToEven);
         public static int CeilToInt(float f) => (int)Math.Ceiling(f);
         public static int FloorToInt(float f) => (int)Math.Floor(f);

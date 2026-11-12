@@ -37,6 +37,9 @@ static class Previews
     {
         Sim.ResetAll();
         H.Boot();
+        // A server with ImageLibrary, as most have: pictures are stored once and sent by id (here the id is the link,
+        // which is what the renderer looks its sample pictures up by).
+        H.Set("ImageLibrary", new FakePlugin("ImageLibrary") { Handler = (hook, args) => hook == "HasImage" ? (object)true : hook == "GetImage" ? args[0] : null });
         var admin = H.MakePlayer(76561198000000001, "DEDA", admin: true);
         var player = H.MakePlayer(76561198000000002, "Survivor", admin: false);
 
@@ -116,7 +119,7 @@ static class Previews
         Sim.Advance(30);
 
         // 1) Toast notification for a fresh broadcast
-        H.CallIfExists("ShowNotification", player, wipe);
+        H.Call("ShowNotification", player, wipe, null, null);
         H.Save(player, outDir, "01_notification");
         H.Console(player, "news.close.notif");
 
@@ -343,6 +346,7 @@ static class Bench
         Sim.ResetAll();
         Sim.Quiet = true;
         H.Boot();
+        H.Set("ImageLibrary", new FakePlugin("ImageLibrary") { Handler = (hook, args) => hook == "HasImage" ? (object)true : hook == "GetImage" ? (object)"1234567890" : null });
         var admin = H.MakePlayer(76561198000000001, "DEDA", admin: true);
         var player = H.MakePlayer(76561198000000002, "Survivor");
         H.CfgSet("General.MaxStoredAnnouncements", 500);
@@ -365,7 +369,7 @@ static class Bench
         var showHistory = H.T.GetMethod("ShowHistory", All);
         var showPopup = H.T.GetMethod("ShowPopup", All);
         var showAdmin = H.T.GetMethod("ShowAdminList", All);
-        var showToast = H.T.GetMethod("ShowNotification", All);
+        var buildToast = H.T.GetMethod("BuildToast", All);
         var countUnread = H.T.GetMethod("CountUnread", All);
         var save = H.T.GetMethod("SaveAnnouncements", All);
         var check = H.T.GetMethod("CheckScheduled", All);
@@ -376,7 +380,7 @@ static class Bench
         Measure("archive page with a search", 2000, () => showHistory.Invoke(H.P, new object[] { player, 0 }));
         H.Console(player, "news.search.clear");
         Measure("popup (ShowPopup)", 2000, () => showPopup.Invoke(H.P, new object[] { player, newest, direct, false }));
-        Measure("toast (ShowNotification)", 2000, () => showToast.Invoke(H.P, new object[] { player, newest }));
+        Measure("toast (BuildToast, once per language)", 2000, () => buildToast.Invoke(H.P, new object[] { player, newest, "Title", "NewsNotificationUI.1" }));
         Measure("News Management (ShowAdminList)", 1000, () => showAdmin.Invoke(H.P, new object[] { admin, 0 }));
         Measure("unread count (CountUnread)", 5000, () => countUnread.Invoke(H.P, new object[] { player }));
         Measure("schedule check, nothing due", 5000, () => check.Invoke(H.P, null));

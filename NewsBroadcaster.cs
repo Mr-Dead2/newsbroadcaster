@@ -76,14 +76,22 @@ namespace Oxide.Plugins
         private string[] cornerFill;
         private string[] cornerMask;
         private readonly Dictionary<string, float[]> parsedColors = new Dictionary<string, float[]>();
+        private readonly Dictionary<string, Dictionary<string, string>> blendedColors = new Dictionary<string, Dictionary<string, string>>();
+        private readonly Dictionary<string, string> opaqueColors = new Dictionary<string, string>();
+        private readonly Dictionary<string, string> hexColors = new Dictionary<string, string>();
+        private static readonly Dictionary<float, string> floatTexts = new Dictionary<float, string>();
+        private const int MaxCachedFloats = 4096;
         private readonly HashSet<string> warnedRewardProblems = new HashSet<string>();
         private const int MaxCachedColors = 1024;
 
         private bool dataDirty;
         private Timer saveTimer;
+        private bool dataUnreadable;
+        private bool dataUnreadableWarned;
+        private bool configUnreadable;
 
         private const string DateFormat = "yyyy-MM-dd HH:mm";
-        private const int MaxContentChars = 32768;
+        private const int MaxContentChars = 12000;
         private const int MaxTitleChars = 120;
         private const int MaxImageUrlChars = 2048;
         private const int DiscordEmbedDescriptionLimit = 4000;
@@ -116,7 +124,13 @@ namespace Oxide.Plugins
         private const float AdminHeightUnits = 619.2f;
         private const float AdminSidePad = 28f;
         private static readonly string[] AdminTabs = { "all", "published", "drafts", "pinned", "polls" };
+        private static readonly string[] AdminTabKeys = { "AdminTabAll", "AdminTabPublished", "AdminTabDrafts", "AdminTabPinned", "AdminTabPolls" };
         private static readonly string[] AdminSorts = { "newest", "oldest", "reads", "likes" };
+        private static readonly string[] AdminSortKeys = { "SortNewest", "SortOldest", "SortReads", "SortLikes" };
+        private static readonly string[] TypeNames = { "Info", "Warning", "Alert", "Event", "Update" };
+        private static readonly string[] TypeLabels = { "INFO", "WARNING", "ALERT", "EVENT", "UPDATE" };
+        private static readonly string[] TypeFilterCommands = { "news.filter info", "news.filter warning", "news.filter alert", "news.filter event", "news.filter update" };
+        private static readonly int[] TitleFontSizes = { 32, 28, 26, 24, 22, 20, 18, 16 };
         private const int AutosaveKeepDays = 30;
 
         private const string AdminBackdrop = "0.015 0.018 0.022 0.74";
@@ -145,11 +159,84 @@ namespace Oxide.Plugins
             public List<Announcement> Announcements = new List<Announcement>();
             public Dictionary<ulong, long> LastSeenNews = new Dictionary<ulong, long>();
             public Dictionary<ulong, long> ReadAllUpTo = new Dictionary<ulong, long>();
-            public Dictionary<ulong, PlayerPrefs> PlayerSettings = new Dictionary<ulong, PlayerPrefs>();
+            public Dictionary<ulong, NewsPrefs> PlayerSettings = new Dictionary<ulong, NewsPrefs>();
             public Dictionary<ulong, EditorSession> EditorAutosaves = new Dictionary<ulong, EditorSession>();
         }
 
-        class PlayerPrefs
+        class Ui : CuiElementContainer
+        {
+            private static uint lastName;
+            public readonly Dictionary<string, string> Surfaces = new Dictionary<string, string>();
+
+            public string Add(CuiLabel label, string parent, string name = null)
+            {
+                var element = new CuiElement { Name = name, Parent = parent, FadeOut = label.FadeOut };
+                element.Components.Add(label.Text);
+                element.Components.Add(label.RectTransform);
+                Add(element);
+                return name;
+            }
+
+            public new string Add(CuiPanel panel, string parent, string name = null, string destroyUi = null)
+            {
+                if (name == null) name = NextName();
+                AddPanel(panel, parent, name, destroyUi);
+                return name;
+            }
+
+            public void Leaf(CuiPanel panel, string parent) => AddPanel(panel, parent, null, null);
+
+            public string Add(CuiButton button, string parent, string name = null)
+            {
+                if (name == null) name = NextName();
+                var element = new CuiElement { Name = name, Parent = parent, FadeOut = button.FadeOut };
+                element.Components.Add(button.Button);
+                element.Components.Add(button.RectTransform);
+                Add(element);
+                if (string.IsNullOrEmpty(button.Text.Text)) return name;
+
+                var text = new CuiElement { Parent = name, FadeOut = button.FadeOut };
+                text.Components.Add(button.Text);
+                text.Components.Add(new CuiRectTransformComponent());
+                Add(text);
+                return name;
+            }
+
+            private void AddPanel(CuiPanel panel, string parent, string name, string destroyUi)
+            {
+                var element = new CuiElement { Name = name, Parent = parent, FadeOut = panel.FadeOut, DestroyUi = destroyUi };
+                element.Components.Add(panel.Image);
+                element.Components.Add(panel.RectTransform);
+                if (panel.CursorEnabled) element.Components.Add(new CuiNeedsCursorComponent());
+                Add(element);
+            }
+
+            private static string NextName() => "nb_" + (++lastName).ToString("x");
+        }
+
+        class IdSetConverter : JsonConverter
+        {
+            public override bool CanConvert(Type objectType) => objectType == typeof(HashSet<ulong>);
+
+            public override bool CanRead => false;
+
+            public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+            {
+                throw new NotSupportedException();
+            }
+
+            public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+            {
+                var formatting = writer.Formatting;
+                writer.WriteStartArray();
+                writer.Formatting = Formatting.None;
+                foreach (ulong id in (HashSet<ulong>)value) writer.WriteValue(id);
+                writer.WriteEndArray();
+                writer.Formatting = formatting;
+            }
+        }
+
+        class NewsPrefs
         {
             public bool Sound = true;
             public bool Popups = true;
@@ -168,10 +255,10 @@ namespace Oxide.Plugins
             public long Timestamp;
             public bool Pinned;
             public string EditedDate;
-            public HashSet<ulong> LikedPlayers = new HashSet<ulong>();
-            public HashSet<ulong> ReadByPlayers = new HashSet<ulong>();
-            public HashSet<ulong> ReadRewardedPlayers = new HashSet<ulong>();
-            public HashSet<ulong> LikeRewardedPlayers = new HashSet<ulong>();
+            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> LikedPlayers = new HashSet<ulong>();
+            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> ReadByPlayers = new HashSet<ulong>();
+            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> ReadRewardedPlayers = new HashSet<ulong>();
+            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> LikeRewardedPlayers = new HashSet<ulong>();
             public List<string> PollOptions = new List<string>();
             public Dictionary<ulong, int> PollVotes = new Dictionary<ulong, int>();
             public bool PollClosed;
@@ -410,7 +497,7 @@ namespace Oxide.Plugins
                 ["OptionNotifyEdit"] = "RE-NOTIFY PLAYERS",
                 ["OptionDiscord"] = "POST TO DISCORD",
                 ["ContentBody"] = "CONTENT BODY",
-                ["BodyHintShort"] = "Enter or \\n makes a new line",
+                ["BodyHintNewLine"] = "Enter or /n makes a new line",
                 ["SaveBroadcast"] = "PUBLISH ANNOUNCEMENT",
                 ["SaveChanges"] = "SAVE CHANGES",
                 ["Preview"] = "PREVIEW",
@@ -456,7 +543,7 @@ namespace Oxide.Plugins
                 ["BulkUnpinned"] = "Unpinned {0} announcement(s).",
                 ["ThemeSet"] = "Theme set to: {0}",
                 ["ThemeNotFound"] = "Theme '{0}' not found. Available: {1}",
-                ["ThemeUsage"] = "Usage: news.admin.settheme \"ThemeName\"",
+                ["ThemeUsage"] = "Usage: news.admin.settheme ThemeName",
                 ["ConsoleShowUsage"] = "Usage: news.show \"Title\" \"ImageURL or -\" \"Text\" [Info|Warning|Alert|Event|Update]",
                 ["ConsoleTriggerUsage"] = "Usage: news.trigger <SteamID/Name> [index|id]",
                 ["ConsoleTriggerHidden"] = "{0} cannot see that announcement (draft, expired, another group or no view permission).",
@@ -577,6 +664,7 @@ namespace Oxide.Plugins
                 ["SpanHoursMinutes"] = "{0}h {1}m",
                 ["SpanMinutes"] = "{0}m",
                 ["SpanNow"] = "under a minute",
+                ["DataNotSaved"] = "The news data file could not be read when the plugin loaded, so nothing is being saved. Check the server console.",
                 ["AdminDeletesIn"] = "DELETES IN {0}",
                 ["AdminPollClosesIn"] = "POLL CLOSES IN {0}"
             }, this);
@@ -592,7 +680,16 @@ namespace Oxide.Plugins
         #endregion
 
         #region Helpers
-        private static string F(float value) => value.ToString("0.####", CultureInfo.InvariantCulture);
+        private static string F(float value)
+        {
+            string text;
+            if (floatTexts.TryGetValue(value, out text)) return text;
+            text = value.ToString("0.####", CultureInfo.InvariantCulture);
+            if (text == "-0") text = "0";
+            if (floatTexts.Count >= MaxCachedFloats) floatTexts.Clear();
+            floatTexts[value] = text;
+            return text;
+        }
 
         private static string Anchor(float x, float y) => F(x) + " " + F(y);
 
@@ -664,22 +761,24 @@ namespace Oxide.Plugins
         {
             if (string.IsNullOrEmpty(text)) return 1;
             if (perLine < 1) perLine = 1;
-            int lines = 1, current = 0;
-            foreach (var word in text.Split(' '))
+            int lines = 1, current = 0, start = 0;
+            while (start <= text.Length)
             {
-                int len = word.Length;
+                int end = text.IndexOf(' ', start);
+                if (end < 0) end = text.Length;
+                int len = end - start;
                 if (current == 0) current = len;
                 else if (current + 1 + len <= perLine) current += 1 + len;
                 else { lines++; current = len; }
                 while (current > perLine) { lines++; current -= perLine; }
+                start = end + 1;
             }
             return lines;
         }
 
         private static int PickTitleFontSize(string title, float widthUnits, float heightUnits)
         {
-            int[] sizes = { 32, 28, 26, 24, 22, 20, 18, 16 };
-            foreach (int size in sizes)
+            foreach (int size in TitleFontSizes)
             {
                 int perLine = Math.Max(4, (int)(widthUnits / (size * 0.55f)));
                 if (CountWrappedLines(title, perLine) * size * 1.2f <= heightUnits) return size;
@@ -779,6 +878,17 @@ namespace Oxide.Plugins
 
         private static bool HasPoll(Announcement ann) => ann != null && ann.PollOptions.Count >= 2;
 
+        private static string TypeName(AnnouncementType type) => (int)type >= 0 && (int)type < TypeNames.Length ? TypeNames[(int)type] : type.ToString();
+
+        private static string TypeLabel(AnnouncementType type) => (int)type >= 0 && (int)type < TypeLabels.Length ? TypeLabels[(int)type] : type.ToString().ToUpper();
+
+        private static string PreviewLine(string text, int maxChars)
+        {
+            text = text ?? string.Empty;
+            if (text.Length > maxChars + 8) text = text.Substring(0, maxChars + 8);
+            return Ellipsize(text.Replace('\n', ' '), maxChars);
+        }
+
         private static bool IsPollOpen(Announcement ann) => HasPoll(ann) && !ann.PollClosed && (ann.PollEndsAt <= 0 || NowTicks < ann.PollEndsAt);
 
         private static int[] CountVotes(Announcement ann)
@@ -817,9 +927,9 @@ namespace Oxide.Plugins
         private int CountUnread(BasePlayer player)
         {
             ulong userId = player.userID;
-            int count = 0;
+            int count = 0, admin = -1;
             foreach (var ann in announcements)
-                if (IsUnread(ann, userId) && CanSee(player, ann)) count++;
+                if (IsUnread(ann, userId) && CanSee(player, ann, ref admin)) count++;
             return count;
         }
 
@@ -829,14 +939,22 @@ namespace Oxide.Plugins
 
         private bool CanSee(BasePlayer player, Announcement ann)
         {
+            int admin = -1;
+            return CanSee(player, ann, ref admin);
+        }
+
+        private bool CanSee(BasePlayer player, Announcement ann, ref int admin)
+        {
             if (player == null || ann == null || ann.Draft || IsExpired(ann)) return false;
-            if (string.IsNullOrEmpty(ann.Group) || CanAdmin(player)) return true;
-            return permission.UserHasGroup(player.UserIDString, ann.Group);
+            if (string.IsNullOrEmpty(ann.Group)) return true;
+            if (admin < 0) admin = CanAdmin(player) ? 1 : 0;
+            return admin == 1 || permission.UserHasGroup(player.UserIDString, ann.Group);
         }
 
         private Announcement NewestFor(BasePlayer player)
         {
-            foreach (var ann in announcements) if (CanSee(player, ann)) return ann;
+            int admin = -1;
+            foreach (var ann in announcements) if (CanSee(player, ann, ref admin)) return ann;
             return null;
         }
 
@@ -855,7 +973,7 @@ namespace Oxide.Plugins
         {
             if (filter == null) return true;
             if (filter.Type == "polls") { if (!HasPoll(ann)) return false; }
-            else if (filter.Type != "all" && !string.Equals(ann.Type.ToString(), filter.Type, StringComparison.OrdinalIgnoreCase)) return false;
+            else if (filter.Type != "all" && !string.Equals(TypeName(ann.Type), filter.Type, StringComparison.OrdinalIgnoreCase)) return false;
             return MatchesQuery(ann, filter.Query);
         }
 
@@ -866,11 +984,11 @@ namespace Oxide.Plugins
                 || (ann.Text ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private static readonly PlayerPrefs DefaultPrefs = new PlayerPrefs();
+        private static readonly NewsPrefs DefaultPrefs = new NewsPrefs();
 
-        private PlayerPrefs GetPrefs(ulong userId)
+        private NewsPrefs GetPrefs(ulong userId)
         {
-            PlayerPrefs prefs;
+            NewsPrefs prefs;
             return storedData.PlayerSettings.TryGetValue(userId, out prefs) ? prefs : DefaultPrefs;
         }
 
@@ -959,7 +1077,7 @@ namespace Oxide.Plugins
                 ["id"] = ann.Id,
                 ["title"] = ann.Title,
                 ["author"] = ann.Author,
-                ["type"] = ann.Type.ToString(),
+                ["type"] = TypeName(ann.Type),
                 ["timestamp"] = ann.Timestamp,
                 ["date"] = ann.Date,
                 ["text"] = ann.Text,
@@ -983,8 +1101,8 @@ namespace Oxide.Plugins
         private bool CanView(BasePlayer player)
         {
             if (player == null) return false;
-            if (!config.General.RequireViewPermission) return true;
-            return CanAdmin(player) || permission.UserHasPermission(player.UserIDString, PermView);
+            if (!config.General.RequireViewPermission || player.IsAdmin) return true;
+            return permission.UserHasPermission(player.UserIDString, PermView) || permission.UserHasPermission(player.UserIDString, PermAdmin);
         }
 
         private bool RequireView(BasePlayer player, bool notify = false)
@@ -1038,10 +1156,15 @@ namespace Oxide.Plugins
             {
                 PrintError($"The configuration file could not be read, using the default settings: {ex.Message}");
                 LoadDefaultConfig();
+                configUnreadable = true;
             }
         }
 
-        protected override void SaveConfig() => Config.WriteObject(config, true);
+        protected override void SaveConfig()
+        {
+            if (configUnreadable) PrintWarning("Not saved: the configuration file could not be read when the plugin loaded, so it is left as it is. Fix the file and reload the plugin.");
+            else Config.WriteObject(config);
+        }
 
         protected override void LoadDefaultConfig()
         {
@@ -1125,6 +1248,8 @@ namespace Oxide.Plugins
             GenerateCornerTextures();
             RegisterAllImages();
             CheckScheduled();
+            if (ImageLibrary == null || !ImageLibrary.IsLoaded)
+                PrintWarning("ImageLibrary is not loaded: thumbnails in the lists are left out and each player downloads a pop-up picture again every time it is shown. Install ImageLibrary to have pictures stored once.");
         }
 
         private static bool HasExpiry(Announcement ann) => !ann.Draft && ann.ExpiresAt > 0;
@@ -1188,17 +1313,17 @@ namespace Oxide.Plugins
             Interface.CallHook("OnNewsPollClosed", BuildHookData(ann));
             if (!config.Polls.AnnounceResults) return;
 
+            int[] counts = CountVotes(ann);
             foreach (var p in BasePlayer.activePlayerList)
                 if (p != null && p.IsConnected && CanView(p) && CanSee(p, ann))
-                    SendReply(p, PollResultText(ann, p));
+                    SendReply(p, PollResultText(ann, counts, p));
 
             if (DiscordConfigured && config.Discord.PostPollResults && (string.IsNullOrEmpty(ann.Group) || config.Discord.PostGroupOnlyPosts))
                 SendPollResultsToDiscord(ann);
         }
 
-        private string PollResultText(Announcement ann, BasePlayer player)
+        private string PollResultText(Announcement ann, int[] counts, BasePlayer player)
         {
-            int[] counts = CountVotes(ann);
             int total = 0, best = 0, winner = -1, winners = 0;
             for (int i = 0; i < counts.Length; i++)
             {
@@ -1259,7 +1384,14 @@ namespace Oxide.Plugins
                 saveTimer.Destroy();
                 saveTimer = null;
             }
-            Interface.Oxide.DataFileSystem.WriteObject(DataFile, storedData);
+            if (!dataUnreadable)
+            {
+                Interface.Oxide.DataFileSystem.WriteObject(DataFile, storedData);
+                return;
+            }
+            if (dataUnreadableWarned) return;
+            dataUnreadableWarned = true;
+            PrintError($"Nothing is being saved: oxide/data/{DataFile}.json could not be read when the plugin loaded and is left as it is. Fix or delete that file, then reload the plugin.");
         }
 
         private void TrimToMaxStored()
@@ -1306,7 +1438,8 @@ namespace Oxide.Plugins
             try { storedData = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(DataFile); }
             catch (Exception ex)
             {
-                PrintError($"The data file could not be read, starting without stored announcements: {ex.Message}");
+                dataUnreadable = true;
+                PrintError($"oxide/data/{DataFile}.json could not be read ({ex.Message}). The plugin starts without stored announcements and will not overwrite that file: fix or delete it, then reload the plugin.");
             }
 
             if (storedData == null) storedData = new StoredData();
@@ -1348,16 +1481,20 @@ namespace Oxide.Plugins
 
         private void OnPlayerSleepEnded(BasePlayer player)
         {
-            if (player == null || !player.IsConnected || !CanView(player)) return;
-            var newest = NewestFor(player);
-            if (newest == null) return;
+            if (player == null || !player.IsConnected || announcements.Count == 0) return;
 
             ulong userId = player.userID;
             long seenBefore;
             storedData.LastSeenNews.TryGetValue(userId, out seenBefore);
 
-            bool wantPopup = config.General.ShowNewsOnConnect && GetPrefs(userId).JoinPopup && newest.Timestamp > seenBefore;
-            bool wantReminder = config.General.UnreadReminderOnConnect && remindedPlayers.Add(userId);
+            bool mayPopup = config.General.ShowNewsOnConnect && announcements[0].Timestamp > seenBefore && GetPrefs(userId).JoinPopup;
+            bool mayRemind = config.General.UnreadReminderOnConnect && !remindedPlayers.Contains(userId);
+            if ((!mayPopup && !mayRemind) || !CanView(player)) return;
+            var newest = NewestFor(player);
+            if (newest == null) return;
+
+            bool wantPopup = mayPopup && newest.Timestamp > seenBefore;
+            bool wantReminder = mayRemind && remindedPlayers.Add(userId);
             if (!wantPopup && !wantReminder) return;
 
             timer.Once(2f, () =>
@@ -1370,9 +1507,9 @@ namespace Oxide.Plugins
 
                 if (wantReminder)
                 {
-                    int fresh = 0;
+                    int fresh = 0, admin = -1;
                     foreach (var a in announcements)
-                        if (a.Timestamp > seenBefore && CanSee(player, a) && IsUnread(a, userId)) fresh++;
+                        if (a.Timestamp > seenBefore && CanSee(player, a, ref admin) && IsUnread(a, userId)) fresh++;
                     if (showPopup && current.Timestamp > seenBefore && IsUnread(current, userId)) fresh--;
                     if (fresh > 0) SendReply(player, Msg(showPopup ? "UnreadReminderMore" : "UnreadReminder", player, fresh));
                 }
@@ -1419,7 +1556,6 @@ namespace Oxide.Plugins
             adminViews.Clear();
             redrawCooldowns.Clear();
             redrawTimers.Clear();
-            surfaceColors.Clear();
 
             if (dataDirty) SaveAnnouncements();
             saveTimer?.Destroy();
@@ -1457,6 +1593,8 @@ namespace Oxide.Plugins
         {
             if (ann == null || ann.Draft) return 0;
             int reached = 0;
+            string toastRoot = null;
+            Dictionary<string, string> toasts = null;
             foreach (var p in BasePlayer.activePlayerList)
             {
                 if (p == null || !p.IsConnected || !CanView(p) || !CanSee(p, ann)) continue;
@@ -1468,7 +1606,7 @@ namespace Oxide.Plugins
                     continue;
                 }
                 if (config.Notification.Enabled || playersWithUiOpen.Contains(p.userID))
-                    ShowNotification(p, ann);
+                    ShowNotification(p, ann, ref toastRoot, ref toasts);
                 else
                     ShowPopup(p, ann, PopupOrigin.Broadcast, true);
             }
@@ -1520,10 +1658,8 @@ namespace Oxide.Plugins
                 Title = LimitText(title, MaxTitleChars).Trim(),
                 ImageUrl = NormalizeImageUrl(imageUrl),
                 Text = NormalizeInputBody(text),
-                Date = Now(),
                 Author = string.IsNullOrEmpty(author) ? config.General.ServerName : author,
                 Type = type,
-                Timestamp = NowTicks,
                 Pinned = pinned
             };
             if (pollOptions != null && pollOptions.Count >= 2) ann.PollOptions = pollOptions;
@@ -1744,6 +1880,7 @@ namespace Oxide.Plugins
                         SendReply(player, Msg("NoPermissionCommand", player));
                         return;
                     }
+                    if (dataUnreadable) SendReply(player, Msg("DataNotSaved", player));
                     adminViews.Remove(player.userID);
                     ShowAdminList(player, 0);
                     return;
@@ -1804,7 +1941,7 @@ namespace Oxide.Plugins
             AnnouncementType type;
             var filter = GetArchiveFilter(player.userID);
             if (value == "polls") filter.Type = "polls";
-            else filter.Type = TryParseType(value, out type) ? type.ToString() : "all";
+            else filter.Type = TryParseType(value, out type) ? TypeName(type) : "all";
             archivePages[player.userID] = 0;
             RedrawThrottled(player, UiScreen.Archive);
         }
@@ -1918,7 +2055,7 @@ namespace Oxide.Plugins
             if (!RequireView(player)) return;
 
             MarkAllRead(player);
-            ShowHistory(player, GetArchivePage(player.userID));
+            RedrawThrottled(player, UiScreen.Archive);
         }
 
         private int MarkAllRead(BasePlayer player)
@@ -1970,10 +2107,9 @@ namespace Oxide.Plugins
 
             if (IsPopupOpen(userId, ann.Id))
             {
-                var container = new CuiElementContainer();
+                var container = new Ui();
                 AddPollBlock(container, player, ann, false, true);
-                CuiHelper.DestroyUi(player, PollPanelName);
-                CuiHelper.AddUi(player, container);
+                SwapUi(player, container, PollPanelName);
             }
             else
             {
@@ -2010,10 +2146,9 @@ namespace Oxide.Plugins
 
             if (IsPopupOpen(userId, ann.Id))
             {
-                var container = new CuiElementContainer();
+                var container = new Ui();
                 AddLikeButton(container, player, ann, true);
-                CuiHelper.DestroyUi(player, LikeButtonName);
-                CuiHelper.AddUi(player, container);
+                SwapUi(player, container, LikeButtonName);
             }
             else
             {
@@ -2030,10 +2165,9 @@ namespace Oxide.Plugins
             var ann = FindById(arg.GetString(0));
             if (ann == null || ann.CountdownTo <= 0 || !IsPopupOpen(player.userID, ann.Id)) return;
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             AddCountdownBlock(container, player, ann, string.IsNullOrEmpty(ann.ImageUrl) ? 0.03f : 0.5f);
-            CuiHelper.DestroyUi(player, CountdownName);
-            CuiHelper.AddUi(player, container);
+            SwapUi(player, container, CountdownName);
         }
 
         [ConsoleCommand("news.settings")]
@@ -2050,10 +2184,10 @@ namespace Oxide.Plugins
             var player = arg.Player();
             if (!RequireView(player)) return;
 
-            PlayerPrefs prefs;
+            NewsPrefs prefs;
             if (!storedData.PlayerSettings.TryGetValue(player.userID, out prefs))
             {
-                prefs = new PlayerPrefs();
+                prefs = new NewsPrefs();
                 storedData.PlayerSettings[player.userID] = prefs;
             }
             switch (arg.GetString(0).ToLowerInvariant())
@@ -2075,6 +2209,7 @@ namespace Oxide.Plugins
             var player = arg.Player();
             if (player == null) return;
 
+            if (dataUnreadable) SendReply(player, Msg("DataNotSaved", player));
             currentScreens.Remove(player.userID);
             adminViews.Remove(player.userID);
             ShowAdminList(player, 0);
@@ -2961,9 +3096,8 @@ namespace Oxide.Plugins
             }
         }
 
-        private void ShowNotification(BasePlayer player, Announcement ann)
+        private void ShowNotification(BasePlayer player, Announcement ann, ref string root, ref Dictionary<string, string> toasts)
         {
-            if (!CanView(player) || ann == null || !CanSee(player, ann)) return;
             string safeTitle = ann.Title ?? string.Empty;
 
             if (config.Notification.UseNotifyPlugin && Notify != null && Notify.IsLoaded)
@@ -2974,13 +3108,45 @@ namespace Oxide.Plugins
 
             DestroyNotification(player);
 
+            if (root == null)
+            {
+                root = NotificationLayer + "." + (++toastCounter).ToString(CultureInfo.InvariantCulture);
+                toasts = new Dictionary<string, string>();
+            }
+            string language = lang.GetLanguage(player.UserIDString) ?? string.Empty;
+            string json;
+            if (!toasts.TryGetValue(language, out json))
+            {
+                json = BuildToast(player, ann, safeTitle, root);
+                toasts[language] = json;
+            }
+
+            CuiHelper.AddUi(player, json);
+            toastNames[player.userID] = root;
+            PlaySound(player);
+
+            ulong userId = player.userID;
+            string shown = root;
+            notificationTimers[userId] = timer.Once(config.Notification.Duration, () =>
+            {
+                notificationTimers.Remove(userId);
+                string current;
+                if (toastNames.TryGetValue(userId, out current) && current == shown)
+                {
+                    toastNames.Remove(userId);
+                    if (player != null && player.IsConnected) CuiHelper.DestroyUi(player, shown);
+                }
+            });
+        }
+
+        private string BuildToast(BasePlayer player, Announcement ann, string safeTitle, string root)
+        {
             string anchorMin, anchorMax, offset;
             ToastPlacement(out anchorMin, out anchorMax, out offset);
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             var c = config.Colors;
             string typeColor = GetTypeColor(ann.Type);
-            string root = NotificationLayer + "." + (++toastCounter).ToString(CultureInfo.InvariantCulture);
             string card = root + ".Card";
 
             container.Add(new CuiPanel
@@ -2995,7 +3161,7 @@ namespace Oxide.Plugins
             string kicker = Msg(HasPoll(ann) ? "NewPoll" : "NewAnnouncement", player);
             container.Add(new CuiLabel
             {
-                Text = { Text = $"{kicker}  <color={RgbaToHex(typeColor)}>•  {ann.Type.ToString().ToUpper()}</color>", FontSize = 9, Align = TextAnchor.LowerLeft, Color = c.ButtonPrimary, Font = FontBold },
+                Text = { Text = $"{kicker}  <color={RgbaToHex(typeColor)}>•  {TypeLabel(ann.Type)}</color>", FontSize = 9, Align = TextAnchor.LowerLeft, Color = c.ButtonPrimary, Font = FontBold },
                 RectTransform = { AnchorMin = "0.06 0.64", AnchorMax = "0.88 0.92" }
             }, card);
 
@@ -3020,21 +3186,7 @@ namespace Oxide.Plugins
 
             ApplyFadeRamp(container, 0, 0.22f, 0.45f);
             foreach (var element in container) element.FadeOut = 0.35f;
-            CuiHelper.AddUi(player, container);
-            toastNames[player.userID] = root;
-            PlaySound(player);
-
-            ulong userId = player.userID;
-            notificationTimers[userId] = timer.Once(config.Notification.Duration, () =>
-            {
-                notificationTimers.Remove(userId);
-                string current;
-                if (toastNames.TryGetValue(userId, out current) && current == root)
-                {
-                    toastNames.Remove(userId);
-                    if (player != null && player.IsConnected) CuiHelper.DestroyUi(player, root);
-                }
-            });
+            return UiJson(container);
         }
         #endregion
 
@@ -3049,6 +3201,55 @@ namespace Oxide.Plugins
             CancelAutoClose(player.userID);
             CancelReadRewardTimer(player.userID);
             CancelRedraw(player.userID);
+        }
+
+        private static string UiJson(Ui container)
+        {
+            for (int i = 0; i < container.Count; i++)
+            {
+                var components = container[i].Components;
+                for (int k = 0; k < components.Count; k++)
+                {
+                    var text = components[k] as CuiTextComponent;
+                    if (text != null) { text.Text = ClientText(text.Text); continue; }
+                    var input = components[k] as CuiInputFieldComponent;
+                    if (input != null) { input.Text = ClientText(input.Text); continue; }
+                    var raw = components[k] as CuiRawImageComponent;
+                    if (raw != null && raw.Url != null && raw.Url.EndsWith("\\", StringComparison.Ordinal)) raw.Url += " ";
+                }
+            }
+            return container.ToJson();
+        }
+
+        private static string ClientText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            if (text.IndexOf('"') >= 0)
+            {
+                var plain = new StringBuilder(text);
+                for (int i = 0; i < plain.Length; i++)
+                    if (plain[i] == '"') plain[i] = i == 0 || char.IsWhiteSpace(plain[i - 1]) || plain[i - 1] == '(' ? '\u201C' : '\u201D';
+                text = plain.ToString();
+            }
+            return text[text.Length - 1] == '\\' ? text + " " : text;
+        }
+
+        private static void SendUi(BasePlayer player, Ui container)
+        {
+            if (player?.net != null) CuiHelper.AddUi(player, UiJson(container));
+        }
+
+        private static void SwapUi(BasePlayer player, Ui container, string name)
+        {
+            bool replaced = false;
+            for (int i = 0; i < container.Count && !replaced; i++)
+            {
+                if (container[i].Name != name) continue;
+                container[i].DestroyUi = name;
+                replaced = true;
+            }
+            if (!replaced) CuiHelper.DestroyUi(player, name);
+            if (container.Count > 0) SendUi(player, container);
         }
 
         private void StopAutoClose(BasePlayer player)
@@ -3083,19 +3284,19 @@ namespace Oxide.Plugins
             return fresh ? 1f : previous == screen ? 0f : SwitchFade;
         }
 
-        private void BeginScreen(CuiElementContainer container, bool fresh, string backdrop)
+        private void BeginScreen(Ui container, bool fresh, string backdrop)
         {
             if (fresh) AddBackdrop(container, backdrop, 0.25f);
             container.Add(new CuiPanel { Image = { Color = "0 0 0 0" }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" } }, LayerName, ScreenName, ScreenName);
         }
 
-        private static void ApplyFadeRamp(CuiElementContainer container, int fromIndex, float first, float last)
+        private static void ApplyFadeRamp(Ui container, int fromIndex, float first, float last)
         {
             if (last <= 0f) return;
             int span = Math.Max(1, container.Count - fromIndex - 1);
             for (int i = fromIndex; i < container.Count; i++)
             {
-                float seconds = first + (last - first) * (i - fromIndex) / span;
+                float seconds = Mathf.Round((first + (last - first) * (i - fromIndex) / span) * 100f) / 100f;
                 foreach (var component in container[i].Components)
                 {
                     var image = component as CuiImageComponent;
@@ -3110,7 +3311,7 @@ namespace Oxide.Plugins
             }
         }
 
-        private void AddBackdrop(CuiElementContainer container, string color, float fade)
+        private void AddBackdrop(Ui container, string color, float fade)
         {
             container.Add(new CuiPanel
             {
@@ -3248,13 +3449,13 @@ namespace Oxide.Plugins
             return panel;
         }
 
-        private void AddRoundedFill(CuiElementContainer container, string parent, string color, float radius, float inset = 0f, float fade = 0f)
+        private void AddRoundedFill(Ui container, string parent, string color, float radius, float inset = 0f, float fade = 0f)
         {
             if (!IsOpaque(color)) color = SolidOn(color, ColorUnder(container, parent));
             string a = F(inset), na = F(-inset);
             if (!Rounded || radius < 0.5f)
             {
-                container.Add(Piece(color, "0 0", "1 1", $"{a} {a}", $"{na} {na}", fade), parent);
+                container.Leaf(Piece(color, "0 0", "1 1", $"{a} {a}", $"{na} {na}", fade), parent);
                 if (inset <= 0f) SetSurface(container, parent, color);
                 return;
             }
@@ -3268,13 +3469,13 @@ namespace Oxide.Plugins
             float overlap = radius < 2f ? 0f : Math.Min(SeamOverlap, radius * 0.25f);
             string b = F(inset + radius), nb = F(-(inset + radius));
             string bo = F(inset + radius - overlap), nbo = F(-(inset + radius - overlap));
-            container.Add(Piece(color, "0 0", "1 1", $"{b} {a}", $"{nb} {na}", fade), parent);
-            container.Add(Piece(color, "0 0", "0 1", $"{a} {bo}", $"{b} {nbo}", fade), parent);
-            container.Add(Piece(color, "1 0", "1 1", $"{nb} {bo}", $"{na} {nbo}", fade), parent);
+            container.Leaf(Piece(color, "0 0", "1 1", $"{b} {a}", $"{nb} {na}", fade), parent);
+            container.Leaf(Piece(color, "0 0", "0 1", $"{a} {bo}", $"{b} {nbo}", fade), parent);
+            container.Leaf(Piece(color, "1 0", "1 1", $"{nb} {bo}", $"{na} {nbo}", fade), parent);
             if (inset <= 0f) SetSurface(container, parent, color);
         }
 
-        private static void AddSteppedFill(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, float radius, float inset, int steps, float fade = 0f)
+        private static void AddSteppedFill(Ui container, string parent, string anchorMin, string anchorMax, string color, float radius, float inset, int steps, float fade = 0f)
         {
             int space = anchorMin.IndexOf(' '), spaceMax = anchorMax.IndexOf(' ');
             string left = anchorMin.Substring(0, space), bottom = anchorMin.Substring(space + 1);
@@ -3282,18 +3483,18 @@ namespace Oxide.Plugins
             string topMin = left + " " + top, bottomMax = right + " " + bottom;
 
             string a = F(inset), na = F(-inset);
-            container.Add(Piece(color, anchorMin, anchorMax, $"{a} {F(inset + radius)}", $"{na} {F(-(inset + radius))}", fade), parent);
+            container.Leaf(Piece(color, anchorMin, anchorMax, $"{a} {F(inset + radius)}", $"{na} {F(-(inset + radius))}", fade), parent);
             for (int i = 0; i < steps; i++)
             {
                 float t0 = Mathf.PI / 2f * i / steps, t1 = Mathf.PI / 2f * (i + 1) / steps;
                 float y0 = radius * Mathf.Sin(t0), y1 = radius * Mathf.Sin(t1);
                 float x = inset + radius * (1f - Mathf.Cos((t0 + t1) / 2f));
-                container.Add(Piece(color, topMin, anchorMax, $"{F(x)} {F(-(inset + radius) + y0)}", $"{F(-x)} {F(-(inset + radius) + y1)}", fade), parent);
-                container.Add(Piece(color, anchorMin, bottomMax, $"{F(x)} {F(inset + radius - y1)}", $"{F(-x)} {F(inset + radius - y0)}", fade), parent);
+                container.Leaf(Piece(color, topMin, anchorMax, $"{F(x)} {F(-(inset + radius) + y0)}", $"{F(-x)} {F(-(inset + radius) + y1)}", fade), parent);
+                container.Leaf(Piece(color, anchorMin, bottomMax, $"{F(x)} {F(inset + radius - y1)}", $"{F(-x)} {F(inset + radius - y0)}", fade), parent);
             }
         }
 
-        private static void AddCorners(CuiElementContainer container, string parent, string[] textures, string color, float inset, float radius, float fade, bool mask = false)
+        private static void AddCorners(Ui container, string parent, string[] textures, string color, float inset, float radius, float fade, bool mask = false)
         {
             float texel = mask ? radius / CornerTextureSize : 0f;
             string a = F(inset), na = F(-inset), b = F(inset + radius), nb = F(-(inset + radius));
@@ -3315,13 +3516,13 @@ namespace Oxide.Plugins
             }
         }
 
-        private void AddCornerMasks(CuiElementContainer container, string parent, string backgroundColor, float radius)
+        private void AddCornerMasks(Ui container, string parent, string backgroundColor, float radius)
         {
             if (!Rounded) return;
             AddCorners(container, parent, cornerMask, Opaque(backgroundColor), 0f, radius, 0f, true);
         }
 
-        private string AddSurface(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, float radius, string command = null, string name = null, string rim = null, float rimWidth = 1f)
+        private string AddSurface(Ui container, string parent, string anchorMin, string anchorMax, string color, float radius, string command = null, string name = null, string rim = null, float rimWidth = 1f)
         {
             if (!Rounded) return AddBox(container, parent, anchorMin, anchorMax, color, command, name, rim, rimWidth);
 
@@ -3335,14 +3536,25 @@ namespace Oxide.Plugins
             return holder;
         }
 
-        private string AddBox(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, string command = null, string name = null, string rim = null, float rimWidth = 1f)
+        private string AddBox(Ui container, string parent, string anchorMin, string anchorMax, string color, string command = null, string name = null, string rim = null, float rimWidth = 1f)
         {
             string under = ColorUnder(container, parent);
             string fill = SolidOn(color, under);
             if (rim != null)
             {
+                string rimColor = SolidOn(rim, under ?? (IsOpaque(fill) ? fill : null));
                 string w = F(rimWidth), nw = F(-rimWidth);
-                container.Add(Piece(SolidOn(rim, under ?? (IsOpaque(fill) ? fill : null)), anchorMin, anchorMax, $"{nw} {nw}", $"{w} {w}", 0f), parent);
+                if (name != null)
+                {
+                    string outer = command != null
+                        ? container.Add(new CuiButton { Button = { Color = rimColor, Command = command }, Text = { Text = "" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name)
+                        : container.Add(new CuiPanel { Image = { Color = rimColor }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name);
+                    container.Leaf(Piece(fill, "0 0", "1 1", $"{w} {w}", $"{nw} {nw}", 0f), outer);
+                    SetSurface(container, outer, fill);
+                    return outer;
+                }
+                string wide = F(rimWidth + 1f);
+                container.Leaf(Piece(rimColor, anchorMin, anchorMax, $"{nw} {nw}", $"{wide} {wide}", 0f), parent);
             }
             string box = command != null
                 ? container.Add(new CuiButton { Button = { Color = fill, Command = command }, Text = { Text = "" }, RectTransform = { AnchorMin = anchorMin, AnchorMax = anchorMax } }, parent, name)
@@ -3351,26 +3563,14 @@ namespace Oxide.Plugins
             return box;
         }
 
-        private readonly List<KeyValuePair<CuiElementContainer, Dictionary<string, string>>> surfaceColors = new List<KeyValuePair<CuiElementContainer, Dictionary<string, string>>>();
-
-        private Dictionary<string, string> SurfacesOf(CuiElementContainer container)
+        private void SetSurface(Ui container, string name, string color)
         {
-            for (int i = surfaceColors.Count - 1; i >= 0; i--)
-                if (ReferenceEquals(surfaceColors[i].Key, container)) return surfaceColors[i].Value;
-            var surfaces = new Dictionary<string, string>();
-            surfaceColors.Add(new KeyValuePair<CuiElementContainer, Dictionary<string, string>>(container, surfaces));
-            if (surfaceColors.Count > 4) surfaceColors.RemoveAt(0);
-            return surfaces;
+            if (!string.IsNullOrEmpty(name) && IsOpaque(color)) container.Surfaces[name] = color;
         }
 
-        private void SetSurface(CuiElementContainer container, string name, string color)
+        private string ColorUnder(Ui container, string parent)
         {
-            if (!string.IsNullOrEmpty(name) && IsOpaque(color)) SurfacesOf(container)[name] = color;
-        }
-
-        private string ColorUnder(CuiElementContainer container, string parent)
-        {
-            var surfaces = SurfacesOf(container);
+            var surfaces = container.Surfaces;
             string name = parent;
             for (int depth = 0; depth < 32 && !string.IsNullOrEmpty(name); depth++)
             {
@@ -3397,12 +3597,12 @@ namespace Oxide.Plugins
 
         private string SolidOn(string color, string under) => IsOpaque(color) || under == null || ParseColor(color)[3] <= 0.001f ? color : Blend(color, under);
 
-        private void AddTopSheen(CuiElementContainer container, string parent, float radius)
+        private void AddTopSheen(Ui container, string parent, float radius)
         {
-            container.Add(Piece(SolidOn("1 1 1 0.07", ColorUnder(container, parent)), "0 1", "1 1", $"{F(radius)} -2", $"{F(-radius)} -1", 0f), parent);
+            container.Leaf(Piece(SolidOn("1 1 1 0.07", ColorUnder(container, parent)), "0 1", "1 1", $"{F(radius)} -2", $"{F(-radius)} -1", 0f), parent);
         }
 
-        private string AddLabelIn(CuiElementContainer container, string parent, string text, int fontSize, string color, TextAnchor align = TextAnchor.MiddleCenter, string font = FontBold)
+        private string AddLabelIn(Ui container, string parent, string text, int fontSize, string color, TextAnchor align = TextAnchor.MiddleCenter, string font = FontBold)
         {
             return container.Add(new CuiLabel
             {
@@ -3411,14 +3611,14 @@ namespace Oxide.Plugins
             }, parent);
         }
 
-        private string AddPill(CuiElementContainer container, string parent, string text, string anchorMin, string anchorMax, string background, string textColor, int fontSize = 9)
+        private string AddPill(Ui container, string parent, string text, string anchorMin, string anchorMax, string background, string textColor, int fontSize = 9)
         {
             string pill = AddBox(container, parent, anchorMin, anchorMax, background);
             AddLabelIn(container, pill, text, fontSize, textColor);
             return pill;
         }
 
-        private string AddPrimaryButton(CuiElementContainer container, string parent, string text, string command, string anchorMin, string anchorMax, string color, string textColor = "1 1 1 1", int fontSize = 11, string name = null)
+        private string AddPrimaryButton(Ui container, string parent, string text, string command, string anchorMin, string anchorMax, string color, string textColor = "1 1 1 1", int fontSize = 11, string name = null)
         {
             string button = AddSurface(container, parent, anchorMin, anchorMax, color, RadiusButton, command, name);
             AddLabelIn(container, button, text, fontSize, textColor);
@@ -3427,15 +3627,35 @@ namespace Oxide.Plugins
 
         private string Blend(string top, string under)
         {
+            top = top ?? string.Empty;
+            under = under ?? string.Empty;
+            Dictionary<string, string> onUnder;
+            if (!blendedColors.TryGetValue(under, out onUnder))
+            {
+                if (blendedColors.Count >= MaxCachedColors) blendedColors.Clear();
+                blendedColors[under] = onUnder = new Dictionary<string, string>();
+            }
+            string blended;
+            if (onUnder.TryGetValue(top, out blended)) return blended;
+
             float[] t = ParseColor(top), u = ParseColor(under);
             float a = t[3];
-            return $"{F(t[0] * a + u[0] * (1 - a))} {F(t[1] * a + u[1] * (1 - a))} {F(t[2] * a + u[2] * (1 - a))} 1";
+            blended = $"{F(t[0] * a + u[0] * (1 - a))} {F(t[1] * a + u[1] * (1 - a))} {F(t[2] * a + u[2] * (1 - a))} 1";
+            if (onUnder.Count >= MaxCachedColors) onUnder.Clear();
+            onUnder[top] = blended;
+            return blended;
         }
 
         private string Opaque(string rgba)
         {
+            rgba = rgba ?? string.Empty;
+            string solid;
+            if (opaqueColors.TryGetValue(rgba, out solid)) return solid;
             float[] c = ParseColor(rgba);
-            return $"{F(c[0])} {F(c[1])} {F(c[2])} 1";
+            solid = $"{F(c[0])} {F(c[1])} {F(c[2])} 1";
+            if (opaqueColors.Count >= MaxCachedColors) opaqueColors.Clear();
+            opaqueColors[rgba] = solid;
+            return solid;
         }
 
         private float[] ParseColor(string rgba)
@@ -3457,25 +3677,25 @@ namespace Oxide.Plugins
         }
 
         private const int ShadowSteps = 3;
-        private void AddPanelShadow(CuiElementContainer container, string parent, string anchorMin, string anchorMax, bool small = false, float radius = RadiusPanel)
+        private void AddPanelShadow(Ui container, string parent, string anchorMin, string anchorMax, bool small = false, float radius = RadiusPanel)
         {
             float outer = small ? 5f : 14f, inner = small ? 2f : 5f;
             AddShadowLayer(container, parent, anchorMin, anchorMax, small ? "0 0 0 0.10" : "0 0 0 0.08", radius, outer);
             AddShadowLayer(container, parent, anchorMin, anchorMax, "0 0 0 0.20", radius, inner);
         }
 
-        private void AddShadowLayer(CuiElementContainer container, string parent, string anchorMin, string anchorMax, string color, float radius, float spread)
+        private void AddShadowLayer(Ui container, string parent, string anchorMin, string anchorMax, string color, float radius, float spread)
         {
             if (Rounded) AddSteppedFill(container, parent, anchorMin, anchorMax, color, radius + spread, -spread, ShadowSteps);
-            else container.Add(Piece(color, anchorMin, anchorMax, $"{F(-spread)} {F(-spread)}", $"{F(spread)} {F(spread)}", 0f), parent);
+            else container.Leaf(Piece(color, anchorMin, anchorMax, $"{F(-spread)} {F(-spread)}", $"{F(spread)} {F(spread)}", 0f), parent);
         }
 
-        private void AddHairline(CuiElementContainer container, string parent, float y, float left = 0f, float right = 1f)
+        private void AddHairline(Ui container, string parent, float y, float left = 0f, float right = 1f)
         {
             container.Add(new CuiPanel { Image = { Color = SolidOn(Hairline, ColorUnder(container, parent)) }, RectTransform = { AnchorMin = Anchor(left, y), AnchorMax = Anchor(right, y), OffsetMin = "0 0", OffsetMax = "0 1" } }, parent);
         }
 
-        private string AddGhostButton(CuiElementContainer container, string parent, string text, string command, string anchorMin, string anchorMax, string textColor, int fontSize = 10, string name = null)
+        private string AddGhostButton(Ui container, string parent, string text, string command, string anchorMin, string anchorMax, string textColor, int fontSize = 10, string name = null)
         {
             return container.Add(new CuiButton
             {
@@ -3492,7 +3712,7 @@ namespace Oxide.Plugins
             return $"{parts[0]} {parts[1]} {parts[2]} {F(alpha)}";
         }
 
-        private void AddLikeButton(CuiElementContainer container, BasePlayer player, Announcement ann, bool pop = false)
+        private void AddLikeButton(Ui container, BasePlayer player, Announcement ann, bool pop = false)
         {
             bool liked = ann.LikedPlayers.Contains(player.userID);
             float fade = pop ? 0.25f : 0f;
@@ -3521,7 +3741,7 @@ namespace Oxide.Plugins
             DestroyNotification(player);
             if (!preview) openPopups[player.userID] = ann.Id;
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             var c = config.Colors;
             string accentHex = RgbaToHex(c.ButtonPrimary);
             string typeColor = GetTypeColor(ann.Type);
@@ -3536,7 +3756,7 @@ namespace Oxide.Plugins
             AddTopSheen(container, mainPanel, RadiusPanel);
 
             float pillLeft = 0.03f;
-            pillLeft = AddHeaderPill(container, mainPanel, ann.Type.ToString().ToUpper(), typeColor, "1 1 1 1", pillLeft);
+            pillLeft = AddHeaderPill(container, mainPanel, TypeLabel(ann.Type), typeColor, "1 1 1 1", pillLeft);
             if (HasPoll(ann))
                 pillLeft = AddHeaderPill(container, mainPanel, Msg("PollLabel", player), MixAlpha(c.ButtonPrimary, 0.22f), c.ButtonPrimary, pillLeft);
             if (!string.IsNullOrEmpty(ann.Group))
@@ -3569,15 +3789,7 @@ namespace Oxide.Plugins
                 string imgPanel = mainPanel + ".Img";
 
                 AddBox(container, mainPanel, Anchor(0.03f, frameBottom), Anchor(0.47f, frameTop), Blend("0 0 0 0.35", panelColor), null, imgPanel);
-                container.Add(new CuiElement
-                {
-                    Parent = imgPanel,
-                    Components =
-                    {
-                        BuildRawImage(ann.ImageUrl),
-                        new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" }
-                    }
-                });
+                AddPicture(container, imgPanel, GetImage(ann.ImageUrl), ann.ImageUrl);
                 AddCornerMasks(container, imgPanel, panelColor, RadiusCard);
             }
 
@@ -3685,7 +3897,7 @@ namespace Oxide.Plugins
             }
 
             ApplyFadeRamp(container, contentStart, 0.16f * anim, 0.62f * anim);
-            CuiHelper.AddUi(player, container);
+            SendUi(player, container);
 
             if (playSound) PlaySound(player);
 
@@ -3703,7 +3915,7 @@ namespace Oxide.Plugins
             if (!preview) ScheduleReadCompletion(player, ann);
         }
 
-        private float AddHeaderPill(CuiElementContainer container, string parent, string text, string background, string textColor, float left)
+        private float AddHeaderPill(Ui container, string parent, string text, string background, string textColor, float left)
         {
             float width = (text.Length * 5.4f + 20f) / PopupWidthUnits;
             AddPill(container, parent, text, Anchor(left, 0.928f), Anchor(left + width, 0.972f), background, textColor, 10);
@@ -3712,7 +3924,7 @@ namespace Oxide.Plugins
 
         private static float BodyTopFor(Announcement ann) => ann.CountdownTo > 0 ? BodyTop - CountdownBlockHeight : BodyTop;
 
-        private void AddCountdownBlock(CuiElementContainer container, BasePlayer player, Announcement ann, float contentLeft)
+        private void AddCountdownBlock(Ui container, BasePlayer player, Announcement ann, float contentLeft)
         {
             SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));
             var c = config.Colors;
@@ -3738,7 +3950,7 @@ namespace Oxide.Plugins
             }
 
             long totalSeconds = left / TimeSpan.TicksPerSecond;
-            long days = totalSeconds / 86400;
+            long days = (totalSeconds - 1) / 86400;
             string prefix = days == 0 ? string.Empty : days == 1 ? Msg("CountdownDay", player) : Msg("CountdownDays", player, days);
             container.Add(new CuiElement
             {
@@ -3748,7 +3960,7 @@ namespace Oxide.Plugins
                     new CuiTextComponent { Text = prefix + "%TIME_LEFT%", FontSize = 15, Align = TextAnchor.MiddleRight, Color = c.TextTitle, Font = FontBold },
                     new CuiCountdownComponent
                     {
-                        StartTime = totalSeconds % 86400,
+                        StartTime = totalSeconds - days * 86400,
                         EndTime = 0,
                         Step = 1,
                         Interval = 1,
@@ -3775,7 +3987,7 @@ namespace Oxide.Plugins
             pollBottom = bodyBottom - 0.018f - pollH;
         }
 
-        private void AddPollBlock(CuiElementContainer container, BasePlayer player, Announcement ann, bool preview, bool justVoted = false)
+        private void AddPollBlock(Ui container, BasePlayer player, Announcement ann, bool preview, bool justVoted = false)
         {
             SetSurface(container, PopupPanel, Opaque(config.Colors.PanelBg));
             var c = config.Colors;
@@ -3826,7 +4038,7 @@ namespace Oxide.Plugins
                 if (showResults && share > 0f)
                 {
                     string barColor = SolidOn(MixAlpha(c.ButtonPrimary, mine ? 0.45f : 0.2f), ColorUnder(container, row));
-                    container.Add(Piece(barColor, "0 0", Anchor(share, 1f), "0 0", "0 0", justVoted ? 0.5f : 0f), row);
+                    container.Leaf(Piece(barColor, "0 0", Anchor(share, 1f), "0 0", "0 0", justVoted ? 0.5f : 0f), row);
                 }
 
                 container.Add(new CuiLabel
@@ -3846,16 +4058,17 @@ namespace Oxide.Plugins
             }
         }
 
-        private void AddPopupNavigation(CuiElementContainer container, BasePlayer player, Announcement ann, PopupOrigin origin, string mainPanel, UIColors c)
+        private void AddPopupNavigation(Ui container, BasePlayer player, Announcement ann, PopupOrigin origin, string mainPanel, UIColors c)
         {
             ArchiveFilter filter = null;
             if (origin == PopupOrigin.Archive) archiveFilters.TryGetValue(player.userID, out filter);
 
             int index = -1, count = 0;
             string previousId = null, nextId = null, lastId = null;
+            int admin = -1;
             foreach (var other in GetDisplayOrder())
             {
-                if (!CanSee(player, other) || !MatchesFilter(other, filter)) continue;
+                if (!CanSee(player, other, ref admin) || !MatchesFilter(other, filter)) continue;
                 if (other == ann) { index = count; previousId = lastId; }
                 else if (index >= 0 && nextId == null) nextId = other.Id;
                 lastId = other.Id;
@@ -3878,7 +4091,7 @@ namespace Oxide.Plugins
             AddNavArrow(container, mainPanel, ">", nextCmd, "0.913 0.928", "0.938 0.972", c);
         }
 
-        private void AddNavArrow(CuiElementContainer container, string parent, string glyph, string command, string anchorMin, string anchorMax, UIColors c)
+        private void AddNavArrow(Ui container, string parent, string glyph, string command, string anchorMin, string anchorMax, UIColors c)
         {
             if (command == null)
             {
@@ -3896,15 +4109,16 @@ namespace Oxide.Plugins
             return archivePages.TryGetValue(userId, out page) ? page : 0;
         }
 
-        private CuiRawImageComponent BuildRawImage(string url)
+        private static void AddPicture(Ui container, string parent, string png, string url)
         {
-            var img = new CuiRawImageComponent { Color = "1 1 1 1" };
-            string imgId = GetImage(url);
-            if (!string.IsNullOrEmpty(imgId))
-                img.Png = imgId;
-            else
-                img.Url = url;
-            return img;
+            var picture = new CuiRawImageComponent { Color = "1 1 1 1" };
+            if (png != null) picture.Png = png;
+            else picture.Url = url;
+            container.Add(new CuiElement
+            {
+                Parent = parent,
+                Components = { picture, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMax = "0 0" } }
+            });
         }
 
         private void ShowHistory(BasePlayer player, int page)
@@ -3916,10 +4130,10 @@ namespace Oxide.Plugins
             archiveFilters.TryGetValue(userId, out filter);
 
             var displayList = Pool.Get<List<Announcement>>();
-            int visible = 0, unread = 0;
+            int visible = 0, unread = 0, admin = -1;
             foreach (var ann in GetDisplayOrder())
             {
-                if (!CanSee(player, ann)) continue;
+                if (!CanSee(player, ann, ref admin)) continue;
                 visible++;
                 if (IsUnread(ann, userId)) unread++;
                 if (MatchesFilter(ann, filter)) displayList.Add(ann);
@@ -3935,7 +4149,7 @@ namespace Oxide.Plugins
             bool fresh;
             float anim = OpenScreen(player, UiScreen.Archive, out fresh);
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             var c = config.Colors;
             int perPage = config.General.AnnouncementsPerPage;
             int totalPages = Math.Max(1, Mathf.CeilToInt((float)displayList.Count / perPage));
@@ -4003,14 +4217,11 @@ namespace Oxide.Plugins
                 AddAccentBar(container, itemPanel, typeColor);
 
                 float textLeft = 0.03f;
-                if (config.General.ArchiveThumbnails && !string.IsNullOrEmpty(ann.ImageUrl))
+                string thumbnail = config.General.ArchiveThumbnails ? GetImage(ann.ImageUrl) : null;
+                if (thumbnail != null)
                 {
                     string thumb = AddBox(container, itemPanel, "0.022 0.13", "0.127 0.87", Blend("0 0 0 0.45", rowColor));
-                    container.Add(new CuiElement
-                    {
-                        Parent = thumb,
-                        Components = { BuildRawImage(ann.ImageUrl), new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" } }
-                    });
+                    AddPicture(container, thumb, thumbnail, null);
                     textLeft = 0.142f;
                 }
 
@@ -4039,7 +4250,6 @@ namespace Oxide.Plugins
                     AddBadge(container, itemPanel, groupText, Blend("1 1 1 0.12", rowColor), c.TextTitle, badgeRight - groupWidth, badgeRight);
                 }
 
-                string rawPreview = (ann.Text ?? "").Replace("\n", " ");
                 int previewChars = textLeft > 0.1f ? 70 : 88;
                 string pollTag = string.Empty;
                 if (HasPoll(ann))
@@ -4053,7 +4263,7 @@ namespace Oxide.Plugins
                     pollTag += $"<color={RgbaToHex(c.ButtonPrimary)}>{label} {FormatSpan(ann.CountdownTo - now, player).ToUpper()}</color>   ";
                     previewChars -= label.Length + 9;
                 }
-                string preview = $"<color={RgbaToHex(typeColor)}>{ann.Type.ToString().ToUpper()}</color>   {pollTag}{Ellipsize(rawPreview, Math.Max(12, previewChars))}";
+                string preview = $"<color={RgbaToHex(typeColor)}>{TypeLabel(ann.Type)}</color>   {pollTag}{PreviewLine(ann.Text, Math.Max(12, previewChars))}";
                 container.Add(new CuiLabel
                 {
                     Text = { Text = preview, FontSize = 11, Align = TextAnchor.UpperLeft, Color = c.TextMuted, Font = FontRegular },
@@ -4095,36 +4305,34 @@ namespace Oxide.Plugins
                 AddGhostButton(container, mainPanel, Msg("Next", player), $"news.page {page + 1}", "0.85 0.022", "0.975 0.073", c.TextTitle, 10);
 
             ApplyFadeRamp(container, contentStart, 0.14f * anim, 0.6f * anim);
-            CuiHelper.AddUi(player, container);
+            SendUi(player, container);
             Pool.FreeUnmanaged(ref displayList);
         }
 
-        private static readonly AnnouncementType[] AllTypes = (AnnouncementType[])Enum.GetValues(typeof(AnnouncementType));
-
-        private void AddArchiveFilters(CuiElementContainer container, BasePlayer player, string mainPanel, ArchiveFilter filter, UIColors c)
+        private void AddArchiveFilters(Ui container, BasePlayer player, string mainPanel, ArchiveFilter filter, UIColors c)
         {
             string current = filter?.Type ?? "all";
             float left = 0.025f;
-            left = AddFilterChip(container, mainPanel, "all", Msg("FilterAll", player), c.ButtonPrimary, current, left);
-            foreach (var type in AllTypes)
-                left = AddFilterChip(container, mainPanel, type.ToString(), type.ToString().ToUpper(), GetTypeColor(type), current, left);
-            AddFilterChip(container, mainPanel, "polls", Msg("FilterPolls", player), c.ButtonPrimary, current, left);
+            left = AddFilterChip(container, mainPanel, "all", Msg("FilterAll", player), c.ButtonPrimary, current, left, "news.filter all");
+            for (int i = 0; i < TypeNames.Length; i++)
+                left = AddFilterChip(container, mainPanel, TypeNames[i], TypeLabels[i], GetTypeColor((AnnouncementType)i), current, left, TypeFilterCommands[i]);
+            AddFilterChip(container, mainPanel, "polls", Msg("FilterPolls", player), c.ButtonPrimary, current, left, "news.filter polls");
 
             AddSearchField(container, player, mainPanel, Anchor(0.66f, FilterRowBottom), Anchor(0.975f, FilterRowTop), filter?.Query, "news.search", "news.search.clear", mainPanel + ".Search");
         }
 
         private const float FilterRowBottom = 0.843f, FilterRowTop = 0.889f;
 
-        private float AddFilterChip(CuiElementContainer container, string mainPanel, string key, string label, string color, string current, float left)
+        private float AddFilterChip(Ui container, string mainPanel, string key, string label, string color, string current, float left, string command)
         {
             bool selected = string.Equals(key, current, StringComparison.OrdinalIgnoreCase);
             float width = (label.Length * 5.6f + 22f) / ArchiveWidthUnits;
-            string box = AddBox(container, mainPanel, Anchor(left, FilterRowBottom), Anchor(left + width, FilterRowTop), selected ? color : Ghost, "news.filter " + key.ToLowerInvariant());
+            string box = AddBox(container, mainPanel, Anchor(left, FilterRowBottom), Anchor(left + width, FilterRowTop), selected ? color : Ghost, command);
             AddLabelIn(container, box, label, 9, selected ? "1 1 1 1" : color);
             return left + width + 0.006f;
         }
 
-        private void AddSearchField(CuiElementContainer container, BasePlayer player, string parent, string anchorMin, string anchorMax, string query, string command, string clearCommand, string name)
+        private void AddSearchField(Ui container, BasePlayer player, string parent, string anchorMin, string anchorMax, string query, string command, string clearCommand, string name)
         {
             var c = config.Colors;
             query = query ?? string.Empty;
@@ -4148,14 +4356,14 @@ namespace Oxide.Plugins
                 AddGhostButton(container, field, "✕", clearCommand, "0.9 0.15", "0.985 0.85", c.TextNormal, 9);
         }
 
-        private void AddBadge(CuiElementContainer container, string parent, string text, string background, string textColor, float left, float right)
+        private void AddBadge(Ui container, string parent, string text, string background, string textColor, float left, float right)
         {
             AddPill(container, parent, text, Anchor(left, 0.6f), Anchor(right, 0.82f), background, textColor, 9);
         }
 
-        private void AddAccentBar(CuiElementContainer container, string parent, string color, float leftUnits = 8f)
+        private void AddAccentBar(Ui container, string parent, string color, float leftUnits = 8f)
         {
-            container.Add(Piece(color, "0 0", "0 1", $"{F(leftUnits)} 14", $"{F(leftUnits + 3f)} -14", 0f), parent);
+            container.Leaf(Piece(color, "0 0", "0 1", $"{F(leftUnits)} 14", $"{F(leftUnits + 3f)} -14", 0f), parent);
         }
 
         private static string GetTypeColor(AnnouncementType type)
@@ -4173,14 +4381,22 @@ namespace Oxide.Plugins
         private string GetImage(string url)
         {
             if (ImageLibrary == null || !ImageLibrary.IsLoaded || string.IsNullOrEmpty(url)) return null;
-            if (!ImageLibrary.Call<bool>("HasImage", url, 0UL)) return null;
-            return ImageLibrary.Call<string>("GetImage", url);
+            object stored = ImageLibrary.Call("HasImage", url, 0UL);
+            if (!(stored is bool) || !(bool)stored) return null;
+            string png = ImageLibrary.Call("GetImage", url) as string;
+            return string.IsNullOrEmpty(png) ? null : png;
         }
 
         private string RgbaToHex(string rgba)
         {
+            rgba = rgba ?? string.Empty;
+            string hex;
+            if (hexColors.TryGetValue(rgba, out hex)) return hex;
             float[] c = ParseColor(rgba);
-            return $"#{ToByte(c[0]):X2}{ToByte(c[1]):X2}{ToByte(c[2]):X2}";
+            hex = $"#{ToByte(c[0]):X2}{ToByte(c[1]):X2}{ToByte(c[2]):X2}";
+            if (hexColors.Count >= MaxCachedColors) hexColors.Clear();
+            hexColors[rgba] = hex;
+            return hex;
         }
 
         private static int ToByte(float channel) => Mathf.Clamp(Mathf.RoundToInt(channel * 255f), 0, 255);
@@ -4261,7 +4477,7 @@ namespace Oxide.Plugins
             bool fresh;
             float anim = OpenScreen(player, UiScreen.Admin, out fresh);
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             var c = config.Colors;
             ulong userId = player.userID;
             var view = GetAdminView(userId);
@@ -4331,11 +4547,11 @@ namespace Oxide.Plugins
             AddAdminFooter(container, player, panel, g, page, totalPages, list, start, end, selection, surface);
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.5f * anim);
-            CuiHelper.AddUi(player, container);
+            SendUi(player, container);
             Pool.FreeUnmanaged(ref list);
         }
 
-        private void AddAdminStats(CuiElementContainer container, BasePlayer player, string panel, Grid g, string surface)
+        private void AddAdminStats(Ui container, BasePlayer player, string panel, Grid g, string surface)
         {
             var c = config.Colors;
             int published = 0, drafts = 0, pinned = 0, reads = 0, likes = 0, votes = 0, openPolls = 0;
@@ -4368,7 +4584,7 @@ namespace Oxide.Plugins
             {
                 float x = AdminSidePad + i * (width + between);
                 string card = AddSurface(container, panel, g.Min(x, bottom), g.Max(x + width, top), cardColor, RadiusCard);
-                container.Add(Piece(cards[i][3], "0 0", "0 1", "8 14", "11 -14", 0f), card);
+                container.Leaf(Piece(cards[i][3], "0 0", "0 1", "8 14", "11 -14", 0f), card);
                 container.Add(new CuiLabel
                 {
                     Text = { Text = cards[i][0], FontSize = 9, Align = TextAnchor.MiddleLeft, Color = c.TextMuted, Font = FontBold },
@@ -4387,7 +4603,7 @@ namespace Oxide.Plugins
             }
         }
 
-        private void AddAdminToolbar(CuiElementContainer container, BasePlayer player, string panel, Grid g, AdminView view)
+        private void AddAdminToolbar(Ui container, BasePlayer player, string panel, Grid g, AdminView view)
         {
             var c = config.Colors;
             const float top = 138f, bottom = 168f;
@@ -4403,7 +4619,7 @@ namespace Oxide.Plugins
             {
                 string tab = AdminTabs[t];
                 bool selected = tab == view.Tab;
-                string label = Msg("AdminTab" + char.ToUpperInvariant(tab[0]) + tab.Substring(1), player);
+                string label = Msg(AdminTabKeys[t], player);
                 string count = counts[t].ToString();
                 float width = (label.Length + count.Length) * 5.6f + 30f;
                 string chip = AddBox(container, panel, g.Min(x, bottom), g.Max(x + width, top), selected ? c.ButtonPrimary : Ghost, "news.admin.filter " + tab);
@@ -4412,12 +4628,12 @@ namespace Oxide.Plugins
             }
 
             float right = AdminWidthUnits - AdminSidePad;
-            AddCycleButton(container, panel, Msg("Sort" + char.ToUpperInvariant(AdminSorts[view.Sort][0]) + AdminSorts[view.Sort].Substring(1), player), "news.admin.sort",
+            AddCycleButton(container, panel, Msg(AdminSortKeys[view.Sort], player), "news.admin.sort",
                 (right - 388f) / AdminWidthUnits, (right - 258f) / AdminWidthUnits, 1f - bottom / AdminHeightUnits, 1f - top / AdminHeightUnits, c, view.Sort != 0);
             AddSearchField(container, player, panel, g.Min(right - 250f, bottom), g.Max(right, top), view.Query, "news.admin.search", "news.admin.search", null);
         }
 
-        private void AddUnsavedBanner(CuiElementContainer container, BasePlayer player, string panel, Grid g, EditorSession unsaved, string surface)
+        private void AddUnsavedBanner(Ui container, BasePlayer player, string panel, Grid g, EditorSession unsaved, string surface)
         {
             var c = config.Colors;
             const float width = AdminWidthUnits - 2f * AdminSidePad, height = 30f;
@@ -4436,7 +4652,7 @@ namespace Oxide.Plugins
             AddGhostButton(container, banner, Msg("Discard", player), "news.admin.discard", b.Min(width - 88f, 25f), b.Max(width - 8f, 5f), c.TextNormal, 9);
         }
 
-        private void AddAdminRow(CuiElementContainer container, BasePlayer player, string panel, Grid g, Announcement ann, string name, float top, float height, int page, bool selected, string surface)
+        private void AddAdminRow(Ui container, BasePlayer player, string panel, Grid g, Announcement ann, string name, float top, float height, int page, bool selected, string surface)
         {
             var c = config.Colors;
             const float width = AdminWidthUnits - 2f * AdminSidePad;
@@ -4456,21 +4672,18 @@ namespace Oxide.Plugins
             if (selected) AddLabelIn(container, check, "✓", 11, "1 1 1 1");
 
             float textLeft = 54f;
-            if (config.General.ArchiveThumbnails && !string.IsNullOrEmpty(ann.ImageUrl))
+            string thumbnail = config.General.ArchiveThumbnails ? GetImage(ann.ImageUrl) : null;
+            if (thumbnail != null)
             {
                 float thumbHeight = Math.Min(54f, height - 14f), thumbWidth = thumbHeight * 1.6f;
                 string thumb = AddBox(container, name, r.Min(42f, mid + thumbHeight / 2f), r.Max(42f + thumbWidth, mid - thumbHeight / 2f), Blend("0 0 0 0.45", rowColor));
-                container.Add(new CuiElement
-                {
-                    Parent = thumb,
-                    Components = { BuildRawImage(ann.ImageUrl), new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" } }
-                });
+                AddPicture(container, thumb, thumbnail, null);
                 textLeft = 42f + thumbWidth + 12f;
             }
             else
             {
                 float inset = Math.Min(14f, height * 0.22f);
-                container.Add(Piece(typeColor, r.Min(42f, height - inset), r.Max(45f, inset), "0 0", "0 0", 0f), name);
+                container.Leaf(Piece(typeColor, r.Min(42f, height - inset), r.Max(45f, inset), "0 0", "0 0", 0f), name);
             }
 
             const float buttonWidth = 46f, buttonGap = 5f, statWidth = 40f;
@@ -4487,7 +4700,7 @@ namespace Oxide.Plugins
 
             float lineTop = mid + (compact ? 2f : 4f), pillBottom = Math.Min(height - 2f, lineTop + 14f);
             float x = textLeft;
-            x = AddRowPill(container, name, r, ann.Type.ToString().ToUpper(), typeColor, "1 1 1 1", x, lineTop, pillBottom);
+            x = AddRowPill(container, name, r, TypeLabel(ann.Type), typeColor, "1 1 1 1", x, lineTop, pillBottom);
             if (ann.Pinned) x = AddRowPill(container, name, r, Msg("PinnedBadge", player), PinGold, PinGoldText, x, lineTop, pillBottom);
             if (ann.Draft) x = AddRowPill(container, name, r, Msg("DraftBadge", player), Blend("1 1 1 0.16", rowColor), c.TextTitle, x, lineTop, pillBottom);
             if (HasPoll(ann)) x = AddRowPill(container, name, r, Msg("PollLabel", player), Blend(MixAlpha(c.ButtonPrimary, 0.22f), rowColor), c.ButtonPrimary, x, lineTop, pillBottom);
@@ -4540,14 +4753,14 @@ namespace Oxide.Plugins
             AddGhostButton(container, name, Msg("DelButton", player), $"news.admin.delconfirm {ann.Id} {page}", r.Min(actionsLeft + 4f * step, buttonBottom), r.Max(actionsLeft + 4f * step + buttonWidth, buttonTop), "0.95 0.48 0.50 1", 8);
         }
 
-        private float AddRowPill(CuiElementContainer container, string row, Grid r, string text, string background, string textColor, float left, float top, float bottom)
+        private float AddRowPill(Ui container, string row, Grid r, string text, string background, string textColor, float left, float top, float bottom)
         {
             float width = text.Length * 4.6f + 12f;
             AddPill(container, row, text, r.Min(left, bottom), r.Max(left + width, top), background, textColor, 8);
             return left + width + 5f;
         }
 
-        private void AddAdminFooter(CuiElementContainer container, BasePlayer player, string panel, Grid g, int page, int totalPages, List<Announcement> list, int start, int end, HashSet<string> selection, string surface)
+        private void AddAdminFooter(Ui container, BasePlayer player, string panel, Grid g, int page, int totalPages, List<Announcement> list, int start, int end, HashSet<string> selection, string surface)
         {
             var c = config.Colors;
             const float top = AdminHeightUnits - 44f, bottom = AdminHeightUnits - 14f;
@@ -4596,7 +4809,7 @@ namespace Oxide.Plugins
                 AddGhostButton(container, panel, ">", $"news.admin.page {page + 1}", g.Min(right - 30f, bottom - 2f), g.Max(right, top + 2f), c.TextNormal, 11);
         }
 
-        private void AddEditorLabel(CuiElementContainer container, string parent, string text, float bottom, float top, UIColors c, float left = 0.05f, float right = 0.95f)
+        private void AddEditorLabel(Ui container, string parent, string text, float bottom, float top, UIColors c, float left = 0.05f, float right = 0.95f)
         {
             container.Add(new CuiLabel
             {
@@ -4605,7 +4818,7 @@ namespace Oxide.Plugins
             }, parent);
         }
 
-        private void AddCycleButton(CuiElementContainer container, string parent, string value, string command, float left, float right, float bottom, float top, UIColors c, bool active)
+        private void AddCycleButton(Ui container, string parent, string value, string command, float left, float right, float bottom, float top, UIColors c, bool active)
         {
             string button = AddBox(container, parent, Anchor(left, bottom), Anchor(right, top), active ? MixAlpha(c.ButtonPrimary, 0.14f) : Ghost, command);
             container.Add(new CuiLabel
@@ -4624,7 +4837,7 @@ namespace Oxide.Plugins
         private const string HintBad = "0.96 0.45 0.45 1";
         private const string HintGood = "0.47 0.82 0.55 1";
 
-        private void AddEditorHint(CuiElementContainer container, string name, string text, string color, TextAnchor align, string anchorMin, string anchorMax)
+        private void AddEditorHint(Ui container, string name, string text, string color, TextAnchor align, string anchorMin, string anchorMax)
         {
             container.Add(new CuiElement
             {
@@ -4638,7 +4851,7 @@ namespace Oxide.Plugins
             });
         }
 
-        private void AddEditorHints(CuiElementContainer container, BasePlayer player, EditorSession session, string only = null)
+        private void AddEditorHints(Ui container, BasePlayer player, EditorSession session, string only = null)
         {
             var c = config.Colors;
             var ann = session.Draft;
@@ -4682,13 +4895,12 @@ namespace Oxide.Plugins
             UiScreen screen;
             if (name == null || player == null || !currentScreens.TryGetValue(player.userID, out screen) || screen != UiScreen.Editor) return;
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             AddEditorHints(container, player, session, field);
-            CuiHelper.DestroyUi(player, EditorPanelName + name);
-            CuiHelper.AddUi(player, container);
+            SwapUi(player, container, EditorPanelName + name);
         }
 
-        private void AddEditorInput(CuiElementContainer container, string parent, string field, string value, int limit, float bottom, float top, bool multiline, float left = 0.05f, float right = 0.95f, string prefix = null)
+        private void AddEditorInput(Ui container, string parent, string field, string value, int limit, float bottom, float top, bool multiline, float left = 0.05f, float right = 0.95f, string prefix = null)
         {
             AddBox(container, parent, Anchor(left, bottom), Anchor(right, top), "1 1 1 0.045");
 
@@ -4730,7 +4942,7 @@ namespace Oxide.Plugins
             });
         }
 
-        private void AddEditorToggle(CuiElementContainer container, string parent, string text, string command, bool on, float left, float right, UIColors c, float bottom = 0.478f, float top = 0.535f)
+        private void AddEditorToggle(Ui container, string parent, string text, string command, bool on, float left, float right, UIColors c, float bottom = 0.478f, float top = 0.535f)
         {
             string button = AddBox(container, parent, Anchor(left, bottom), Anchor(right, top), on ? MixAlpha(c.ButtonPrimary, 0.14f) : Ghost, command);
 
@@ -4753,7 +4965,7 @@ namespace Oxide.Plugins
             bool fresh;
             float anim = OpenScreen(player, UiScreen.Editor, out fresh);
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             var c = config.Colors;
 
             BeginScreen(container, fresh, AdminBackdrop);
@@ -4782,7 +4994,7 @@ namespace Oxide.Plugins
             AddEditorInput(container, editorPanel, "image", ann.ImageUrl, MaxImageUrlChars, 0.7f, 0.755f, false, L, LR);
 
             AddEditorLabel(container, editorPanel, Msg("ContentBody", player), 0.62f, 0.66f, c, L, 0.2f);
-            container.Add(new CuiLabel { Text = { Text = Msg("BodyHintShort", player), FontSize = 9, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = FontRegular }, RectTransform = { AnchorMin = "0.2 0.62", AnchorMax = "0.4 0.66" } }, editorPanel);
+            container.Add(new CuiLabel { Text = { Text = Msg("BodyHintNewLine", player), FontSize = 9, Align = TextAnchor.LowerLeft, Color = c.TextMuted, Font = FontRegular }, RectTransform = { AnchorMin = "0.2 0.62", AnchorMax = "0.4 0.66" } }, editorPanel);
             AddEditorInput(container, editorPanel, "text", ann.Text, MaxContentChars, session.Poll ? 0.315f : 0.15f, 0.62f, true, L, LR);
 
             if (session.Poll)
@@ -4799,16 +5011,15 @@ namespace Oxide.Plugins
             const float R = 0.65f, RR = 0.965f, RM = 0.8075f;
 
             AddEditorLabel(container, editorPanel, Msg("TypeLabel", player), 0.855f, 0.895f, c, R, RR);
-            var types = AllTypes;
             const float chipGap = 0.006f;
-            float chipWidth = (RR - R - chipGap * (types.Length - 1)) / types.Length;
-            for (int i = 0; i < types.Length; i++)
+            float chipWidth = (RR - R - chipGap * (TypeNames.Length - 1)) / TypeNames.Length;
+            for (int i = 0; i < TypeNames.Length; i++)
             {
-                bool selected = types[i] == ann.Type;
+                bool selected = i == (int)ann.Type;
                 float left = R + i * (chipWidth + chipGap);
-                string typeColor = GetTypeColor(types[i]);
-                string chip = AddBox(container, editorPanel, Anchor(left, 0.8f), Anchor(left + chipWidth, 0.855f), selected ? typeColor : Ghost, $"news.editor.settype {types[i]}");
-                AddLabelIn(container, chip, types[i].ToString().ToUpper(), 9, selected ? "1 1 1 1" : typeColor);
+                string typeColor = GetTypeColor((AnnouncementType)i);
+                string chip = AddBox(container, editorPanel, Anchor(left, 0.8f), Anchor(left + chipWidth, 0.855f), selected ? typeColor : Ghost, "news.editor.settype " + TypeNames[i]);
+                AddLabelIn(container, chip, TypeLabels[i], 9, selected ? "1 1 1 1" : typeColor);
             }
 
             AddEditorLabel(container, editorPanel, Msg("Options", player), 0.755f, 0.795f, c, R, RR);
@@ -4884,13 +5095,13 @@ namespace Oxide.Plugins
             }
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.38f * anim);
-            CuiHelper.AddUi(player, container);
+            SendUi(player, container);
         }
 
         private void ShowConfirmDialog(BasePlayer player, string title, string body, string confirmCommand)
         {
             FlushRedraw(player);
-            var container = new CuiElementContainer();
+            var container = new Ui();
             var c = config.Colors;
 
             container.Add(new CuiPanel
@@ -4924,7 +5135,7 @@ namespace Oxide.Plugins
             AddPrimaryButton(container, dialogPanel, Msg("ConfirmDelete", player), confirmCommand, "0.54 0.08", "0.95 0.26", AdminDanger);
 
             ApplyFadeRamp(container, 0, 0.1f, 0.26f);
-            CuiHelper.AddUi(player, container);
+            SendUi(player, container);
         }
 
         private void ShowPlayerSettings(BasePlayer player, bool redraw = false)
@@ -4932,7 +5143,7 @@ namespace Oxide.Plugins
             var c = config.Colors;
             var prefs = GetPrefs(player.userID);
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             if (!redraw)
             {
                 FlushRedraw(player);
@@ -4993,7 +5204,7 @@ namespace Oxide.Plugins
             AddPrimaryButton(container, panel, Msg("Done", player), "news.confirm.close", "0.06 0.06", "0.94 0.16", c.ButtonPrimary);
 
             if (!redraw) ApplyFadeRamp(container, contentStart, 0.1f, 0.26f);
-            CuiHelper.AddUi(player, container);
+            SendUi(player, container);
         }
 
         private void ShowDeleteConfirm(BasePlayer player, string id, int returnPage)
@@ -5032,8 +5243,9 @@ namespace Oxide.Plugins
                 return;
             }
 
-            string themeName = arg.GetString(0).Trim('"');
-            int page = arg.GetInt(1, 0);
+            int words = arg.Args.Length, page = 0;
+            if (words > 1 && int.TryParse(arg.Args[words - 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out page)) words--;
+            string themeName = string.Join(" ", arg.Args, 0, words).Trim('"', '\\', ' ');
             string matchedTheme = null;
             foreach (string key in config.Themes.Keys)
                 if (string.Equals(key, themeName, StringComparison.OrdinalIgnoreCase)) { matchedTheme = key; break; }
@@ -5055,7 +5267,7 @@ namespace Oxide.Plugins
             bool fresh;
             float anim = OpenScreen(player, UiScreen.Themes, out fresh);
 
-            var container = new CuiElementContainer();
+            var container = new Ui();
             var c = config.Colors;
 
             BeginScreen(container, fresh, AdminBackdrop);
@@ -5102,7 +5314,7 @@ namespace Oxide.Plugins
 
                 string cardColor = Blend(isSelected ? MixAlpha(theme.ButtonPrimary, 0.10f) : "1 1 1 0.04", surface);
                 string card = AddSurface(container, mainPanel, Anchor(left, top - cardHeight), Anchor(left + cardWidth, top), cardColor, RadiusCard,
-                    $"news.admin.settheme \"{themeName}\" {page}", null, isSelected ? Opaque(theme.ButtonPrimary) : null, 2f);
+                    $"news.admin.settheme {themeName} {page}", null, isSelected ? Opaque(theme.ButtonPrimary) : null, 2f);
 
                 container.Add(new CuiLabel
                 {
@@ -5137,7 +5349,7 @@ namespace Oxide.Plugins
             }
 
             ApplyFadeRamp(container, contentStart, 0.12f * anim, 0.45f * anim);
-            CuiHelper.AddUi(player, container);
+            SendUi(player, container);
             Pool.FreeUnmanaged(ref names);
         }
         #endregion
@@ -5322,7 +5534,7 @@ namespace Oxide.Plugins
                 {
                     new
                     {
-                        author = new { name = LimitText($"{ann.Type.ToString().ToUpper()}  •  {config.General.ServerName}", 256) },
+                        author = new { name = LimitText($"{TypeLabel(ann.Type)}  •  {config.General.ServerName}", 256) },
                         title = LimitText(ann.Title, 256),
                         description = discordBody,
                         color = embedColor,
@@ -5363,7 +5575,7 @@ namespace Oxide.Plugins
                     {
                         author = new { name = LimitText($"{Msg("PollDiscordResults").ToUpper()}  •  {config.General.ServerName}", 256) },
                         title = LimitText(ann.Title, 256),
-                        description = LimitText(PollResultText(ann, null) + "\n" + lines, DiscordEmbedDescriptionLimit),
+                        description = LimitText(PollResultText(ann, counts, null) + "\n" + lines, DiscordEmbedDescriptionLimit),
                         color = 3447003,
                         timestamp = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
                     }

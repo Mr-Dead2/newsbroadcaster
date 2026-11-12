@@ -62,11 +62,26 @@ namespace HarnessRuntime
         {
             var ui = Ui(player);
             ui.AddCalls++;
+            // Oxide's ToJson turns the two characters \n into a line break, also when the text really had a backslash
+            // followed by an n. The game shows the backslash and breaks the line there.
+            if (json.Contains("\\\n"))
+            {
+                ui.Warnings.Add("a text has a backslash followed by 'n': Oxide sends that as a backslash and a line break");
+                json = json.Replace("\\\n", "\\\\n");
+            }
             var arr = JArray.Parse(json);
+            // The game's JSON parser takes the quote after a backslash for an escaped one, so a string value that ends
+            // with a backslash never closes: the parse fails and nothing of this call is drawn (Rust.Community issue 64).
+            foreach (var value in arr.Descendants().OfType<JValue>())
+            {
+                if (value.Type != JTokenType.String || !((string)value).EndsWith("\\")) continue;
+                ui.Warnings.Add($"a text ends with a backslash ('{(string)value}'): the game cannot parse this AddUI call and draws none of it");
+                return;
+            }
             foreach (JObject el in arr)
             {
                 string name = (string)el["name"] ?? "AddUI CreatedPanel";
-                string parent = (string)el["parent"] ?? "Hud";
+                string parent = (string)el["parent"] ?? "Overlay";
                 string destroy = (string)el["destroyUi"];
                 if (!string.IsNullOrEmpty(destroy)) ClientDestroyUi(player, destroy, countCall: false);
                 bool update = el["update"] != null && (bool)el["update"];

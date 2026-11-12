@@ -1405,7 +1405,7 @@ static class Tests
 
         Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = withAutosave; });
         H.Console(admin, "news.admin");
-        Check(H.Texts(admin).Contains("UNSAVED") && H.Texts(admin).Any(t => t.StartsWith("\"Unfinished business\"")) && H.Commands(admin).Contains("news.admin.resume"), "after a restart News Management offers to continue");
+        Check(H.Texts(admin).Contains("UNSAVED") && H.Texts(admin).Any(t => t.StartsWith("\u201CUnfinished business\u201D")) && H.Commands(admin).Contains("news.admin.resume"), "after a restart News Management offers to continue");
         Check(H.AnnByTitle("Unfinished business") == null, "...and nothing was published on its own");
         H.Console(admin, "news.admin.create");
         H.Console(admin, "news.editor.cancel");
@@ -1491,6 +1491,161 @@ static class Tests
         Check(!(bool)H.Call("API_ShowNews", player, draftId) && !(bool)H.Call("API_ShowNews", noperm, apiId) && !UiOpen(player), "...but not a draft, and not without permission");
         int deletedHooks = HooksNamed("OnNewsDeleted");
         Check((bool)H.Call("API_DeleteNews", apiId) && H.AnnByTitle("Airdrop event") == null && HooksNamed("OnNewsDeleted") == deletedHooks + 1 && !(bool)H.Call("API_DeleteNews", apiId), "API_DeleteNews");
+
+        // ---------------------------------------------------------------
+        Section("What the game client cannot take: backslashes and quotes");
+        Fresh();
+        var slashAdmin = H.MakePlayer(76561198000000077, "Dave\\", admin: true);
+        H.Console(slashAdmin, "news.admin.create");
+        H.Console(slashAdmin, "news.editor.input title Path C:\\temp\\");
+        H.Console(slashAdmin, "news.editor.input text He said \"hello\" and left\\");
+        H.Console(slashAdmin, "news.editor.toggle poll");
+        H.Console(slashAdmin, "news.editor.input poll1 Yes\\");
+        H.Console(slashAdmin, "news.editor.input poll2 No\\");
+        H.Console(slashAdmin, "news.editor.input cdlabel Wipe\\");
+        H.Console(slashAdmin, "news.editor.input cdtime 2h");
+        H.Console(slashAdmin, "news.editor.toggle pin");
+        Check(CuiWarnings().Count == 0 && H.HasElement(slashAdmin, "NewsBroadcasterUI.Editor"), "the editor still draws with a backslash at the end of every field");
+        H.Console(slashAdmin, "news.editor.save");
+        Check(CuiWarnings().Count == 0 && ToastOpen(player), "a title that ends with a backslash: the toast is drawn" + string.Join(" | ", CuiWarnings().Take(2)));
+        H.Console(player, $"news.view {H.Id(Ann0)}");
+        Check(CuiWarnings().Count == 0 && H.HasElement(player, "NewsBroadcasterUI.Main") && H.Texts(player).Any(t => t.StartsWith("PATH C:")), "...and so is the popup (title, author, poll options and countdown label all end with one)");
+        Check(H.Texts(player).Any(t => t.Contains("\u201Chello\u201D")) && !H.Texts(player).Any(t => t.Contains("\"")), "straight double quotes are sent as typographic ones (the game shows \\\" otherwise)");
+        H.Console(player, "news.page 0 reset");
+        Sim.Advance(1);
+        H.Console(player, "news.search temp\\");
+        Sim.Advance(1);
+        Check(CuiWarnings().Count == 0 && H.HasElement(player, "NewsBroadcasterUI.List"), "a search that ends with a backslash still draws the archive");
+        H.Console(slashAdmin, "news.admin");
+        Check(CuiWarnings().Count == 0 && H.HasElement(slashAdmin, "NewsBroadcasterUI.Admin"), "...and News Management");
+        Check(!Oxide.Core.Libraries.Lang.Instance.Messages("en").Values.Any(text => text.Contains("\\")), "no default text has a backslash in it (Oxide turns \\n into a line break behind it)");
+
+        ((System.Collections.IDictionary)H.AGet(H.Config, "Themes"))["Night Shift 2"] = ((System.Collections.IDictionary)H.AGet(H.Config, "Themes"))["Dark"];
+        H.Console(slashAdmin, "news.admin.themes 0");
+        string pickTheme = H.Commands(slashAdmin).First(command => command.StartsWith("news.admin.settheme Night"));
+        H.Console(slashAdmin, pickTheme);
+        Check(!pickTheme.Contains("\"") && (string)H.AGet(H.Config, "SelectedTheme") == "Night Shift 2", "a theme with spaces and a number in its name is picked by a command without quotes in it");
+
+        // ---------------------------------------------------------------
+        Section("Element names, swaps in one call, pictures");
+        Fresh();
+        var library = new FakePlugin("ImageLibrary");
+        var stored = new HashSet<string>();
+        library.Handler = (h, a) => h == "HasImage" ? (object)stored.Contains((string)a[0]) : h == "GetImage" ? (object)("png:" + a[0]) : null;
+        H.Set("ImageLibrary", library);
+        Post("With picture", "x", "Info", "https://img.example/thumb.png");
+        H.Console(null, "news.poll \"Poll\" \"Body\" \"Yes|No\"");
+        H.Console(player, "news.page 0 reset");
+        bool IsPicture(JObject e, string key, string value) => e["components"].Any(c => (string)c["type"] == "UnityEngine.UI.RawImage" && (string)c[key] == value);
+        Check(!H.Live(player).Any(e => IsPicture(e, "url", "https://img.example/thumb.png")), "a list never loads a thumbnail by URL (the client would download it again on every redraw)");
+        stored.Add("https://img.example/thumb.png");
+        Nav(player, "news.page 0");
+        Check(H.Live(player).Any(e => IsPicture(e, "png", "png:https://img.example/thumb.png")), "...it shows the one ImageLibrary has stored");
+        var pictureRect = H.Live(player).First(e => IsPicture(e, "png", "png:https://img.example/thumb.png"))["components"].First(c => (string)c["type"] == "RectTransform");
+        Check((string)pictureRect["offsetmax"] == "0 0", "a picture has its offsets written out (the client's default offsetmax is \"1 1\")");
+        library.Handler = (h, a) => null;
+        Nav(player, "news.page 0");
+        Check(H.HasElement(player, "NewsBroadcasterUI.List") && !Sim.LogLines.Any(l => l.StartsWith("ERR")), "an ImageLibrary that answers nothing does not break a screen");
+
+        var anonymous = H.Live(player).Where(e => (string)e["name"] == "AddUI CreatedPanel").ToList();
+        var generated = H.Live(player).Select(e => (string)e["name"]).Where(n => n.StartsWith("nb_")).ToList();
+        var parents = new HashSet<string>(H.Live(player).Select(e => (string)e["parent"]));
+        Check(anonymous.Count > H.Live(player).Count() / 2 && generated.All(n => n.Length <= 12) && generated.Distinct().Count() == generated.Count,
+            $"labels and other leaves are sent without a name, the rest gets a short unique one ({anonymous.Count} of {H.Live(player).Count()} unnamed, {generated.Count} generated)");
+        Check(!H.Live(player).Any(e => System.Text.RegularExpressions.Regex.IsMatch((string)e["name"], "^[0-9a-f]{32}$")), "no 32-character GUID names any more");
+
+        H.Console(player, $"news.view {H.Id(Ann0)}");
+        int addCalls = Sim.Ui(player).AddCalls, destroyCalls = Sim.Ui(player).DestroyCalls, elementsBefore = H.Live(player).Count();
+        H.Console(player, $"news.like {H.Id(Ann0)}");
+        Check(Sim.Ui(player).AddCalls == addCalls + 1 && Sim.Ui(player).DestroyCalls == destroyCalls && H.Live(player).Count() == elementsBefore && H.Texts(player).Contains("❤  1"),
+            "a like swaps the button in one call (no separate destroy), nothing left behind");
+        addCalls = Sim.Ui(player).AddCalls;
+        H.Console(player, $"news.vote {H.Id(Ann0)} 0");
+        Check(Sim.Ui(player).AddCalls == addCalls + 1 && Sim.Ui(player).DestroyCalls == destroyCalls && H.Live(player).Count(e => (string)e["name"] == "NewsBroadcasterUI.Poll") == 1,
+            "a vote swaps the poll block in one call");
+
+        foreach (bool rounded in new[] { true, false })
+        {
+            Fresh();
+            H.CfgSet("General.RoundedCorners", rounded);
+            H.Call("API_CreateNews", new Dictionary<string, object> { ["title"] = "Countdown", ["text"] = "x", ["countdownTo"] = DateTime.UtcNow.AddDays(2), ["notify"] = false });
+            H.Console(player, $"news.view {H.Id(Ann0)}");
+            var timerComponent = H.Live(player).SelectMany(e => e["components"].Children<JObject>()).First(c => (string)c["type"] == "Countdown");
+            Check((float)timerComponent["startTime"] > 0 && (float)timerComponent["startTime"] <= 86400, $"countdown, exactly two days left (rounded {rounded}): the client's timer does not start at zero");
+            int before = H.Live(player).Count();
+            destroyCalls = Sim.Ui(player).DestroyCalls;
+            for (int i = 0; i < 3; i++) H.Console(player, $"news.countdown {H.Id(Ann0)}");
+            Check(H.Live(player).Count() == before && Sim.Ui(player).DestroyCalls == destroyCalls && CuiWarnings().Count == 0, $"...and redrawing the card leaves nothing behind (rounded {rounded})");
+        }
+
+        Fresh();
+        H.CfgSet("General.RoundedCorners", false);
+        H.Chat(player, "news", "settings");
+        H.Console(player, "news.settings.toggle sound");
+        var offToggle = H.Live(player).Select(e => e["components"].First(c => (string)c["type"] == "RectTransform")).Where(r => (string)r["offsetmin"] == "-1 -1").ToList();
+        Check(offToggle.Count > 0 && offToggle.All(r => (string)r["offsetmax"] == "2 2"), "the rim behind a flat box reaches one unit further up and right, like the box itself does in game");
+
+        // ---------------------------------------------------------------
+        Section("Files that cannot be read are never overwritten");
+        const string brokenData = "{ \"Announcements\": [ { \"Title\": \"Keep me\", ";
+        Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = brokenData; });
+        Check(Sim.LogLines.Any(l => l.StartsWith("ERR") && l.Contains("NewsBroadcaster_Data.json could not be read")), "a data file that can't be read: the console says so");
+        Post("Posted while broken");
+        H.Console(player, $"news.like {H.Id(Ann0)}");
+        Sim.Advance(60);
+        H.Call("OnServerSave");
+        Check(Sim.DataFiles["NewsBroadcaster_Data"] == brokenData, "...and the file is left exactly as it was, whatever happens afterwards");
+        Check(Sim.LogLines.Count(l => l.StartsWith("ERR") && l.Contains("Nothing is being saved")) == 1, "...with one clear error instead of one per save");
+        H.Chat(admin, "news", "admin");
+        Check(H.ChatOf(admin).Any(m => m.Contains("nothing is being saved")) && H.HasElement(admin, "NewsBroadcasterUI.Admin"), "...and an admin who opens News Management is told");
+        H.Call("Unload");
+        Check(Sim.DataFiles["NewsBroadcaster_Data"] == brokenData, "...not on unload either");
+
+        const string typoConfig = "{ \"General\": { \"ServerName\": \"MY SERVER\", } \"SelectedTheme\": }";
+        Fresh(preBoot: () => { Sim.ConfigFiles["config:NewsBroadcaster"] = typoConfig; });
+        H.Console(admin, "news.admin.settheme Ocean");
+        Check(Sim.ConfigFiles["config:NewsBroadcaster"] == typoConfig && (string)H.AGet(H.Config, "SelectedTheme") == "Ocean" && Sim.LogLines.Any(l => l.Contains("Not saved")),
+            "a config file with a typo is not overwritten when a theme is picked in game (the theme applies until the reload)");
+
+        // ---------------------------------------------------------------
+        Section("Data file: reader lists on one line");
+        Fresh();
+        Post("Read by many");
+        for (ulong reader = 0; reader < 500; reader++) Set(Ann0, "ReadByPlayers").Add(76561198100000000 + reader);
+        H.Call("SaveAnnouncements");
+        string savedFile = Sim.DataFiles["NewsBroadcaster_Data"];
+        Check(savedFile.Contains("\"ReadByPlayers\": [76561198100000000,76561198100000001,") && savedFile.Split('\n').Length < 120, $"500 readers take one line, not 500 ({savedFile.Split('\n').Length} lines in the file)");
+        Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = savedFile; });
+        Check(Set(Ann0, "ReadByPlayers").Count == 500 && Set(Ann0, "ReadByPlayers").Contains(76561198100000499), "...and they are all there after a restart");
+        string classic = "{ \"Announcements\": [ { \"Id\": \"a1\", \"Title\": \"Old layout\", \"Text\": \"x\", \"Timestamp\": 5, \"ReadByPlayers\": [\n 1,\n 2,\n 3\n ] } ] }";
+        Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = classic; });
+        Check(Set(Ann0, "ReadByPlayers").Count == 3, "a list written one id per line reads the same (it is the same JSON)");
+
+        // ---------------------------------------------------------------
+        Section("Broadcast: the toast is built once, not once per player");
+        Fresh();
+        var crowd = new List<BasePlayer>();
+        for (ulong i = 0; i < 30; i++) crowd.Add(H.MakePlayer(76561198000002000 + i, "Crowd" + i));
+        Post("For everyone");
+        var toastRoots = crowd.Select(p => (string)H.Live(p).First(e => (string)e["parent"] == "Hud")["name"]).Distinct().ToList();
+        Check(crowd.All(ToastOpen) && toastRoots.Count == 1, "30 players get the same toast (one JSON, sent 30 times)");
+        Oxide.Core.Libraries.Lang.Instance.RegisterMessages(new Dictionary<string, string> { ["ClickToRead"] = "Klicken zum Lesen" }, null, "de");
+        Oxide.Core.Libraries.Lang.UserLanguages[crowd[3].UserIDString] = "de";
+        Post("Second one");
+        Check(H.Texts(crowd[3]).Contains("Klicken zum Lesen") && !H.Texts(crowd[4]).Contains("Klicken zum Lesen") && H.Texts(crowd[4]).Any(x => x == "SECOND ONE" || x == "Second one"), "a player with another language gets the toast in that language");
+        Check(crowd.All(p => H.Live(p).Count(e => (string)e["parent"] == "Hud") == 1) && (string)H.Live(crowd[0]).First(e => (string)e["parent"] == "Hud")["name"] != toastRoots[0], "the next post replaces it with a toast of its own name");
+        Sim.Advance(30);
+        Check(!crowd.Any(ToastOpen), "...and each player's toast still goes away on its own timer");
+
+        // ---------------------------------------------------------------
+        Section("Waking up: nothing to do, nothing looked up");
+        Fresh();
+        Post("Seen");
+        H.Call("OnPlayerSleepEnded", player);
+        Sim.Advance(5);
+        int permissionChecks = Oxide.Core.Libraries.Permission.Lookups;
+        for (int i = 0; i < 50; i++) H.Call("OnPlayerSleepEnded", player);
+        Check(Oxide.Core.Libraries.Permission.Lookups == permissionChecks, "a player who respawns with nothing new costs no permission lookup");
 
         // ---------------------------------------------------------------
         Section("Garbage input: every command, every caller");
