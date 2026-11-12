@@ -225,6 +225,45 @@ Put this in the message to the reviewers if the form has a field for it. It answ
 
 ---
 
+## What changed since the review
+
+Paste this into the message to the reviewers when you send the plugin back. All of it is in 1.0.0.
+
+**Fixed from the review**
+- Config: plain load and save. No migrations, no clamps, no empty catch. A config file with a typo is left alone, never overwritten.
+- Data loading: the old-format fallbacks and backfills are gone. The files are read as they are.
+- Read and like rewards no longer rewrite the data for every player. They are saved with everything else players do: 15 seconds after the first change, and on server save and unload.
+- The 30-second repeating timer is gone. One timer waits for the next auto-delete or poll closing; when nothing is scheduled, no timer runs.
+- No LINQ and no ToList. Plain loops, pooled lists (`Facepunch.Pool`), and the pinned-first order is kept instead of sorted on every draw.
+- Lighter UI. Only panels, cards, the main button and the popup picture are rounded; buttons, tags and chips are one flat element, and the shadow is 14 elements instead of 58. Archive page 373 → 164 elements (about 100 with rounded corners off), popup 151 → 65, toast 61 → 36.
+- Cooldown on page, filter, search and sort clicks: at most one redraw every 0.4 seconds per player. No click is lost.
+- Dead code removed (`PopupState.Origin`, null checks on sets that always exist, the `CreateByName` check). Rewards use `player.GiveItem`.
+- Bug: a new post is no longer dropped right after publishing when pinned posts and drafts fill `MaxStoredAnnouncements`.
+
+**Also fixed**
+- Picking a theme said "Theme 'Facepunch.StringView[] 0 1' not found", and both search boxes searched for that text instead of what was typed.
+- A title, name, poll option or search ending with a backslash stopped the whole screen from drawing.
+- Straight double quotes are sent as curly quotes.
+- The editor's new-line hint broke its own line in game.
+- A countdown with a whole number of days left restarted itself many times a second.
+- The outline of small boxes was hidden on two sides, and pictures stuck out of their frame by one pixel.
+- A data or config file that can't be read is never overwritten. The console names the file, and admins are told in game.
+- An ImageLibrary that answers nothing no longer causes an error.
+- Texts are limited to 12,000 characters, the most the game can draw in one text.
+
+**Lighter on the server**
+- The data is split into four files in `oxide/data/NewsBroadcaster/`: News (the posts), Activity (reads, likes, votes), Players (seen markers, settings) and Autosaves. Only a file that changed is written: a like no longer rewrites the posts, and an admin action no longer rewrites every reader.
+- A broadcast builds its toast once instead of once per player: 100 players went from about 14 ms to 0.2 ms in the benchmark.
+- About 12% less UI data per screen (short element names instead of 32-character GUIDs). A like, a vote or a countdown update is one message.
+- Thumbnails in the lists come only from ImageLibrary: by link, the game downloads a picture again on every redraw.
+- Fewer permission checks; colours and numbers are formatted once and reused.
+
+**Other**
+- All comments removed from the plugin file.
+- 483 automated checks; compiles as C# 6 and C# 7.
+
+---
+
 ## Before you press submit
 
 1. **Load it on your own server once** (`oxide.reload NewsBroadcaster`). The automated checks use stand-ins for the game, and RogueDepot compiles uploads against the real Rust and Oxide files. A real load is the only proof that it compiles there.
