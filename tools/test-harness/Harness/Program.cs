@@ -151,7 +151,7 @@ static class Previews
             H.Console(admin, "news.editor.input title Server Rules Update");
             H.Console(admin, "news.editor.input text We changed two rules this week. Please read them before the wipe.");
             H.Console(admin, "news.close");
-            var autosaves = (System.Collections.IDictionary)H.AGet(H.Get("storedData"), "EditorAutosaves");
+            var autosaves = (System.Collections.IDictionary)H.AGet(H.Get("autosaveData"), "EditorAutosaves");
             H.ASet(autosaves[(ulong)admin.userID], "SavedAt", DateTime.UtcNow.Ticks - 12 * TimeSpan.TicksPerMinute - TimeSpan.TicksPerSecond);
             H.Console(admin, "news.admin");
             H.Save(admin, outDir, "05b_admin_unsaved");
@@ -372,6 +372,9 @@ static class Bench
         var buildToast = H.T.GetMethod("BuildToast", All);
         var countUnread = H.T.GetMethod("CountUnread", All);
         var save = H.T.GetMethod("SaveAnnouncements", All);
+        var saveData = H.T.GetMethod("SaveData", All);
+        var parts = H.T.GetNestedType("DataParts", All);
+        object activityPart = Enum.ToObject(parts, 4), playersPart = Enum.ToObject(parts, 2);
         var check = H.T.GetMethod("CheckScheduled", All);
 
         Console.WriteLine("200 stored posts, per call:");
@@ -384,7 +387,8 @@ static class Bench
         Measure("News Management (ShowAdminList)", 1000, () => showAdmin.Invoke(H.P, new object[] { admin, 0 }));
         Measure("unread count (CountUnread)", 5000, () => countUnread.Invoke(H.P, new object[] { player }));
         Measure("schedule check, nothing due", 5000, () => check.Invoke(H.P, null));
-        Measure("save the data file (300 readers a post)", 20, () => save.Invoke(H.P, null));
+        Measure("save News.json (admin action)", 50, () => save.Invoke(H.P, null));
+        Measure("save Activity.json (300 readers a post)", 20, () => saveData.Invoke(H.P, new[] { activityPart }));
 
         // A big server late in a wipe: the newest 50 posts were each read by 3000 players and liked by 500.
         for (int n = 0; n < 50; n++)
@@ -394,8 +398,10 @@ static class Bench
             for (ulong reader = 0; reader < 3000; reader++) reads.Add(76561198200000000 + reader);
             for (ulong liker = 0; liker < 500; liker++) likes.Add(76561198200000000 + liker);
         }
-        Measure("save the data file (3000 readers a post)", 10, () => save.Invoke(H.P, null));
-        Console.WriteLine($"  data file size: {Sim.DataFiles["NewsBroadcaster_Data"].Length / 1024} KB");
+        Measure("save Activity.json (3000 readers a post)", 10, () => saveData.Invoke(H.P, new[] { activityPart }));
+        for (ulong p = 0; p < 3000; p++) ((Dictionary<ulong, long>)H.AGet(H.Get("playerData"), "LastSeenNews"))[76561198200000000 + p] = DateTime.UtcNow.Ticks;
+        Measure("save Players.json (3000 players)", 20, () => saveData.Invoke(H.P, new[] { playersPart }));
+        Console.WriteLine($"  file sizes: News {Sim.DataFiles["NewsBroadcaster/News"].Length / 1024} KB, Activity {Sim.DataFiles["NewsBroadcaster/Activity"].Length / 1024} KB, Players {Sim.DataFiles["NewsBroadcaster/Players"].Length / 1024} KB");
         Measure("archive page, 3000 readers a post", 2000, () => showHistory.Invoke(H.P, new object[] { player, 0 }));
 
         for (ulong i = 0; i < 98; i++) H.MakePlayer(76561198000001000 + i, "Player" + i);

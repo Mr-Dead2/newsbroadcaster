@@ -69,6 +69,13 @@ static class Tests
     }
     static HashSet<ulong> Set(object ann, string f) => (HashSet<ulong>)H.AGet(ann, f);
 
+    const string NewsJson = "NewsBroadcaster/News", PlayersJson = "NewsBroadcaster/Players", ActivityJson = "NewsBroadcaster/Activity", AutosavesJson = "NewsBroadcaster/Autosaves";
+    static readonly string[] AllDataFiles = { NewsJson, PlayersJson, ActivityJson, AutosavesJson };
+    static string Stored(string file) => Sim.DataFiles.TryGetValue(file, out var json) ? json : "";
+    static Dictionary<string, int> WritesNow() => AllDataFiles.ToDictionary(f => f, Sim.WritesOf);
+    static List<string> WrittenSince(Dictionary<string, int> before) => AllDataFiles.Where(f => Sim.WritesOf(f) != before[f]).Select(f => f.Substring(16)).ToList();
+    static void SaveEverything() => H.Call("SaveData", Enum.ToObject(H.T.GetNestedType("DataParts", System.Reflection.BindingFlags.NonPublic), 15));
+
     // A click on a page / filter / search / sort control, at a human pace: these redraws have a cooldown.
     static void Nav(BasePlayer p, string command)
     {
@@ -88,7 +95,7 @@ static class Tests
         Check(cfg["Themes"].Count() == 6, "default config has 6 themes");
         Check(cfg["General"]["RequireViewPermission"] != null && cfg["General"]["PopupImageFrame"]?.ToString() == "Tall", "new options are written to config");
         Check(Sim.Permission.PermissionExists("newsbroadcaster.admin") && Sim.Permission.PermissionExists("newsbroadcaster.view"), "permissions registered");
-        Check(Sim.DataFiles.ContainsKey("NewsBroadcaster_Data"), "data file created");
+        Check(AllDataFiles.All(Sim.DataFiles.ContainsKey) && !Sim.DataFiles.ContainsKey("NewsBroadcaster_Data"), "the four data files are created in oxide/data/NewsBroadcaster/");
 
         // ---------------------------------------------------------------
         Section("Config: plain load and save");
@@ -117,18 +124,23 @@ static class Tests
         Section("Data file: loaded as stored");
         Fresh(preBoot: () =>
         {
-            Sim.DataFiles["NewsBroadcaster_Data"] = @"{
+            Sim.DataFiles[NewsJson] = @"{
               ""Announcements"": [
-                { ""Id"": ""a2"", ""Title"": ""Newer"", ""ImageUrl"": """", ""Text"": ""visit https://example.com now"", ""Date"": ""2026-02-01 10:00"", ""Author"": ""x"", ""Type"": 3, ""Timestamp"": 200, ""Pinned"": true, ""LikedPlayers"": [1,2], ""ReadByPlayers"": [5] },
-                { ""Id"": ""a1"", ""Title"": ""Old"", ""ImageUrl"": """", ""Text"": ""old text"", ""Date"": ""2026-01-01 10:00"", ""Author"": ""x"", ""Type"": 0, ""Timestamp"": 100, ""PollOptions"": [""Yes"", ""No""], ""PollVotes"": { ""76561198000000002"": 1 } }
-              ],
-              ""LastSeenNews"": { ""76561198000000002"": 200 }
+                { ""Id"": ""a2"", ""Title"": ""Newer"", ""ImageUrl"": """", ""Text"": ""visit https://example.com now"", ""Date"": ""2026-02-01 10:00"", ""Author"": ""x"", ""Type"": 3, ""Timestamp"": 200, ""Pinned"": true },
+                { ""Id"": ""a1"", ""Title"": ""Old"", ""ImageUrl"": """", ""Text"": ""old text"", ""Date"": ""2026-01-01 10:00"", ""Author"": ""x"", ""Type"": 0, ""Timestamp"": 100, ""PollOptions"": [""Yes"", ""No""] }
+              ]
             }";
+            Sim.DataFiles[ActivityJson] = @"{ ""Posts"": {
+                ""a2"": { ""LikedPlayers"": [1,2], ""ReadByPlayers"": [5] },
+                ""a1"": { ""PollVotes"": { ""76561198000000002"": 1 } }
+            } }";
+            Sim.DataFiles[PlayersJson] = @"{ ""LastSeenNews"": { ""76561198000000002"": 200 } }";
         });
         Check(H.Announcements.Count == 2 && (string)H.AGet(H.Ann(0), "Title") == "Newer" && H.Id(H.Ann(1)) == "a1", "posts load in the stored order");
         Check(Set(H.Ann(0), "LikedPlayers").Count == 2 && Set(H.Ann(0), "ReadByPlayers").Contains(5) && H.AGet(H.Ann(0), "Type").ToString() == "Event", "likes, reads and type are read back");
         Check(((string)H.AGet(H.Ann(0), "Text")).Contains("https://example.com"), "stored text is not touched on load");
         Check(((Dictionary<ulong, int>)H.AGet(H.Ann(1), "PollVotes"))[76561198000000002] == 1 && Set(H.Ann(1), "LikeRewardedPlayers").Count == 0, "poll votes are read back, lists the file leaves out start empty");
+        Check((long)((Dictionary<ulong, long>)H.AGet(H.Get("playerData"), "LastSeenNews"))[76561198000000002] == 200, "player data is read from its own file");
 
         // ---------------------------------------------------------------
         Section("news.show broadcast, notifications, permissions, sound");
@@ -161,7 +173,9 @@ static class Tests
         Check(UiOpen(player) && H.HasElement(player, "NewsBroadcasterUI.Main.Body"), "popup open with scroll body");
         var scroll = H.Live(player).First(e => (string)e["name"] == "NewsBroadcasterUI.Main.Body")["components"].First(c => (string)c["type"] == "UnityEngine.UI.ScrollView");
         Check(((string)scroll["contentTransform"]["offsetmin"]).StartsWith("0 -") && int.Parse(((string)scroll["contentTransform"]["offsetmin"]).Substring(3)) > 1000, "long body gets a tall scroll content");
+        Sim.Advance(16);
         int writesBefore = Sim.DataWrites;
+        var filesBefore = WritesNow();
         int addCallsBefore = Sim.Ui(player).AddCalls;
         H.Console(player, $"news.like {H.Id(third)}");
         Check(Set(third, "LikedPlayers").Contains(player.userID), "like added");
@@ -171,7 +185,7 @@ static class Tests
         Check(Set(third, "LikedPlayers").Contains(player.userID), "double-click within cooldown ignored");
         Check(Sim.DataWrites == writesBefore, "like does not write the data file immediately");
         Sim.Advance(16);
-        Check(Sim.DataWrites == writesBefore + 1, "debounced save flushes once");
+        Check(Sim.DataWrites == writesBefore + 1 && WrittenSince(filesBefore).SequenceEqual(new[] { "Activity" }), "debounced save flushes once, and only the activity file (" + string.Join(", ", WrittenSince(filesBefore)) + ")");
         H.Call("OnServerSave");
         Check(Sim.DataWrites == writesBefore + 1, "a server save with nothing changed writes nothing");
         Check(HooksNamed("OnNewsLiked") == 1, "OnNewsLiked fired once");
@@ -214,7 +228,7 @@ static class Tests
         Check(readers.All(r => r.inventory.given.Count == 1 && Set(rp, "ReadRewardedPlayers").Contains(r.userID)), "six players get the read reward");
         Check(Sim.DataWrites == rewardWrites, "...without a write of the data file for each of them");
         Sim.Advance(16);
-        Check(Sim.DataWrites == rewardWrites + 1 && Sim.DataFiles["NewsBroadcaster_Data"].Contains("76561198000000105"), "one delayed save stores all of them");
+        Check(Sim.DataWrites == rewardWrites + 1 && Stored(ActivityJson).Contains("76561198000000105"), "one delayed save stores all of them");
         readers[0].inventory.FullInventory = true;
         H.CfgSet("Rewards.EnableLikeReward", true);
         H.Console(readers[0], $"news.like {H.Id(rp)}");
@@ -501,9 +515,9 @@ static class Tests
         var late = BasePlayer.activePlayerList.Values.Last();
         H.Console(late, $"news.view {H.Id(Ann0)}");
         H.Console(late, $"news.like {H.Id(Ann0)}");
-        int w = Sim.DataWrites;
+        var pendingAtUnload = WritesNow();
         H.Call("Unload");
-        Check(Sim.DataWrites == w + 1, "unload flushes pending data");
+        Check(WrittenSince(pendingAtUnload).Contains("Activity") && Stored(ActivityJson).Contains(late.UserIDString) && !WrittenSince(pendingAtUnload).Contains("News"), "unload flushes pending data (only the files that changed)");
         Check(!UiOpen(late), "unload destroys UI");
 
         // ---------------------------------------------------------------
@@ -543,7 +557,7 @@ static class Tests
         H.Chat(player, "news", "read");
         Check(LastChat(player) == "You have no unread announcements.", "/news read with nothing unread");
         Sim.Advance(16);
-        Check(JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["ReadAllUpTo"][player.UserIDString] != null, "mark-read marker saved");
+        Check(JObject.Parse(Stored(PlayersJson))["ReadAllUpTo"][player.UserIDString] != null, "mark-read marker saved (player data file)");
 
         // ---------------------------------------------------------------
         Section("Polls: console, voting, results, partial redraw, closing, editing");
@@ -968,7 +982,7 @@ static class Tests
         long past = DateTime.UtcNow.Ticks - TimeSpan.TicksPerMinute;
         Fresh(preBoot: () =>
         {
-            Sim.DataFiles["NewsBroadcaster_Data"] = @"{ ""Announcements"": [
+            Sim.DataFiles[NewsJson] = @"{ ""Announcements"": [
                 { ""Id"": ""keep"", ""Title"": ""Stays"", ""Text"": ""b"", ""Timestamp"": 3000 },
                 { ""Id"": ""poll"", ""Title"": ""Old poll"", ""Text"": ""b"", ""Timestamp"": 2000, ""PollOptions"": [""A"", ""B""], ""PollEndsAt"": " + past + @" },
                 { ""Id"": ""gone"", ""Title"": ""Expired"", ""Text"": ""a"", ""Timestamp"": 1000, ""ExpiresAt"": " + past + @" } ] }";
@@ -1156,7 +1170,7 @@ static class Tests
         Sim.Advance(2.5);
         Check(!UiOpen(player), "join pop-up off: no popup when waking up");
         Sim.Advance(16);
-        Check(Sim.DataFiles["NewsBroadcaster_Data"].Contains("\"PlayerSettings\"") && Sim.DataFiles["NewsBroadcaster_Data"].Contains("\"JoinPopup\": false"), "settings are saved per player");
+        Check(Stored(PlayersJson).Contains("\"PlayerSettings\"") && Stored(PlayersJson).Contains("\"JoinPopup\": false"), "settings are saved per player (player data file)");
 
         // ---------------------------------------------------------------
         Section("Notification position");
@@ -1308,17 +1322,19 @@ static class Tests
 
         Fresh(preBoot: () =>
         {
-            Sim.DataFiles["NewsBroadcaster_Data"] = @"{
+            Sim.DataFiles[NewsJson] = @"{
               ""Announcements"": [
                 { ""Id"": ""n2"", ""Title"": ""Newer"", ""Text"": ""b"", ""Timestamp"": 2000 },
                 { ""Id"": ""n1"", ""Title"": ""Older"", ""Text"": ""a"", ""Timestamp"": 1000 }
-              ],
+              ]
+            }";
+            Sim.DataFiles[PlayersJson] = @"{
               ""LastSeenNews"": { ""76561198000000002"": 1000, ""76561198000000050"": 400 },
               ""ReadAllUpTo"": { ""76561198000000002"": 2000, ""76561198000000051"": 999 }
             }";
         });
         Sim.Advance(16);
-        var storedAfterLoad = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"]);
+        var storedAfterLoad = JObject.Parse(Stored(PlayersJson));
         Check(storedAfterLoad["LastSeenNews"]["76561198000000050"] == null && storedAfterLoad["ReadAllUpTo"]["76561198000000051"] == null, "markers older than the oldest post are dropped on load");
         Check(storedAfterLoad["LastSeenNews"]["76561198000000002"] != null && storedAfterLoad["ReadAllUpTo"]["76561198000000002"] != null, "markers that still matter are kept");
         Check((int)H.Call("CountUnread", player) == 0, "...and still work");
@@ -1389,7 +1405,7 @@ static class Tests
         H.Console(admin, "news.admin");
         H.Console(admin, "news.admin.create");
         H.Console(admin, "news.editor.cancel");
-        Check(!Sim.DataFiles["NewsBroadcaster_Data"].Contains("Unfinished") && !H.Texts(admin).Contains("UNSAVED"), "an untouched editor leaves nothing behind");
+        Check(!Stored(AutosavesJson).Contains("Unfinished") && !H.Texts(admin).Contains("UNSAVED"), "an untouched editor leaves nothing behind");
         H.Console(admin, "news.admin.create");
         Check(H.Texts(admin).Contains("CHANGES ARE SAVED AUTOMATICALLY"), "the editor says that it autosaves");
         H.Console(admin, "news.editor.input title Unfinished business");
@@ -1400,10 +1416,10 @@ static class Tests
         H.Call("OnPlayerDisconnected", admin, "Timed out");
         Sim.Ui(admin).Elements.Clear();
         H.Call("OnServerSave");
-        Check(Sim.DataFiles["NewsBroadcaster_Data"].Contains("Unfinished business"), "what was typed is in the data file after a disconnect");
-        string withAutosave = Sim.DataFiles["NewsBroadcaster_Data"];
+        Check(Stored(AutosavesJson).Contains("Unfinished business") && !Stored(NewsJson).Contains("Unfinished"), "what was typed is in the autosave file after a disconnect (and not in the news file)");
+        string withAutosave = Stored(AutosavesJson), newsBeside = Stored(NewsJson);
 
-        Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = withAutosave; });
+        Fresh(preBoot: () => { Sim.DataFiles[AutosavesJson] = withAutosave; Sim.DataFiles[NewsJson] = newsBeside; });
         H.Console(admin, "news.admin");
         Check(H.Texts(admin).Contains("UNSAVED") && H.Texts(admin).Any(t => t.StartsWith("\u201CUnfinished business\u201D")) && H.Commands(admin).Contains("news.admin.resume"), "after a restart News Management offers to continue");
         Check(H.AnnByTitle("Unfinished business") == null, "...and nothing was published on its own");
@@ -1418,7 +1434,7 @@ static class Tests
         var finished = H.AnnByTitle("Unfinished business");
         Check(finished != null && H.AGet(finished, "Type").ToString() == "Alert" && ((List<string>)H.AGet(finished, "PollOptions")).Count == 2, "...and it publishes like any other post");
         H.Call("OnServerSave");
-        Check(!H.Texts(admin).Contains("UNSAVED") && JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["EditorAutosaves"].Count() == 0, "publishing removes the autosave");
+        Check(!H.Texts(admin).Contains("UNSAVED") && JObject.Parse(Stored(AutosavesJson))["EditorAutosaves"].Count() == 0, "publishing removes the autosave");
 
         var existing = H.AnnByTitle("Existing post");
         H.Console(admin, $"news.admin.edit {H.Id(existing)}");
@@ -1443,12 +1459,12 @@ static class Tests
 
         Fresh(preBoot: () =>
         {
-            Sim.DataFiles["NewsBroadcaster_Data"] = @"{ ""Announcements"": [], ""EditorAutosaves"": {
+            Sim.DataFiles[AutosavesJson] = @"{ ""EditorAutosaves"": {
                 ""76561198000000001"": { ""Draft"": { ""Title"": ""Ancient"" }, ""SavedAt"": 5 },
                 ""76561198000000009"": { ""Draft"": { ""Title"": ""Yesterday"" }, ""SavedAt"": " + (DateTime.UtcNow.Ticks - TimeSpan.TicksPerDay) + @" } } }";
         });
         Sim.Advance(16);
-        var keptAutosaves = JObject.Parse(Sim.DataFiles["NewsBroadcaster_Data"])["EditorAutosaves"];
+        var keptAutosaves = JObject.Parse(Stored(AutosavesJson))["EditorAutosaves"];
         Check(keptAutosaves.Count() == 1 && keptAutosaves["76561198000000009"] != null, "autosaves nobody came back for (30 days) are dropped on load, newer ones stay");
 
         // ---------------------------------------------------------------
@@ -1587,19 +1603,33 @@ static class Tests
 
         // ---------------------------------------------------------------
         Section("Files that cannot be read are never overwritten");
-        const string brokenData = "{ \"Announcements\": [ { \"Title\": \"Keep me\", ";
-        Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = brokenData; });
-        Check(Sim.LogLines.Any(l => l.StartsWith("ERR") && l.Contains("NewsBroadcaster_Data.json could not be read")), "a data file that can't be read: the console says so");
+        const string brokenNews = "{ \"Announcements\": [ { \"Title\": \"Keep me\", ";
+        Fresh(preBoot: () => { Sim.DataFiles[NewsJson] = brokenNews; });
+        Check(Sim.LogLines.Count(l => l.StartsWith("ERR") && l.Contains("NewsBroadcaster/News.json could not be read") && l.Contains("saves nothing at all")) == 1, "a news file that can't be read: the console says so, once");
+        var untouched = AllDataFiles.ToDictionary(f => f, Stored);
         Post("Posted while broken");
         H.Console(player, $"news.like {H.Id(Ann0)}");
+        H.Console(player, "news.settings.toggle sound");
         Sim.Advance(60);
         H.Call("OnServerSave");
-        Check(Sim.DataFiles["NewsBroadcaster_Data"] == brokenData, "...and the file is left exactly as it was, whatever happens afterwards");
-        Check(Sim.LogLines.Count(l => l.StartsWith("ERR") && l.Contains("Nothing is being saved")) == 1, "...with one clear error instead of one per save");
+        Check(Stored(NewsJson) == brokenNews && AllDataFiles.All(f => Stored(f) == untouched[f]), "...and no data file is written afterwards, so nothing in them is lost (the others hang on the posts)");
+        Check(Sim.LogLines.Count(l => l.StartsWith("ERR")) == 1, "...and no error per save");
         H.Chat(admin, "news", "admin");
-        Check(H.ChatOf(admin).Any(m => m.Contains("nothing is being saved")) && H.HasElement(admin, "NewsBroadcasterUI.Admin"), "...and an admin who opens News Management is told");
+        Check(H.ChatOf(admin).Any(m => m.Contains("is not being saved")) && H.HasElement(admin, "NewsBroadcasterUI.Admin"), "...and an admin who opens News Management is told");
         H.Call("Unload");
-        Check(Sim.DataFiles["NewsBroadcaster_Data"] == brokenData, "...not on unload either");
+        Check(Stored(NewsJson) == brokenNews, "...not on unload either");
+
+        const string brokenActivity = "{ \"Posts\": { \"x\": { \"LikedPlayers\": [1, ";
+        Fresh(preBoot: () => { Sim.DataFiles[ActivityJson] = brokenActivity; });
+        Check(Sim.LogLines.Any(l => l.StartsWith("ERR") && l.Contains("NewsBroadcaster/Activity.json could not be read") && l.Contains("does not write that file")), "an activity file that can't be read: the console says so");
+        Post("News still works");
+        H.Console(player, $"news.like {H.Id(Ann0)}");
+        H.Console(player, "news.settings.toggle sound");
+        Sim.Advance(20);
+        Check(Stored(ActivityJson) == brokenActivity && Stored(NewsJson).Contains("News still works") && Stored(PlayersJson).Contains("\"Sound\": false"), "...only that file is left alone: posts and player data are still saved");
+        H.Chat(admin, "news", "admin");
+        Check(H.ChatOf(admin).Any(m => m.Contains("is not being saved")), "...and admins are told");
+        Sim.LogLines.RemoveAll(l => l.StartsWith("ERR"));
 
         const string typoConfig = "{ \"General\": { \"ServerName\": \"MY SERVER\", } \"SelectedTheme\": }";
         Fresh(preBoot: () => { Sim.ConfigFiles["config:NewsBroadcaster"] = typoConfig; });
@@ -1612,14 +1642,80 @@ static class Tests
         Fresh();
         Post("Read by many");
         for (ulong reader = 0; reader < 500; reader++) Set(Ann0, "ReadByPlayers").Add(76561198100000000 + reader);
-        H.Call("SaveAnnouncements");
-        string savedFile = Sim.DataFiles["NewsBroadcaster_Data"];
-        Check(savedFile.Contains("\"ReadByPlayers\": [76561198100000000,76561198100000001,") && savedFile.Split('\n').Length < 120, $"500 readers take one line, not 500 ({savedFile.Split('\n').Length} lines in the file)");
-        Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = savedFile; });
+        SaveEverything();
+        string savedFile = Stored(ActivityJson), savedNews = Stored(NewsJson);
+        Check(savedFile.Contains("\"ReadByPlayers\": [76561198100000000,76561198100000001,") && savedFile.Split('\n').Length < 20, $"500 readers take one line, not 500 ({savedFile.Split('\n').Length} lines in the file)");
+        Fresh(preBoot: () => { Sim.DataFiles[ActivityJson] = savedFile; Sim.DataFiles[NewsJson] = savedNews; });
         Check(Set(Ann0, "ReadByPlayers").Count == 500 && Set(Ann0, "ReadByPlayers").Contains(76561198100000499), "...and they are all there after a restart");
-        string classic = "{ \"Announcements\": [ { \"Id\": \"a1\", \"Title\": \"Old layout\", \"Text\": \"x\", \"Timestamp\": 5, \"ReadByPlayers\": [\n 1,\n 2,\n 3\n ] } ] }";
-        Fresh(preBoot: () => { Sim.DataFiles["NewsBroadcaster_Data"] = classic; });
+        string classic = "{ \"Posts\": { \"a1\": { \"ReadByPlayers\": [\n 1,\n 2,\n 3\n ] } } }";
+        Fresh(preBoot: () => { Sim.DataFiles[NewsJson] = "{ \"Announcements\": [ { \"Id\": \"a1\", \"Title\": \"One id per line\", \"Text\": \"x\", \"Timestamp\": 5 } ] }"; Sim.DataFiles[ActivityJson] = classic; });
         Check(Set(Ann0, "ReadByPlayers").Count == 3, "a list written one id per line reads the same (it is the same JSON)");
+
+        // ---------------------------------------------------------------
+        Section("Data files: news apart from player data");
+        Fresh();
+        Post("Kept apart", "x");
+        H.Console(null, "news.poll \"Pick one\" \"Body\" \"Yes|No|Maybe\"");
+        var pollPost = Ann0;
+        var plainPost = H.Ann(1);
+        Sim.Advance(16);
+        var fileWrites = WritesNow();
+        string newsBefore = Stored(NewsJson);
+        H.Console(player, $"news.view {H.Id(plainPost)}");
+        H.Console(player, $"news.like {H.Id(plainPost)}");
+        H.Console(player, $"news.vote {H.Id(pollPost)} 2");
+        Sim.Advance(16);
+        Check(WrittenSince(fileWrites).SequenceEqual(new[] { "Activity" }) && Stored(NewsJson) == newsBefore, "a read, a like and a vote write only Activity.json (" + string.Join(", ", WrittenSince(fileWrites)) + ")");
+        string news = Stored(NewsJson);
+        Check(!news.Contains("76561198") && !news.Contains("LikedPlayers") && !news.Contains("ReadByPlayers") && !news.Contains("PollVotes"), "News.json holds only what admins wrote: no Steam IDs, reads, likes or votes");
+        var activityJson = JObject.Parse(Stored(ActivityJson));
+        Check(activityJson["Posts"][H.Id(plainPost)]["LikedPlayers"].Values<ulong>().Contains(player.userID.Get()) && (int)activityJson["Posts"][H.Id(pollPost)]["PollVotes"][player.UserIDString] == 2,
+            "Activity.json has who liked and voted, per post");
+        fileWrites = WritesNow();
+        H.Console(player, "news.settings.toggle popups");
+        Sim.Advance(16);
+        Check(WrittenSince(fileWrites).SequenceEqual(new[] { "Players" }), "a player's setting writes only Players.json");
+        fileWrites = WritesNow();
+        H.Console(admin, "news.admin.create");
+        H.Console(admin, "news.editor.input title Typing away");
+        Sim.Advance(16);
+        Check(WrittenSince(fileWrites).SequenceEqual(new[] { "Autosaves" }), "typing in the editor writes only Autosaves.json");
+        H.Console(admin, "news.editor.cancel");
+        Sim.Advance(16);
+        fileWrites = WritesNow();
+        Post("Breaking");
+        Check(WrittenSince(fileWrites).SequenceEqual(new[] { "News" }), "a new post writes News.json at once");
+        Sim.Advance(16);
+        Check(WrittenSince(fileWrites).SequenceEqual(new[] { "News", "Players" }), "...and who has seen it goes to Players.json with the delayed save");
+        fileWrites = WritesNow();
+        H.Console(null, $"news.delete {H.Id(plainPost)}");
+        Check(WrittenSince(fileWrites).SequenceEqual(new[] { "News", "Activity" }) && JObject.Parse(Stored(ActivityJson))["Posts"][H.Id(plainPost)] == null, "deleting a post that was read removes its activity at once too");
+        fileWrites = WritesNow();
+        H.Console(admin, $"news.admin.edit {H.Id(pollPost)}");
+        H.Console(admin, "news.editor.input poll1 ");
+        H.Console(admin, "news.editor.save");
+        Check(WrittenSince(fileWrites).Contains("Activity") && (int)JObject.Parse(Stored(ActivityJson))["Posts"][H.Id(pollPost)]["PollVotes"][player.UserIDString] == 1,
+            "editing a poll that has votes saves the moved votes at once (option 3 became option 2)");
+        Sim.Advance(16);
+        fileWrites = WritesNow();
+        H.Console(null, $"news.delete {H.Id(H.AnnByTitle("Breaking"))}");
+        Check(WrittenSince(fileWrites).SequenceEqual(new[] { "News" }), "deleting a post nobody read leaves Activity.json alone (" + string.Join(", ", WrittenSince(fileWrites)) + ")");
+
+        Fresh(preBoot: () =>
+        {
+            Sim.DataFiles["NewsBroadcaster_Data"] = "{ \"Announcements\": [ { \"Id\": \"old\", \"Title\": \"From an earlier build\" } ] }";
+            Sim.DataFiles[NewsJson] = "{ \"Announcements\": [ { \"Id\": \"p1\", \"Title\": \"Here\", \"Text\": \"x\", \"Timestamp\": 10 } ] }";
+            Sim.DataFiles[ActivityJson] = "{ \"Posts\": { \"p1\": { \"ReadByPlayers\": [7] }, \"removed-by-hand\": { \"ReadByPlayers\": [8] } } }";
+        });
+        Check(H.Announcements.Count == 1 && Set(Ann0, "ReadByPlayers").Contains(7), "activity is matched to its post by id on load");
+        H.Console(player, $"news.like {H.Id(Ann0)}");
+        Sim.Advance(16);
+        Check(JObject.Parse(Stored(ActivityJson))["Posts"]["removed-by-hand"] == null, "activity of a post that is not in News.json any more is dropped at the next save");
+        Check(H.AnnByTitle("From an earlier build") == null && Stored("NewsBroadcaster_Data").Contains("From an earlier build") && Sim.WritesOf("NewsBroadcaster_Data") == 0, "the single data file of earlier builds is neither read nor touched");
+
+        H.CfgSet("General.MaxStoredAnnouncements", 2);
+        Post("Second"); Post("Third");
+        Check(H.Announcements.Count == 2 && H.AnnByTitle("Here") == null && JObject.Parse(Stored(ActivityJson))["Posts"]["p1"] == null, "a post dropped by MaxStoredAnnouncements takes its activity with it");
 
         // ---------------------------------------------------------------
         Section("Broadcast: the toast is built once, not once per player");

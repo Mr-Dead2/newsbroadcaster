@@ -46,7 +46,7 @@ The helper's config (`oxide/config/NewsBroadcasterTest.json`) holds the test gro
 - **`print_alluis`** (F1, as admin) lists every UI panel you have. After closing the menu, nothing named `NewsBroadcasterUI…` should be left.
 - **`oxide.plugins`** shows how much time each plugin spent in hooks. Compare NewsBroadcaster with your other plugins after a busy test.
 - **`news.list`** shows every post, drafts and timers included; `news.trigger <name> [index]` forces a pop-up onto one player.
-- **Files:** `oxide/data/NewsBroadcaster_Data.json`, `oxide/logs/`.
+- **Files:** `oxide/data/NewsBroadcaster/` (`News.json` the posts, `Activity.json` reads, likes and votes, `Players.json` seen markers and settings, `Autosaves.json` unsaved editors), `oxide/logs/`.
 
 ## 4. A test round (about 20 minutes)
 
@@ -71,13 +71,10 @@ The helper's config (`oxide/config/NewsBroadcasterTest.json`) holds the test gro
     - The console prints a hint.
     - The lists show no thumbnails.
     - The pop-up still shows its picture.
-12. **Broken data file:**
-    1. Back up `oxide/data/NewsBroadcaster_Data.json`.
-    2. `oxide.unload NewsBroadcaster`.
-    3. Delete one `}` from the file.
-    4. `oxide.load NewsBroadcaster`.
-
-    The console shows an error. The file is not touched, even after a like or a server save, and `/news admin` tells you nothing is saved. Put the backup back and reload.
+12. **Data files:**
+    - After a like, wait 15 s: only `Activity.json` changes (look at the file times). After a `/news settings` change, only `Players.json`.
+    - Broken file: back up the folder `oxide/data/NewsBroadcaster/`, `oxide.unload NewsBroadcaster`, delete one `}` from `Activity.json`, `oxide.load NewsBroadcaster`. The console names the file, posts still save to `News.json`, `Activity.json` is not touched (even after a like or a server save), and `/news admin` tells you. Do the same with `News.json`: then none of the four files is written. Put the backup back and reload.
+    - Delete `Activity.json` with the plugin unloaded, then load it: the posts are all there, with no reads, likes or votes.
 13. **Clean up:** `nbtest.clear`.
 
 ## 5. Testing as a normal player

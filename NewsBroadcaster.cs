@@ -32,7 +32,10 @@ namespace Oxide.Plugins
         private const string ScreenName = LayerName + ".Screen";
         private const float SwitchFade = 0.3f;
         private const string BlurMaterial = "assets/content/ui/uibackgroundblur-ingamemenu.mat";
-        private const string DataFile = "NewsBroadcaster_Data";
+        private const string NewsFile = "NewsBroadcaster/News";
+        private const string PlayersFile = "NewsBroadcaster/Players";
+        private const string ActivityFile = "NewsBroadcaster/Activity";
+        private const string AutosavesFile = "NewsBroadcaster/Autosaves";
 
         private const string PermAdmin = "newsbroadcaster.admin";
         private const string PermView = "newsbroadcaster.view";
@@ -44,7 +47,9 @@ namespace Oxide.Plugins
         private static readonly Regex BlankLinesRegex = new Regex(@"\n{3,}", RegexOptions.Compiled);
 
         private ConfigData config;
-        private StoredData storedData;
+        private NewsData newsData;
+        private PlayerData playerData;
+        private AutosaveData autosaveData;
         private List<Announcement> announcements = new List<Announcement>();
 
         private readonly Dictionary<ulong, Timer> autoCloseTimers = new Dictionary<ulong, Timer>();
@@ -84,10 +89,9 @@ namespace Oxide.Plugins
         private readonly HashSet<string> warnedRewardProblems = new HashSet<string>();
         private const int MaxCachedColors = 1024;
 
-        private bool dataDirty;
+        private DataParts dirtyParts;
+        private DataParts unreadableParts;
         private Timer saveTimer;
-        private bool dataUnreadable;
-        private bool dataUnreadableWarned;
         private bool configUnreadable;
 
         private const string DateFormat = "yyyy-MM-dd HH:mm";
@@ -154,12 +158,37 @@ namespace Oxide.Plugins
         #endregion
 
         #region Data Structures
-        class StoredData
+        [Flags]
+        enum DataParts { None = 0, News = 1, Players = 2, Activity = 4, Autosaves = 8 }
+
+        class NewsData
         {
             public List<Announcement> Announcements = new List<Announcement>();
+        }
+
+        class PlayerData
+        {
             public Dictionary<ulong, long> LastSeenNews = new Dictionary<ulong, long>();
             public Dictionary<ulong, long> ReadAllUpTo = new Dictionary<ulong, long>();
             public Dictionary<ulong, NewsPrefs> PlayerSettings = new Dictionary<ulong, NewsPrefs>();
+        }
+
+        class ActivityData
+        {
+            public Dictionary<string, PostActivity> Posts = new Dictionary<string, PostActivity>();
+        }
+
+        class PostActivity
+        {
+            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> ReadByPlayers = new HashSet<ulong>();
+            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> LikedPlayers = new HashSet<ulong>();
+            public Dictionary<ulong, int> PollVotes = new Dictionary<ulong, int>();
+            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> ReadRewardedPlayers = new HashSet<ulong>();
+            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> LikeRewardedPlayers = new HashSet<ulong>();
+        }
+
+        class AutosaveData
+        {
             public Dictionary<ulong, EditorSession> EditorAutosaves = new Dictionary<ulong, EditorSession>();
         }
 
@@ -255,12 +284,12 @@ namespace Oxide.Plugins
             public long Timestamp;
             public bool Pinned;
             public string EditedDate;
-            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> LikedPlayers = new HashSet<ulong>();
-            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> ReadByPlayers = new HashSet<ulong>();
-            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> ReadRewardedPlayers = new HashSet<ulong>();
-            [JsonConverter(typeof(IdSetConverter))] public HashSet<ulong> LikeRewardedPlayers = new HashSet<ulong>();
+            [JsonIgnore] public HashSet<ulong> LikedPlayers = new HashSet<ulong>();
+            [JsonIgnore] public HashSet<ulong> ReadByPlayers = new HashSet<ulong>();
+            [JsonIgnore] public HashSet<ulong> ReadRewardedPlayers = new HashSet<ulong>();
+            [JsonIgnore] public HashSet<ulong> LikeRewardedPlayers = new HashSet<ulong>();
             public List<string> PollOptions = new List<string>();
-            public Dictionary<ulong, int> PollVotes = new Dictionary<ulong, int>();
+            [JsonIgnore] public Dictionary<ulong, int> PollVotes = new Dictionary<ulong, int>();
             public bool PollClosed;
             public bool Draft;
             public string Group = string.Empty;
@@ -664,7 +693,7 @@ namespace Oxide.Plugins
                 ["SpanHoursMinutes"] = "{0}h {1}m",
                 ["SpanMinutes"] = "{0}m",
                 ["SpanNow"] = "under a minute",
-                ["DataNotSaved"] = "The news data file could not be read when the plugin loaded, so nothing is being saved. Check the server console.",
+                ["DataFileNotSaved"] = "A NewsBroadcaster data file could not be read when the plugin loaded and is not being saved. Check the server console.",
                 ["AdminDeletesIn"] = "DELETES IN {0}",
                 ["AdminPollClosesIn"] = "POLL CLOSES IN {0}"
             }, this);
@@ -888,7 +917,7 @@ namespace Oxide.Plugins
         {
             if (ann.ReadByPlayers.Contains(userId)) return false;
             long readAll;
-            return !(storedData.ReadAllUpTo.TryGetValue(userId, out readAll) && ann.Timestamp <= readAll);
+            return !(playerData.ReadAllUpTo.TryGetValue(userId, out readAll) && ann.Timestamp <= readAll);
         }
 
         private static bool HasPoll(Announcement ann) => ann != null && ann.PollOptions.Count >= 2;
@@ -1004,7 +1033,7 @@ namespace Oxide.Plugins
         private NewsPrefs GetPrefs(ulong userId)
         {
             NewsPrefs prefs;
-            return storedData.PlayerSettings.TryGetValue(userId, out prefs) ? prefs : DefaultPrefs;
+            return playerData.PlayerSettings.TryGetValue(userId, out prefs) ? prefs : DefaultPrefs;
         }
 
         private List<string> AudienceGroups()
@@ -1366,7 +1395,7 @@ namespace Oxide.Plugins
 
         private void OnServerSave()
         {
-            if (dataDirty) SaveAnnouncements();
+            if (dirtyParts != DataParts.None) SaveData(DataParts.None);
         }
 
         private void RegisterAllImages()
@@ -1392,22 +1421,47 @@ namespace Oxide.Plugins
             TrimToMaxStored();
             displayOrderDirty = true;
             ScheduleNextCheck();
+            SaveData(DataParts.News);
+        }
 
-            dataDirty = false;
+        private void SaveData(DataParts parts)
+        {
+            parts |= dirtyParts;
+            dirtyParts = DataParts.None;
             if (saveTimer != null)
             {
                 saveTimer.Destroy();
                 saveTimer = null;
             }
-            if (!dataUnreadable)
-            {
-                Interface.Oxide.DataFileSystem.WriteObject(DataFile, storedData);
-                return;
-            }
-            if (dataUnreadableWarned) return;
-            dataUnreadableWarned = true;
-            PrintError($"Nothing is being saved: oxide/data/{DataFile}.json could not be read when the plugin loaded and is left as it is. Fix or delete that file, then reload the plugin.");
+            if ((unreadableParts & DataParts.News) != 0) return;
+            parts &= ~unreadableParts;
+
+            if ((parts & DataParts.News) != 0) Interface.Oxide.DataFileSystem.WriteObject(NewsFile, newsData);
+            if ((parts & DataParts.Activity) != 0) Interface.Oxide.DataFileSystem.WriteObject(ActivityFile, BuildActivity());
+            if ((parts & DataParts.Players) != 0) Interface.Oxide.DataFileSystem.WriteObject(PlayersFile, playerData);
+            if ((parts & DataParts.Autosaves) != 0) Interface.Oxide.DataFileSystem.WriteObject(AutosavesFile, autosaveData);
         }
+
+        private ActivityData BuildActivity()
+        {
+            var activity = new ActivityData();
+            foreach (var ann in announcements)
+            {
+                if (string.IsNullOrEmpty(ann.Id) || !HasActivity(ann)) continue;
+                activity.Posts[ann.Id] = new PostActivity
+                {
+                    ReadByPlayers = ann.ReadByPlayers,
+                    LikedPlayers = ann.LikedPlayers,
+                    PollVotes = ann.PollVotes,
+                    ReadRewardedPlayers = ann.ReadRewardedPlayers,
+                    LikeRewardedPlayers = ann.LikeRewardedPlayers
+                };
+            }
+            return activity;
+        }
+
+        private static bool HasActivity(Announcement ann) => ann.ReadByPlayers.Count > 0 || ann.LikedPlayers.Count > 0 || ann.PollVotes.Count > 0
+            || ann.ReadRewardedPlayers.Count > 0 || ann.LikeRewardedPlayers.Count > 0;
 
         private void TrimToMaxStored()
         {
@@ -1425,6 +1479,7 @@ namespace Oxide.Plugins
                 if (old.Draft || old.Pinned) continue;
                 announcements.RemoveAt(i);
                 dropped.Add(old);
+                if (HasActivity(old)) dirtyParts |= DataParts.Activity;
                 over--;
             }
             foreach (var old in dropped) Interface.CallHook("OnNewsDeleted", BuildHookData(old));
@@ -1437,30 +1492,58 @@ namespace Oxide.Plugins
             }
         }
 
-        private void MarkDataDirty()
+        private void MarkDirty(DataParts parts)
         {
-            dataDirty = true;
+            dirtyParts |= parts;
             if (saveTimer != null && !saveTimer.Destroyed) return;
             saveTimer = timer.Once(SaveDebounceSeconds, () =>
             {
                 saveTimer = null;
-                if (dataDirty) SaveAnnouncements();
+                SaveData(DataParts.None);
             });
         }
 
         private void LoadAnnouncements()
         {
-            try { storedData = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(DataFile); }
-            catch (Exception ex)
+            newsData = ReadDataFile<NewsData>(NewsFile, DataParts.News);
+            playerData = ReadDataFile<PlayerData>(PlayersFile, DataParts.Players);
+            autosaveData = ReadDataFile<AutosaveData>(AutosavesFile, DataParts.Autosaves);
+            var activity = ReadDataFile<ActivityData>(ActivityFile, DataParts.Activity);
+            announcements = newsData.Announcements;
+
+            foreach (var ann in announcements)
             {
-                dataUnreadable = true;
-                PrintError($"oxide/data/{DataFile}.json could not be read ({ex.Message}). The plugin starts without stored announcements and will not overwrite that file: fix or delete it, then reload the plugin.");
+                PostActivity stored;
+                if (string.IsNullOrEmpty(ann.Id) || !activity.Posts.TryGetValue(ann.Id, out stored)) continue;
+                ann.ReadByPlayers = stored.ReadByPlayers;
+                ann.LikedPlayers = stored.LikedPlayers;
+                ann.PollVotes = stored.PollVotes;
+                ann.ReadRewardedPlayers = stored.ReadRewardedPlayers;
+                ann.LikeRewardedPlayers = stored.LikeRewardedPlayers;
             }
 
-            if (storedData == null) storedData = new StoredData();
-            announcements = storedData.Announcements;
+            var pruned = DataParts.None;
+            if (PruneStaleMarkers() > 0) pruned |= DataParts.Players;
+            if (PruneOldAutosaves() > 0) pruned |= DataParts.Autosaves;
+            if (pruned != DataParts.None) MarkDirty(pruned);
+        }
 
-            if (PruneStaleMarkers() + PruneOldAutosaves() > 0) MarkDataDirty();
+        private T ReadDataFile<T>(string file, DataParts part) where T : class, new()
+        {
+            try
+            {
+                var data = Interface.Oxide.DataFileSystem.ReadObject<T>(file);
+                if (data != null) return data;
+            }
+            catch (Exception ex)
+            {
+                unreadableParts |= part;
+                string meanwhile = part == DataParts.News
+                    ? "The plugin starts without stored announcements and saves nothing at all"
+                    : "The plugin starts without what is in it and does not write that file";
+                PrintError($"oxide/data/{file}.json could not be read ({ex.Message}). {meanwhile} until the file is fixed or deleted and the plugin reloaded.");
+            }
+            return new T();
         }
 
         private int PruneStaleMarkers()
@@ -1468,7 +1551,7 @@ namespace Oxide.Plugins
             long oldest = long.MaxValue;
             foreach (var ann in announcements)
                 if (ann.Timestamp < oldest) oldest = ann.Timestamp;
-            return PruneBelow(storedData.LastSeenNews, oldest) + PruneBelow(storedData.ReadAllUpTo, oldest);
+            return PruneBelow(playerData.LastSeenNews, oldest) + PruneBelow(playerData.ReadAllUpTo, oldest);
         }
 
         private static int PruneBelow(Dictionary<ulong, long> markers, long oldest)
@@ -1486,10 +1569,10 @@ namespace Oxide.Plugins
         {
             long oldest = NowTicks - AutosaveKeepDays * TimeSpan.TicksPerDay;
             var stale = Pool.Get<List<ulong>>();
-            foreach (var entry in storedData.EditorAutosaves)
+            foreach (var entry in autosaveData.EditorAutosaves)
                 if (entry.Value.SavedAt < oldest) stale.Add(entry.Key);
             int removed = stale.Count;
-            foreach (ulong userId in stale) storedData.EditorAutosaves.Remove(userId);
+            foreach (ulong userId in stale) autosaveData.EditorAutosaves.Remove(userId);
             Pool.FreeUnmanaged(ref stale);
             return removed;
         }
@@ -1500,7 +1583,7 @@ namespace Oxide.Plugins
 
             ulong userId = player.userID;
             long seenBefore;
-            storedData.LastSeenNews.TryGetValue(userId, out seenBefore);
+            playerData.LastSeenNews.TryGetValue(userId, out seenBefore);
 
             bool mayPopup = config.General.ShowNewsOnConnect && announcements[0].Timestamp > seenBefore && GetPrefs(userId).JoinPopup;
             bool mayRemind = config.General.UnreadReminderOnConnect && !remindedPlayers.Contains(userId);
@@ -1537,9 +1620,9 @@ namespace Oxide.Plugins
         private void MarkSeen(ulong userId, long timestamp)
         {
             long previous;
-            if (storedData.LastSeenNews.TryGetValue(userId, out previous) && previous >= timestamp) return;
-            storedData.LastSeenNews[userId] = timestamp;
-            MarkDataDirty();
+            if (playerData.LastSeenNews.TryGetValue(userId, out previous) && previous >= timestamp) return;
+            playerData.LastSeenNews[userId] = timestamp;
+            MarkDirty(DataParts.Players);
         }
 
         private void Unload()
@@ -1572,7 +1655,7 @@ namespace Oxide.Plugins
             redrawCooldowns.Clear();
             redrawTimers.Clear();
 
-            if (dataDirty) SaveAnnouncements();
+            if (dirtyParts != DataParts.None) SaveData(DataParts.None);
             saveTimer?.Destroy();
             saveTimer = null;
             scheduleTimer?.Destroy();
@@ -1651,6 +1734,7 @@ namespace Oxide.Plugins
         {
             if (!announcements.Remove(ann)) return;
             displayOrderDirty = true;
+            if (HasActivity(ann)) dirtyParts |= DataParts.Activity;
             Interface.CallHook("OnNewsDeleted", BuildHookData(ann));
         }
 
@@ -1895,7 +1979,7 @@ namespace Oxide.Plugins
                         SendReply(player, Msg("NoPermissionCommand", player));
                         return;
                     }
-                    if (dataUnreadable) SendReply(player, Msg("DataNotSaved", player));
+                    if (unreadableParts != DataParts.None) SendReply(player, Msg("DataFileNotSaved", player));
                     adminViews.Remove(player.userID);
                     ShowAdminList(player, 0);
                     return;
@@ -2083,8 +2167,8 @@ namespace Oxide.Plugins
                 return 0;
             }
 
-            storedData.ReadAllUpTo[userId] = NewestFor(player).Timestamp;
-            MarkDataDirty();
+            playerData.ReadAllUpTo[userId] = NewestFor(player).Timestamp;
+            MarkDirty(DataParts.Players);
             SendReply(player, Msg("MarkedAllRead", player, unread));
             return unread;
         }
@@ -2116,7 +2200,7 @@ namespace Oxide.Plugins
             }
 
             ann.PollVotes[userId] = option;
-            MarkDataDirty();
+            MarkDirty(DataParts.Activity);
             Interface.CallHook("OnNewsPollVote", player, BuildHookData(ann), option);
             StopAutoClose(player);
 
@@ -2154,7 +2238,7 @@ namespace Oxide.Plugins
                 && GiveRewards(player, config.Rewards.LikeRewards, "RewardLike"))
                 ann.LikeRewardedPlayers.Add(userId);
 
-            MarkDataDirty();
+            MarkDirty(DataParts.Activity);
 
             Interface.CallHook("OnNewsLiked", player, BuildHookData(ann), addedLike);
             StopAutoClose(player);
@@ -2200,10 +2284,10 @@ namespace Oxide.Plugins
             if (!RequireView(player)) return;
 
             NewsPrefs prefs;
-            if (!storedData.PlayerSettings.TryGetValue(player.userID, out prefs))
+            if (!playerData.PlayerSettings.TryGetValue(player.userID, out prefs))
             {
                 prefs = new NewsPrefs();
-                storedData.PlayerSettings[player.userID] = prefs;
+                playerData.PlayerSettings[player.userID] = prefs;
             }
             switch (arg.GetString(0).ToLowerInvariant())
             {
@@ -2212,7 +2296,7 @@ namespace Oxide.Plugins
                 case "join": prefs.JoinPopup = !prefs.JoinPopup; break;
                 default: return;
             }
-            MarkDataDirty();
+            MarkDirty(DataParts.Players);
             ShowPlayerSettings(player, true);
         }
 
@@ -2224,7 +2308,7 @@ namespace Oxide.Plugins
             var player = arg.Player();
             if (player == null) return;
 
-            if (dataUnreadable) SendReply(player, Msg("DataNotSaved", player));
+            if (unreadableParts != DataParts.None) SendReply(player, Msg("DataFileNotSaved", player));
             currentScreens.Remove(player.userID);
             adminViews.Remove(player.userID);
             ShowAdminList(player, 0);
@@ -2276,7 +2360,7 @@ namespace Oxide.Plugins
             if (player == null) return;
 
             EditorSession session;
-            if (!storedData.EditorAutosaves.TryGetValue(player.userID, out session))
+            if (!autosaveData.EditorAutosaves.TryGetValue(player.userID, out session))
             {
                 ShowAdminList(player, 0);
                 return;
@@ -2304,9 +2388,9 @@ namespace Oxide.Plugins
             var player = AdminPlayer(arg);
             if (player == null) return;
 
-            if (storedData.EditorAutosaves.Remove(player.userID))
+            if (autosaveData.EditorAutosaves.Remove(player.userID))
             {
-                MarkDataDirty();
+                MarkDirty(DataParts.Autosaves);
                 SendReply(player, Msg("UnsavedDiscarded", player));
             }
             editors.Remove(player.userID);
@@ -2368,7 +2452,6 @@ namespace Oxide.Plugins
                     Type = original.Type,
                     Timestamp = original.Timestamp,
                     Pinned = original.Pinned,
-                    LikedPlayers = new HashSet<ulong>(original.LikedPlayers),
                     Draft = original.Draft,
                     Group = original.Group,
                     ExpireDays = original.ExpireDays,
@@ -2663,17 +2746,17 @@ namespace Oxide.Plugins
         private void AutosaveEditor(BasePlayer player, EditorSession session)
         {
             session.SavedAt = NowTicks;
-            storedData.EditorAutosaves[player.userID] = session;
-            MarkDataDirty();
+            autosaveData.EditorAutosaves[player.userID] = session;
+            MarkDirty(DataParts.Autosaves);
         }
 
         private void CloseEditor(ulong userId)
         {
             EditorSession session, saved;
-            if (editors.TryGetValue(userId, out session) && storedData.EditorAutosaves.TryGetValue(userId, out saved) && ReferenceEquals(session, saved))
+            if (editors.TryGetValue(userId, out session) && autosaveData.EditorAutosaves.TryGetValue(userId, out saved) && ReferenceEquals(session, saved))
             {
-                storedData.EditorAutosaves.Remove(userId);
-                MarkDataDirty();
+                autosaveData.EditorAutosaves.Remove(userId);
+                MarkDirty(DataParts.Autosaves);
             }
             editors.Remove(userId);
         }
@@ -2882,6 +2965,7 @@ namespace Oxide.Plugins
                 }
 
                 bool wasClosed = ann.PollClosed;
+                if (ann.PollVotes.Count > 0) dirtyParts |= DataParts.Activity;
                 ann.Title = draft.Title;
                 ann.ImageUrl = NormalizeImageUrl(draft.ImageUrl);
                 ann.Text = NormalizeInputBody(draft.Text);
@@ -3882,7 +3966,7 @@ namespace Oxide.Plugins
             if (preview)
             {
                 string likePreview = AddBox(container, mainPanel, "0.03 0.028", "0.135 0.082", Ghost);
-                AddLabelIn(container, likePreview, $"❤  {ann.LikedPlayers.Count}", 12, "0.62 0.63 0.68 0.6");
+                AddLabelIn(container, likePreview, $"❤  {(FindById(ann.Id) ?? ann).LikedPlayers.Count}", 12, "0.62 0.63 0.68 0.6");
             }
             else if (!string.IsNullOrEmpty(ann.Id))
             {
@@ -4522,7 +4606,7 @@ namespace Oxide.Plugins
 
             float rowsTop = 180f;
             EditorSession unsaved;
-            if (storedData.EditorAutosaves.TryGetValue(userId, out unsaved) && unsaved != null)
+            if (autosaveData.EditorAutosaves.TryGetValue(userId, out unsaved) && unsaved != null)
             {
                 AddUnsavedBanner(container, player, panel, g, unsaved, surface);
                 rowsTop = 218f;
@@ -5501,7 +5585,7 @@ namespace Oxide.Plugins
                 bool grantReward = rewardDue && GiveRewards(player, config.Rewards.ReadRewards, "RewardRead");
                 if (grantReward) current.ReadRewardedPlayers.Add(userId);
 
-                if (grantReward || firstRead) MarkDataDirty();
+                if (grantReward || firstRead) MarkDirty(DataParts.Activity);
                 if (firstRead) Interface.CallHook("OnNewsRead", player, BuildHookData(current));
             });
         }

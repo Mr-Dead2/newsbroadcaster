@@ -34,6 +34,7 @@ namespace Oxide.Core
         public void WriteObject<T>(string name, T Object, bool sync = false)
         {
             Sim.DataWrites++;
+            Sim.FileWrites[name] = Sim.WritesOf(name) + 1;
             Sim.DataFiles[name] = JsonConvert.SerializeObject(Object, Formatting.Indented, Sim.OxideJsonSettings);
         }
 
