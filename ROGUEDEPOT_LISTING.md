@@ -14,7 +14,7 @@ Everything for the product page, ready to paste. The fields are named the way a 
 | **Category** | Plugin |
 | **Platform** | Oxide (uMod). See the note on Carbon below |
 | **Game version** | Current Rust (built for the November 2026 update) |
-| **File to upload** | `NewsBroadcaster.cs` (one file, no dependencies). Attach `PLUGIN_DOCS.md` too if the form takes a documentation file |
+| **File to upload** | `NewsBroadcaster.cs` (one file, no dependencies). Attach `PLUGIN_DOCS.md` too if the form takes a documentation file. Not `tools/ingame-test/NewsBroadcasterTest.cs`: that one is for your test server |
 | **Required plugins** | None |
 | **Optional plugins** | ServerRewards, Economics, Notify, ImageLibrary |
 | **Price** | Your call |
@@ -221,7 +221,7 @@ Put this in the message to the reviewers if the form has a field for it. It answ
 - **Hooks used:** `Init`, `OnServerInitialized`, `OnPluginLoaded`, `OnServerSave`, `OnPlayerSleepEnded`, `OnPlayerDisconnected`, `Unload`.
 - **Permissions:** `newsbroadcaster.view` and `newsbroadcaster.admin`. Every admin command checks the permission on the server, and every player-facing command checks whether that player may see the post.
 - **Optional plugins** (`ImageLibrary`, `Notify`, `ServerRewards`, `Economics`) are null-checked and `IsLoaded`-checked before each call.
-- **Tested:** compiled as C# 6 and C# 7 against the .NET Framework 4.8 API with stand-ins for the Oxide and Rust types, and run through 444 automated checks (commands, permissions, config and data loading, UI tree and element counts, cleanup on disconnect and unload), including every console command called with junk arguments by the console, a player without permission, a player and an admin, and every screen under two dozen bad config values.
+- **Tested:** compiled as C# 6 and C# 7 against the .NET Framework 4.8 API with stand-ins for the Oxide and Rust types, and run through 461 automated checks (commands, permissions, config and data loading, UI tree and element counts, cleanup on disconnect and unload), including every console command called with junk arguments by the console, a player without permission, a player and an admin, and every screen under two dozen bad config values.
 
 ---
 

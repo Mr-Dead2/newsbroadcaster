@@ -8,6 +8,8 @@ There is no Rust server here, so this folder lets you check the plugin before de
 
 4. **Animation video** (`render/anim.js`). The harness records one player's UI at points in time (`Harness.dll animation`). The player redraws each video frame applying every element's `fadeIn`/`fadeOut` the way the client does. A cursor shows the clicks, and ffmpeg encodes MP4 + GIF.
 
+5. **In-game test helper.** `tools/ingame-test/NewsBroadcasterTest.cs` (a plugin for a real test server, see its README) is compiled as C# 6 and C# 7 too, and its commands are run against the plugin in the "In-game test helper" section. The stand-in for `Interface.CallHook` calls hooks on it like Oxide calls them on every loaded plugin.
+
 ```bash
 ./run.sh            # compile checks + tests
 ./run.sh previews   # + screenshots in out/png
