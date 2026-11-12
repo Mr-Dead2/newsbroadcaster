@@ -12,19 +12,29 @@ namespace Oxide.Game.Rust.Cui
 {
     public static class CuiHelper
     {
-        public static string ToJson(List<CuiElement> elements, bool format = false)
-            => JsonConvert.SerializeObject(elements, format ? Formatting.Indented : Formatting.None,
-                new JsonSerializerSettings { DefaultValueHandling = DefaultValueHandling.Ignore }).Replace("\\n", "\n");
+        // Oxide leaves out nulls and default values; the client then applies its own defaults.
+        private static readonly JsonSerializerSettings Settings = new JsonSerializerSettings
+        {
+            DefaultValueHandling = DefaultValueHandling.Ignore,
+            NullValueHandling = NullValueHandling.Ignore
+        };
+
+        public static string ToJson(IReadOnlyList<CuiElement> elements, bool format = false)
+            => JsonConvert.SerializeObject(elements, format ? Formatting.Indented : Formatting.None, Settings).Replace("\\n", "\n");
 
         public static List<CuiElement> FromJson(string json) => JsonConvert.DeserializeObject<List<CuiElement>>(json);
-        public static string GetGuid() => Guid.NewGuid().ToString().Replace("-", string.Empty);
+        public static string GetGuid() => Guid.NewGuid().ToString("N");
 
         public static bool AddUi(BasePlayer player, List<CuiElement> elements)
-            => AddUi(player, JsonConvert.SerializeObject(elements, new JsonSerializerSettings { DefaultValueHandling = DefaultValueHandling.Ignore }));
+        {
+            if (player?.net == null) return false;
+            return AddUi(player, ToJson(elements));
+        }
 
         public static bool AddUi(BasePlayer player, string json)
         {
             if (player?.net == null) return false;
+            if (Sim.SkipClient) return true;
             Sim.ClientAddUi(player, json);
             return true;
         }
@@ -32,6 +42,7 @@ namespace Oxide.Game.Rust.Cui
         public static bool DestroyUi(BasePlayer player, string elem)
         {
             if (player?.net == null) return false;
+            if (Sim.SkipClient) return true;
             Sim.ClientDestroyUi(player, elem);
             return true;
         }
@@ -99,12 +110,11 @@ namespace Oxide.Game.Rust.Cui
 
     public class CuiElement
     {
-        [DefaultValue("AddUI CreatedPanel")]
         [JsonProperty("name")]
-        public string Name { get; set; } = "AddUI CreatedPanel";
+        public string Name { get; set; }
 
         [JsonProperty("parent")]
-        public string Parent { get; set; } = "Hud";
+        public string Parent { get; set; }
 
         [JsonProperty("destroyUi", NullValueHandling = NullValueHandling.Ignore)]
         public string DestroyUi { get; set; }

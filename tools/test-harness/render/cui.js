@@ -94,7 +94,8 @@
       const get = t => comps.find(c => c.type === t);
       const rt = get('RectTransform') || {};
       const amin = vec(rt.anchormin, [0, 0]), amax = vec(rt.anchormax, [1, 1]);
-      const omin = vec(rt.offsetmin, [0, 0]), omax = vec(rt.offsetmax, [0, 0]);
+      // The game's default for a missing offsetmax is "1 1" (CommunityEntity.UI.cs keeps it for old UIs), not "0 0".
+      const omin = vec(rt.offsetmin, [0, 0]), omax = vec(rt.offsetmax, [1, 1]);
       const pw = parent.cw, ph = parent.ch;
       const x0 = amin[0] * pw + omin[0] * S, x1 = amax[0] * pw + omax[0] * S;
       const y0 = amin[1] * ph + omin[1] * S, y1 = amax[1] * ph + omax[1] * S;

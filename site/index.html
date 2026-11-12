@@ -342,7 +342,7 @@ footer b { font-family: var(--f-display); color: var(--ink); text-transform: upp
       <div class="fact"><h3>What it needs</h3><p>Oxide (uMod). RP rewards need ServerRewards and currency rewards need Economics.</p></div>
       <div class="fact"><h3>Light on the server</h3><p>Small screens, batched saves, a cooldown on page and search clicks, and no timer running while nothing is scheduled.</p></div>
       <div class="fact"><h3>Current Rust</h3><p>Built for the November 2026 Rust update and its new file storage.</p></div>
-      <div class="fact"><h3>Tested on every build</h3><p>378 automated checks, and it compiles as C# 6 and C# 7.</p></div>
+      <div class="fact"><h3>Tested on every build</h3><p>444 automated checks, and it compiles as C# 6 and C# 7.</p></div>
     </div>
   </div>
 
@@ -600,7 +600,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
               <tr><td><code>MaxStoredAnnouncements</code></td><td class="def">50</td><td>Oldest posts go first; pinned posts, drafts and the newest post are kept</td></tr>
               <tr><td><code>StripLinksFromBody</code></td><td class="def">true</td><td>Remove links from new post bodies</td></tr>
               <tr><td><code>PopupImageFrame</code></td><td class="def">"Tall"</td><td>"Wide" uses a 16:9 frame for widescreen pictures</td></tr>
-              <tr><td><code>ArchiveThumbnails</code></td><td class="def">true</td><td>Picture thumbnails in the archive</td></tr>
+              <tr><td><code>ArchiveThumbnails</code></td><td class="def">true</td><td>Picture thumbnails in the archive (needs ImageLibrary)</td></tr>
               <tr><td><code>RoundedCorners</code></td><td class="def">true</td><td>false draws square corners everywhere, with about 40% fewer UI elements</td></tr>
             </tbody>
           </table></div>
@@ -713,7 +713,7 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
           <tr><td><a href="https://umod.org/plugins/server-rewards">ServerRewards</a></td><td>For RP rewards (<code>Points</code> in the read or like reward)</td></tr>
           <tr><td><a href="https://umod.org/plugins/economics">Economics</a></td><td>For currency rewards (<code>Currency</code> in the read or like reward)</td></tr>
           <tr><td><a href="https://umod.org/plugins/notify">Notify</a></td><td>Only with <code>UseNotifyPlugin</code> on. Otherwise the plugin's own toast is used.</td></tr>
-          <tr><td><a href="https://umod.org/plugins/image-library">ImageLibrary</a></td><td>Not required. It caches post pictures so they load faster.</td></tr>
+          <tr><td><a href="https://umod.org/plugins/image-library">ImageLibrary</a></td><td>Not required, but recommended. Pictures are stored once and sent by id; list thumbnails need it.</td></tr>
         </tbody>
       </table></div>
       <p class="note">A reward that includes RP or currency isn't paid while its plugin is missing; the server console says why. Everything else, including rounded corners, polls, countdowns and Discord, needs only Oxide.</p>
@@ -727,8 +727,8 @@ oxide.usergroup add &lt;player&gt; vip</pre><button class="copy" type="button">C
         <h2>Questions server owners ask</h2>
       </div>
       <div class="faq">
-        <div><h3>Which other plugins do I need?</h3><p>Only Oxide to run it. Add ServerRewards for RP rewards, Economics for currency rewards and Notify for Notify-style notifications. ImageLibrary is optional and only makes pictures load faster.</p></div>
-        <div><h3>Do I need another plugin for the rounded corners?</h3><p>No. NewsBroadcaster draws the corner images itself when the server starts. ImageLibrary is optional and only caches post pictures.</p></div>
+        <div><h3>Which other plugins do I need?</h3><p>Only Oxide to run it. Add ServerRewards for RP rewards, Economics for currency rewards and Notify for Notify-style notifications. ImageLibrary is optional but recommended: it stores pictures once, and the thumbnails in the lists need it.</p></div>
+        <div><h3>Do I need another plugin for the rounded corners?</h3><p>No. NewsBroadcaster draws the corner images itself when the server starts. ImageLibrary is optional and only stores post pictures.</p></div>
         <div><h3>I ran an earlier build. Can I keep my files?</h3><p>The language file, yes. 1.0.0 does not convert the config and data file of the earlier builds, so remove both before installing it. From 1.0.0 on, your values are kept and new options are added with their defaults.</p></div>
         <div><h3>Why doesn't my picture show in game?</h3><p>Rust needs a direct link to a PNG or JPG. The editor warns about imgur pages, Discord links, which stop working after about a day, and GIFs.</p></div>
         <div><h3>How do I make a post only VIPs can see?</h3><p>Create the group with <code>oxide.group add vip</code>, add players with <code>oxide.usergroup add</code>, then pick VIP ONLY under WHO CAN SEE IT.</p></div>

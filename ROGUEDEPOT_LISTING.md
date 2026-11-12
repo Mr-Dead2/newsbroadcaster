@@ -175,7 +175,7 @@ Every option is explained in the documentation (`PLUGIN_DOCS.md`).
 | ServerRewards | For RP as a read or like reward |
 | Economics | For currency as a read or like reward |
 | Notify | Only if you turn on `UseNotifyPlugin` |
-| ImageLibrary | Optional: caches post pictures so they load faster |
+| ImageLibrary | Optional, recommended: pictures are stored once and sent by id; list thumbnails need it |
 
 None of them is required.
 
@@ -213,7 +213,7 @@ Popups and toasts, polls with timers, event countdowns, archive with filters, se
 
 Put this in the message to the reviewers if the form has a field for it. It answers what a reviewer usually has to work out from the code.
 
-- **What it is:** one C# file, one class (`Oxide.Plugins.NewsBroadcaster : RustPlugin`), about 5,400 lines. No LINQ; temporary lists come from `Facepunch.Pool`. No `System.IO`, `System.Net`, reflection or threads.
+- **What it is:** one C# file, one class (`Oxide.Plugins.NewsBroadcaster : RustPlugin`), about 5,600 lines. No LINQ; temporary lists come from `Facepunch.Pool`. No `System.IO`, `System.Net`, reflection or threads.
 - **Network:** the only outgoing request is the Discord webhook, to the URL the server owner puts in the config, through Oxide's `webrequest`. Nothing else is contacted. No licence check, no telemetry, no code is downloaded.
 - **Files:** it writes its own config, lang and data file (`oxide/data/NewsBroadcaster_Data.json`) through Oxide. At startup it stores eight small PNGs (rounded corners, drawn in code) in the server's `FileStorage`.
 - **Server load:** no per-tick or per-frame hooks and no repeating timer. One one-shot timer waits for the next auto-delete or poll closing; when nothing is scheduled, none runs. Likes, reads, votes, paid rewards and editor autosaves are written together with a 15-second delay, and on server save and unload. UI is sent only when a player clicks: an archive page is about 160 elements (about 100 with `RoundedCorners` off), and page, filter and search clicks redraw at most once every 0.4 seconds per player.
@@ -221,7 +221,7 @@ Put this in the message to the reviewers if the form has a field for it. It answ
 - **Hooks used:** `Init`, `OnServerInitialized`, `OnPluginLoaded`, `OnServerSave`, `OnPlayerSleepEnded`, `OnPlayerDisconnected`, `Unload`.
 - **Permissions:** `newsbroadcaster.view` and `newsbroadcaster.admin`. Every admin command checks the permission on the server, and every player-facing command checks whether that player may see the post.
 - **Optional plugins** (`ImageLibrary`, `Notify`, `ServerRewards`, `Economics`) are null-checked and `IsLoaded`-checked before each call.
-- **Tested:** compiled as C# 6 and C# 7 against the .NET Framework 4.8 API with stand-ins for the Oxide and Rust types, and run through 378 automated checks (commands, permissions, config and data loading, UI tree and element counts, cleanup on disconnect and unload).
+- **Tested:** compiled as C# 6 and C# 7 against the .NET Framework 4.8 API with stand-ins for the Oxide and Rust types, and run through 444 automated checks (commands, permissions, config and data loading, UI tree and element counts, cleanup on disconnect and unload), including every console command called with junk arguments by the console, a player without permission, a player and an admin, and every screen under two dozen bad config values.
 
 ---
 

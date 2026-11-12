@@ -63,6 +63,11 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 - **Batched saves.** Likes, reads, votes and paid rewards are written together, 15 seconds after the first change and on every server save, however many players click.
 - **No idle timer.** One timer waits for the next auto-delete or poll closing; when nothing is scheduled, no timer runs.
 - **No LINQ, pooled lists.** Lists built for a screen come from the game's pool and go back to it; the pinned-first order is kept instead of being sorted for every draw.
+- **One toast for everyone.** A broadcast builds the toast once per language and sends the same data to every player, instead of building it again for each of them.
+- **Lean UI data.** Labels and other parts nobody refers to are sent without a name, the rest gets a short one. A screen is about 12% smaller on the wire than with Oxide's default 32-character names.
+- **In-place updates in one message.** A like, a vote, a countdown that runs out and the editor's counters replace their part of the screen in a single message.
+- **Compact data file.** The lists of who read and liked a post are written on one line each. With 3,000 readers a post the file is a third smaller and a save takes about half the time.
+- **Pictures stored once.** With ImageLibrary a picture is stored on the server once and players get it by id. List thumbnails are only drawn from that store: by link, the game downloads a picture again every time a screen is drawn.
 
 ### Fixed since the earlier builds
 - Clicking a button rebuilt the whole menu: it blinked and the mouse jumped back to the middle of the screen. Now only the content is swapped, in one step, and the cursor stays put.
@@ -71,6 +76,14 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 - The notification sound played at the player's position for everyone nearby; it is now private.
 - ServerRewards points failed to pay on current Rust builds (wrapped player id).
 - `/n` broke normal words such as `w/new`.
+- A title, name, poll option or search that ended with a backslash stopped the whole screen from drawing (the game cannot read such a text). A space is added after it.
+- Double quotes in a text are sent as typographic quotes, which the game shows as they are.
+- The editor's hint about new lines broke its own line in game.
+- A countdown with exactly a whole number of days left restarted itself many times a second.
+- The outline of small flat boxes (switched-off toggles, check boxes, the search field) was hidden on two sides in game.
+- A picture could stick out one pixel past its rounded frame.
+- A data or config file that can't be read is never overwritten. The console says what to do, and an admin who opens News Management is told that nothing is being saved.
+- Texts longer than 12,000 characters are cut when they are entered: the game cannot draw more in one text.
 - An admin's editor was replaced by a forced popup when news was posted.
 - Players saw a post again as a popup after respawning even though they had already got it live.
 - Pinned posts could be deleted by the `MaxStoredAnnouncements` limit.
@@ -101,9 +114,9 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 | ServerRewards | For RP rewards | Pays `Points` in the read / like rewards |
 | Economics | For currency rewards | Pays `Currency` in the read / like rewards |
 | Notify | Only with `UseNotifyPlugin: true` | Shows the new-post notification in Notify's style. If Notify isn't loaded, the plugin's own toast is shown |
-| ImageLibrary | No | If installed, post pictures are cached through it so they load faster; otherwise the game loads the image link directly |
+| ImageLibrary | No, but recommended | Pictures are stored on the server once and sent to players by id. Without it the pop-up still shows its picture, but each player downloads it again every time it is shown, and the lists (archive, News Management) leave their thumbnails out |
 
-A reward that includes `Points` or `Currency` isn't paid while its plugin is missing, including any items in the same reward. The console prints a warning, and the reward isn't marked as paid, so it can still be paid after you install the plugin. Item rewards, polls, countdowns, rounded corners and Discord webhooks need nothing but Oxide.
+A reward that includes `Points` or `Currency` isn't paid while its plugin is missing, including any items in the same reward. The console prints a warning (once per problem, not once per player), and the reward isn't marked as paid, so it can still be paid after you install the plugin. Item rewards, polls, countdowns, rounded corners and Discord webhooks need nothing but Oxide.
 
 ---
 
@@ -225,7 +238,7 @@ These are run by CUI buttons. They address announcements by their stable id, not
 | `news.admin.delconfirm <id> [page]` / `news.admin.del <id> [page]` | Delete with confirmation |
 | `news.admin.toggleselect <id> [page]`, `news.admin.selectpage <page>`, `news.admin.clearsel [page]` | Bulk selection |
 | `news.admin.bulkpin <0\|1> [page]`, `news.admin.bulkdelconfirm [page]`, `news.admin.bulkdel [page]` | Bulk actions |
-| `news.admin.themes [page]` / `news.admin.settheme "Name" [page]` | Theme picker |
+| `news.admin.themes [page]` / `news.admin.settheme Name [page]` | Theme picker |
 | `news.editor.input <title\|image\|text\|poll1-poll4\|cdlabel\|cdtime> <value>` | Editor field |
 | `news.editor.settype <Type>` | Set the type |
 | `news.editor.toggle <pin\|notify\|discord\|poll\|pollclosed\|audience\|expire\|polltimer>` | Editor options (the last three step through their choices) |
@@ -237,7 +250,7 @@ These are run by CUI buttons. They address announcements by their stable id, not
 
 ## Configuration (`oxide/config/NewsBroadcaster.json`)
 
-The file is read as it is: your values and themes are kept, and options it does not have yet are added with their defaults. Values are not checked or corrected, so keep them inside the ranges given below. If the file can't be read (a JSON typo), the console says so and the default settings are used until you fix it; the file itself is left alone. The `AutoCloseIn` text must keep its `%TIME_LEFT%` token.
+The file is read as it is: your values and themes are kept, and options it does not have yet are added with their defaults. Values are not checked or corrected, so keep them inside the ranges given below. If the file can't be read (a JSON typo), the console says so and the default settings are used until you fix it; the file itself is left alone, also when you pick a theme in game (that choice then lasts until the next reload). The `AutoCloseIn` text must keep its `%TIME_LEFT%` token.
 
 ```json
 {
@@ -308,7 +321,7 @@ The file is read as it is: your values and themes are kept, and options it does 
 | `MaxStoredAnnouncements` | `50` | Max posts kept. The oldest published, unpinned posts are removed first. Pinned posts, drafts and the newest post are never removed by this limit, so if pinned posts and drafts use it up, only the newest other post is kept (the console says so) |
 | `StripLinksFromBody` | `true` | Remove `http(s)://` and `www.` links from new post bodies (as the earlier builds did). Existing posts are never changed |
 | `PopupImageFrame` | `"Tall"` | `"Tall"` fills the popup's left column (the classic look). `"Wide"` uses a 16:9 frame so widescreen images aren't stretched |
-| `ArchiveThumbnails` | `true` | Show image thumbnails in the archive |
+| `ArchiveThumbnails` | `true` | Show image thumbnails in the archive and in News Management (needs ImageLibrary) |
 | `RoundedCorners` | `true` | Rounded, anti-aliased corners on panels, cards, the main button and the popup picture. `false` = square corners everywhere, and about 40% fewer UI elements per screen |
 
 ### Notification
@@ -371,7 +384,7 @@ Each theme has these `"R G B A"` (0–1) fields: `PanelBg`, `HeaderBg`, `Content
 
 - **Stat cards**: published posts (and how many are pinned), drafts, total reads (and the average per post), likes (as a share of reads) and poll votes (and how many polls are open).
 - **Tabs** with counts: ALL, PUBLISHED, DRAFTS, PINNED, POLLS. **Search** looks in titles and text. The **sort** button steps through NEWEST FIRST (pinned on top), OLDEST FIRST, MOST READ and MOST LIKED.
-- **Rows**: picture (when `ArchiveThumbnails` is on), title, badges (type, PINNED, DRAFT, POLL, group), date, author, `EDITED`, and in yellow when the post deletes itself or its poll closes. Then reads, likes and votes, and the buttons RESEND (PUBLISH for a draft), PIN, COPY, EDIT, DEL.
+- **Rows**: picture (when `ArchiveThumbnails` is on and ImageLibrary has it), title, badges (type, PINNED, DRAFT, POLL, group), date, author, `EDITED`, and in yellow when the post deletes itself or its poll closes. Then reads, likes and votes, and the buttons RESEND (PUBLISH for a draft), PIN, COPY, EDIT, DEL.
 - The view (tab, search, sort) is kept while you click around and starts fresh when you type `/news admin` again.
 
 ## Editor autosave
@@ -531,6 +544,10 @@ void AskPlayers()
 
 Stores announcements, each player's last-seen marker, each player's "mark all read" marker (`ReadAllUpTo`) each player's `/news settings` (`PlayerSettings`: `Sound`, `Popups`, `JoinPopup`) and each admin's unsaved editor (`EditorAutosaves`). Data files from the earlier builds are not converted: remove the old file before installing 1.0.0.
 
+
+If the file can't be read when the plugin loads (a JSON typo after a manual edit, a half-written file after a crash), the plugin starts empty, says so in the console and **does not write the file again**, so nothing in it is lost. Fix or delete the file and reload the plugin; until then nothing is saved, and an admin who opens News Management is told.
+
+The four lists of Steam IDs are written on one line each. That is ordinary JSON: a file with one id per line reads the same.
 | Field | Type | Description |
 |---|---|---|
 | `Id` | string | Stable id |
@@ -571,4 +588,7 @@ The repository includes `tools/test-harness/`, which compiles the plugin against
 - The popup body's scroll height is estimated from a characters-per-line guess. On very narrow (4:3) screens the last line of a very long post may sit close to the bottom edge.
 - Publishing at a set time (scheduled posts) is not part of this version; save a draft and publish it when it's time.
 - Polls are single-choice.
+- A post's text can be up to 12,000 characters (the game cannot draw more in one text). A title is up to 120.
+- The game shows a backslash in a text twice, and a backslash followed by `n` as a backslash and a line break. Use `/n` or Enter for a new line.
+- Straight double quotes are shown as typographic quotes.
 - A countdown's day count is drawn when the popup opens and redrawn when a day runs out; the seconds are counted by the player's game.

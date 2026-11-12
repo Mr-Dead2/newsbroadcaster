@@ -49,6 +49,11 @@
 - **Batched saves.** Likes, reads, votes and paid rewards are written together, 15 seconds after the first change and on every server save, however many players click.
 - **No idle timer.** One timer waits for the next auto-delete or poll closing; when nothing is scheduled, no timer runs.
 - **No LINQ, pooled lists.** Lists built for a screen come from the game's pool and go back to it; the pinned-first order is kept instead of being sorted for every draw.
+- **One toast for everyone.** A broadcast builds the toast once per language and sends the same data to every player, instead of building it again for each of them.
+- **Lean UI data.** Labels and other parts nobody refers to are sent without a name, the rest gets a short one. A screen is about 12% smaller on the wire than with Oxide's default 32-character names.
+- **In-place updates in one message.** A like, a vote, a countdown that runs out and the editor's counters replace their part of the screen in a single message.
+- **Compact data file.** The lists of who read and liked a post are written on one line each. With 3,000 readers a post the file is a third smaller and a save takes about half the time.
+- **Pictures stored once.** With ImageLibrary a picture is stored on the server once and players get it by id. List thumbnails are only drawn from that store: by link, the game downloads a picture again every time a screen is drawn.
 
 #### Fixed since the earlier builds
 - Clicking a button rebuilt the whole menu: it blinked and the mouse jumped back to the middle of the screen. Now only the content is swapped, in one step, and the cursor stays put.
@@ -58,6 +63,14 @@
 - ServerRewards points failed to pay on current Rust builds (wrapped player id).
 - Compiles on the November 2026 Rust update (new `FileStorage` API for the rounded-corner images, `StringView` console arguments).
 - `/n` broke normal words such as `w/new`.
+- A title, name, poll option or search that ended with a backslash stopped the whole screen from drawing (the game cannot read such a text). A space is added after it.
+- Double quotes in a text are sent as typographic quotes, which the game shows as they are.
+- The editor's hint about new lines broke its own line in game.
+- A countdown with exactly a whole number of days left restarted itself many times a second.
+- The outline of small flat boxes (switched-off toggles, check boxes, the search field) was hidden on two sides in game.
+- A picture could stick out one pixel past its rounded frame.
+- A data or config file that can't be read is never overwritten. The console says what to do, and an admin who opens News Management is told that nothing is being saved.
+- Texts longer than 12,000 characters are cut when they are entered: the game cannot draw more in one text.
 - An admin's editor was replaced by a forced popup when news was posted.
 - Players saw a post again as a popup after respawning even though they had already got it live.
 - Pinned posts could be deleted by the `MaxStoredAnnouncements` limit.

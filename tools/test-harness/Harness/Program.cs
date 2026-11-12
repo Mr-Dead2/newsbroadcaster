@@ -9,7 +9,8 @@ switch (mode)
     case "previews": Previews.Run(outDir); break;
     case "tests": Environment.ExitCode = Tests.Run(); break;
     case "animation": Animation.Run(outDir); break;
-    default: Console.WriteLine("modes: previews <dir> | tests | animation <timeline.json>"); break;
+    case "bench": Bench.Run(); break;
+    default: Console.WriteLine("modes: previews <dir> | tests | animation <timeline.json> | bench"); break;
 }
 
 static class Sample
@@ -36,6 +37,9 @@ static class Previews
     {
         Sim.ResetAll();
         H.Boot();
+        // A server with ImageLibrary, as most have: pictures are stored once and sent by id (here the id is the link,
+        // which is what the renderer looks its sample pictures up by).
+        H.Set("ImageLibrary", new FakePlugin("ImageLibrary") { Handler = (hook, args) => hook == "HasImage" ? (object)true : hook == "GetImage" ? args[0] : null });
         var admin = H.MakePlayer(76561198000000001, "DEDA", admin: true);
         var player = H.MakePlayer(76561198000000002, "Survivor", admin: false);
 
@@ -115,7 +119,7 @@ static class Previews
         Sim.Advance(30);
 
         // 1) Toast notification for a fresh broadcast
-        H.CallIfExists("ShowNotification", player, wipe);
+        H.Call("ShowNotification", player, wipe, null, null);
         H.Save(player, outDir, "01_notification");
         H.Console(player, "news.close.notif");
 
@@ -311,5 +315,91 @@ static class Animation
 
         File.WriteAllText(outPath, new JObject { ["duration"] = 21.0, ["frames"] = frames, ["files"] = H.StoredFilesJson() }.ToString(Newtonsoft.Json.Formatting.None));
         Console.WriteLine($"timeline: {frames.Count} frames -> {outPath}");
+    }
+}
+
+// What the plugin itself costs on the server: time and memory to build and serialise one screen, and to
+// handle one broadcast. The simulated client is switched off, so only plugin code is measured.
+static class Bench
+{
+    const System.Reflection.BindingFlags All = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+
+    static void Measure(string name, int runs, Action action)
+    {
+        // Warm up until the runtime has finished optimising the code, or the first screen looks slow.
+        for (int round = 0; round < 3; round++)
+        {
+            for (int i = 0; i < Math.Max(60, runs / 4); i++) action();
+            System.Threading.Thread.Sleep(150);
+        }
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < runs; i++) action();
+        watch.Stop();
+        bytes = GC.GetAllocatedBytesForCurrentThread() - bytes;
+        Console.WriteLine($"  {name,-46} {watch.Elapsed.TotalMilliseconds * 1000 / runs,8:0} us   {bytes / 1024.0 / runs,8:0.0} KB");
+    }
+
+    public static void Run()
+    {
+        Sim.ResetAll();
+        Sim.Quiet = true;
+        H.Boot();
+        H.Set("ImageLibrary", new FakePlugin("ImageLibrary") { Handler = (hook, args) => hook == "HasImage" ? (object)true : hook == "GetImage" ? (object)"1234567890" : null });
+        var admin = H.MakePlayer(76561198000000001, "DEDA", admin: true);
+        var player = H.MakePlayer(76561198000000002, "Survivor");
+        H.CfgSet("General.MaxStoredAnnouncements", 500);
+        Sim.SkipClient = true;
+
+        // 200 stored posts: every 4th with a picture, every 5th with a poll, a few pinned, read by 300 players.
+        for (int i = 0; i < 200; i++)
+        {
+            var options = new Dictionary<string, object> { ["title"] = "Post number " + i, ["text"] = "Some text for post " + i + ". " + new string('x', 200), ["type"] = new[] { "Info", "Event", "Update", "Alert", "Warning" }[i % 5], ["notify"] = false };
+            if (i % 4 == 0) options["imageUrl"] = "https://img.example/p" + i + ".png";
+            if (i % 5 == 0) options["pollOptions"] = new[] { "Yes", "No", "Maybe" };
+            if (i % 50 == 0) options["pinned"] = true;
+            H.Call("API_CreateNews", options);
+        }
+        foreach (var ann in H.Announcements)
+            for (ulong reader = 0; reader < 300; reader++) ((HashSet<ulong>)H.AGet(ann, "ReadByPlayers")).Add(76561198100000000 + reader);
+
+        object newest = H.Ann(0);
+        object direct = Enum.Parse(H.T.GetNestedType("PopupOrigin", All), "Direct");
+        var showHistory = H.T.GetMethod("ShowHistory", All);
+        var showPopup = H.T.GetMethod("ShowPopup", All);
+        var showAdmin = H.T.GetMethod("ShowAdminList", All);
+        var buildToast = H.T.GetMethod("BuildToast", All);
+        var countUnread = H.T.GetMethod("CountUnread", All);
+        var save = H.T.GetMethod("SaveAnnouncements", All);
+        var check = H.T.GetMethod("CheckScheduled", All);
+
+        Console.WriteLine("200 stored posts, per call:");
+        Measure("archive page (ShowHistory)", 2000, () => showHistory.Invoke(H.P, new object[] { player, 0 }));
+        H.Console(player, "news.search number 1");
+        Measure("archive page with a search", 2000, () => showHistory.Invoke(H.P, new object[] { player, 0 }));
+        H.Console(player, "news.search.clear");
+        Measure("popup (ShowPopup)", 2000, () => showPopup.Invoke(H.P, new object[] { player, newest, direct, false }));
+        Measure("toast (BuildToast, once per language)", 2000, () => buildToast.Invoke(H.P, new object[] { player, newest, "Title", "NewsNotificationUI.1" }));
+        Measure("News Management (ShowAdminList)", 1000, () => showAdmin.Invoke(H.P, new object[] { admin, 0 }));
+        Measure("unread count (CountUnread)", 5000, () => countUnread.Invoke(H.P, new object[] { player }));
+        Measure("schedule check, nothing due", 5000, () => check.Invoke(H.P, null));
+        Measure("save the data file (300 readers a post)", 20, () => save.Invoke(H.P, null));
+
+        // A big server late in a wipe: the newest 50 posts were each read by 3000 players and liked by 500.
+        for (int n = 0; n < 50; n++)
+        {
+            var reads = (HashSet<ulong>)H.AGet(H.Ann(n), "ReadByPlayers");
+            var likes = (HashSet<ulong>)H.AGet(H.Ann(n), "LikedPlayers");
+            for (ulong reader = 0; reader < 3000; reader++) reads.Add(76561198200000000 + reader);
+            for (ulong liker = 0; liker < 500; liker++) likes.Add(76561198200000000 + liker);
+        }
+        Measure("save the data file (3000 readers a post)", 10, () => save.Invoke(H.P, null));
+        Console.WriteLine($"  data file size: {Sim.DataFiles["NewsBroadcaster_Data"].Length / 1024} KB");
+        Measure("archive page, 3000 readers a post", 2000, () => showHistory.Invoke(H.P, new object[] { player, 0 }));
+
+        for (ulong i = 0; i < 98; i++) H.MakePlayer(76561198000001000 + i, "Player" + i);
+        Console.WriteLine("100 players online:");
+        Measure("broadcast one post (toast to everyone)", 50, () => H.Call("NotifyPlayers", newest));
     }
 }

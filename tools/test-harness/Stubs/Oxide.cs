@@ -132,8 +132,12 @@ namespace Oxide.Core.Libraries
 
         public bool PermissionExists(string name, Plugins.Plugin owner = null) => registered.Contains(name);
 
+        // On a server every one of these is a linear scan over the player's permissions and groups: tests count them.
+        public static int Lookups;
+
         public bool UserHasPermission(string id, string perm)
         {
+            Lookups++;
             if (string.IsNullOrEmpty(perm)) return false;
             if (DefaultGroupPerms.Contains(perm)) return true;
             return UserPerms.TryGetValue(id ?? "", out var set) && set.Contains(perm);
@@ -167,6 +171,7 @@ namespace Oxide.Core.Libraries
         public void RemoveUserGroup(string playerId, string groupName) { if (GroupMembers.TryGetValue(groupName, out var m)) m.Remove(playerId); }
         public bool UserHasGroup(string playerId, string groupName)
         {
+            Lookups++;
             if (!GroupExists(groupName)) return false;
             return groupName.Equals("default", StringComparison.OrdinalIgnoreCase) || GroupMembers[groupName].Contains(playerId);
         }
@@ -175,6 +180,11 @@ namespace Oxide.Core.Libraries
     public class Lang : Library
     {
         private readonly Dictionary<string, Dictionary<string, string>> messages = new Dictionary<string, Dictionary<string, string>>();
+        // Test access: the library in use, and the language each player has set (default "en").
+        public static Lang Instance;
+        public static readonly Dictionary<string, string> UserLanguages = new Dictionary<string, string>();
+        public Lang() { Instance = this; UserLanguages.Clear(); }
+        public Dictionary<string, string> Messages(string lang) => messages.TryGetValue(lang, out var dict) ? dict : new Dictionary<string, string>();
         public void RegisterMessages(Dictionary<string, string> newMessages, Plugins.Plugin plugin, string lang = "en")
         {
             if (!messages.TryGetValue(lang, out var dict)) messages[lang] = dict = new Dictionary<string, string>();
@@ -184,12 +194,13 @@ namespace Oxide.Core.Libraries
         public string GetMessage(string key, Plugins.Plugin plugin, string userId = null)
         {
             if (key == null) return null;
+            if (messages.TryGetValue(GetLanguage(userId), out var own) && own.TryGetValue(key, out var translated)) return translated;
             if (messages.TryGetValue("en", out var dict) && dict.TryGetValue(key, out var v)) return v;
             Sim.MissingLangKeys.Add(key);
             return key;
         }
 
-        public string GetLanguage(string userId = null) => "en";
+        public string GetLanguage(string userId = null) => userId != null && UserLanguages.TryGetValue(userId, out var language) ? language : "en";
         public string[] GetLanguages(Plugins.Plugin plugin = null) => messages.Keys.ToArray();
     }
 }
