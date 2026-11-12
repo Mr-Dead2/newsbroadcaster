@@ -56,9 +56,18 @@ namespace Oxide.Core
         public static OxideMod Oxide { get; } = new OxideMod();
         public static double Clock;   // harness-only
 
+        // Like Oxide: a hook is called on every loaded plugin that has a method of that name taking those arguments.
         public static object CallHook(string hook, params object[] args)
         {
             Sim.Hooks.Add(new KeyValuePair<string, object[]>(hook, args));
+            foreach (var listener in Sim.HookListeners.ToArray())
+            {
+                var method = listener.GetType().GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)
+                    .FirstOrDefault(m => m.Name == hook && m.GetParameters().Length == args.Length);
+                if (method == null) continue;
+                try { method.Invoke(listener, args); }
+                catch (System.Reflection.TargetInvocationException tie) { Sim.Log($"ERR Failed to call hook '{hook}' on plugin '{listener.GetType().Name}' ({tie.InnerException})"); }
+            }
             return null;
         }
 

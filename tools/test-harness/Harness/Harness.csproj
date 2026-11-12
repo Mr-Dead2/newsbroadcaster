@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="../Stubs/Stubs.csproj" />
     <ProjectReference Include="../Plugin/Plugin.csproj" />
+    <ProjectReference Include="../TestPlugin/TestPlugin.csproj" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 </Project>

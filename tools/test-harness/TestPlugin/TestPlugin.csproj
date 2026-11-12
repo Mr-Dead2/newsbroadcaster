@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Compiles the in-game test helper the way Oxide would see it: C# 7.0, .NET Framework 4.8 reference surface. -->
+  <PropertyGroup>
+    <TargetFrameworks>net48;net8.0</TargetFrameworks>
+    <PluginLangVersion Condition="'$(PluginLangVersion)' == ''">7</PluginLangVersion>
+    <LangVersion>$(PluginLangVersion)</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>NewsBroadcasterTestPlugin</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PluginFile Condition="'$(PluginFile)' == ''">$(MSBuildThisFileDirectory)../../ingame-test/NewsBroadcasterTest.cs</PluginFile>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(PluginFile)" Link="NewsBroadcasterTest.cs" />
+    <ProjectReference Include="../Stubs/Stubs.csproj" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+</Project>

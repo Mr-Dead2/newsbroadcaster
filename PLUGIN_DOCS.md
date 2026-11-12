@@ -76,6 +76,7 @@ Requires **Oxide (uMod)**. Other plugins are only needed for the features that u
 - The notification sound played at the player's position for everyone nearby; it is now private.
 - ServerRewards points failed to pay on current Rust builds (wrapped player id).
 - `/n` broke normal words such as `w/new`.
+- Picking a theme said "Theme 'Facepunch.StringView[] 0 1' not found", and the archive and News Management searches looked for that text instead of what was typed (current Rust passes command arguments as a new type).
 - A title, name, poll option or search that ended with a backslash stopped the whole screen from drawing (the game cannot read such a text). A space is added after it.
 - Double quotes in a text are sent as typographic quotes, which the game shows as they are.
 - The editor's hint about new lines broke its own line in game.

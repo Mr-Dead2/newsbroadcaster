@@ -18,6 +18,10 @@ dotnet build Plugin/Plugin.csproj -f net48 --no-incremental -nologo -clp:ErrorsO
 echo "== strict compile (C# 6, net48)"
 dotnet build Plugin/Plugin.csproj -f net48 --no-incremental -nologo -clp:ErrorsOnly -p:PluginLangVersion=6
 
+echo "== in-game test helper (tools/ingame-test), C# 7 and C# 6"
+dotnet build TestPlugin/TestPlugin.csproj -f net48 --no-incremental -nologo -clp:ErrorsOnly
+dotnet build TestPlugin/TestPlugin.csproj -f net48 --no-incremental -nologo -clp:ErrorsOnly -p:PluginLangVersion=6
+
 echo "== functional tests"
 dotnet build Harness/Harness.csproj -nologo -clp:ErrorsOnly -o bin/harness
 dotnet bin/harness/Harness.dll tests

@@ -1648,6 +1648,104 @@ static class Tests
         Check(Oxide.Core.Libraries.Permission.Lookups == permissionChecks, "a player who respawns with nothing new costs no permission lookup");
 
         // ---------------------------------------------------------------
+        Section("In-game test helper (tools/ingame-test/NewsBroadcasterTest.cs)");
+        Fresh();
+        var helper = new Oxide.Plugins.NewsBroadcasterTest();
+        var bridge = new FakePlugin("NewsBroadcaster") { Handler = (hook, args) => H.Call(hook, args) };
+        var helperFlags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+        typeof(Oxide.Plugins.NewsBroadcasterTest).GetField("NewsBroadcaster", helperFlags).SetValue(helper, bridge);
+        Action<string, object[]> helperCall = (name, args) => typeof(Oxide.Plugins.NewsBroadcasterTest).GetMethods(helperFlags).First(m => m.Name == name && m.GetParameters().Length == args.Length).Invoke(helper, args);
+        helperCall("LoadConfig", new object[0]);
+        helperCall("Init", new object[0]);
+        helperCall("OnServerInitialized", new object[0]);
+        Sim.HookListeners.Add(helper);
+        Func<BasePlayer, string, string> nbtest = (caller, line) =>
+        {
+            int sp = line.IndexOf(' ');
+            string cmd = sp < 0 ? line : line.Substring(0, sp);
+            var method = typeof(Oxide.Plugins.NewsBroadcasterTest).GetMethods(helperFlags).First(m => m.GetCustomAttributes(typeof(Oxide.Plugins.ConsoleCommandAttribute), false).Cast<Oxide.Plugins.ConsoleCommandAttribute>().Any(a => a.Command == cmd));
+            int before = Sim.ConsoleReplies.Count;
+            try { method.Invoke(helper, new object[] { new ConsoleSystem.Arg(caller?.net.connection, sp < 0 ? "" : line.Substring(sp + 1)) }); }
+            catch (System.Reflection.TargetInvocationException tie) { throw new Exception($"{line} threw: {tie.InnerException}", tie.InnerException); }
+            Sim.RunNextTicks();
+            return string.Join("\n", Sim.ConsoleReplies.Skip(before));
+        };
+
+        string selfTest = nbtest(admin, "nbtest.run");
+        Check(selfTest.Contains(" 0 failed") && !selfTest.Contains("FAIL"), "nbtest.run passes against this build of the plugin" + (selfTest.Contains("FAIL") ? ": " + string.Join(" | ", selfTest.Split('\n').Where(l => l.Contains("FAIL"))) : ""));
+        Check(H.Announcements.Count == 0, "...and leaves no post behind");
+        string consoleSelfTest = nbtest(null, "nbtest.run");
+        Check(consoleSelfTest.Contains(" 0 failed"), "nbtest.run from the server console too (the checks that need a player are skipped)");
+        Check(nbtest(player, "nbtest.seed").Contains("admins only") && H.Announcements.Count == 0, "a normal player can't use it");
+
+        Check(nbtest(admin, "nbtest.seed notify").Contains("12 of 12") && H.Announcements.Count == 12 && ToastOpen(player), "nbtest.seed makes 12 posts and announces the last one");
+        Check(nbtest(admin, "nbtest.junk").Contains("9 of 9"), "nbtest.junk makes 9 awkward posts");
+        var longReply = System.Text.RegularExpressions.Regex.Match(nbtest(admin, "nbtest.long 20000"), @"(\d+) characters stored");
+        Check(longReply.Success && int.Parse(longReply.Groups[1].Value) <= 12000 && int.Parse(longReply.Groups[1].Value) > 11000, "nbtest.long: a 20000-character text is cut to at most 12000 (" + longReply.Value + ")");
+        nbtest(admin, "nbtest.group");
+        nbtest(admin, "nbtest.poll 0");
+        nbtest(admin, "nbtest.countdown 30");
+        foreach (var testPost in H.Announcements.Cast<object>().ToList())
+        {
+            if ((bool)H.AGet(testPost, "Draft")) continue;
+            H.Console(admin, $"news.view {H.Id(testPost)}");
+        }
+        H.Chat(player, "news");
+        for (int pageNo = 0; pageNo < 6; pageNo++) Nav(player, $"news.page {pageNo}");
+        H.Chat(admin, "news", "admin");
+        Check(CuiWarnings().Count == 0, "every test post opens without a UI warning, and so do the archive and News Management" + (CuiWarnings().Count > 0 ? ": " + string.Join(" | ", CuiWarnings().Take(3)) : ""));
+        Sim.Advance(40);
+        H.Console(player, $"news.view {H.Id(Ann0)}");
+        Check(CuiWarnings().Count == 0, "the countdown post after its time is up");
+        nbtest(admin, "nbtest.hooks on");
+        H.Console(player, $"news.like {H.Id(Ann0)}");
+        Check(Sim.LogLines.Any(l => l.Contains("hook OnNewsLiked") && l.Contains("liked by Survivor") && !l.Contains("MISSING")), "nbtest.hooks prints the hooks with full payloads");
+        nbtest(admin, "nbtest.hooks off");
+        Check(nbtest(admin, "nbtest.list").Contains("test post") && nbtest(admin, "nbtest.unread Survivor").Contains("unread") && nbtest(admin, "nbtest.check").Contains("NewsBroadcaster: loaded"), "nbtest.list, nbtest.unread and nbtest.check answer");
+        Check(nbtest(admin, "nbtest.show Survivor").Contains("opened") && H.HasElement(player, "NewsBroadcasterUI.Main"), "nbtest.show opens the newest post for a player");
+        Check(nbtest(admin, "nbtest.bench 20").Contains("API_GetUnreadCount"), "nbtest.bench runs");
+        int beforeFlood = H.Announcements.Count;
+        nbtest(admin, "nbtest.flood 3 1");
+        Sim.Advance(5);
+        Check(H.Announcements.Count == beforeFlood + 3 && player.net != null && H.Live(player).Count(e => (string)e["parent"] == "Hud") <= 1, "nbtest.flood sends its posts on a timer, toasts replace each other");
+        Check(nbtest(admin, "nbtest.clear").Contains("test posts deleted") && H.Announcements.Count == 0, "nbtest.clear deletes every test post (drafts included)");
+        foreach (var unknownCommand in new[] { "nbtest.show nobody", "nbtest.unread nobody", "nbtest.show Survivor not-an-id", "nbtest.long -5", "nbtest.countdown -1", "nbtest.flood 999 0", "nbtest.poll -3" })
+            nbtest(admin, unknownCommand);
+        Sim.Advance(20);
+        nbtest(admin, "nbtest.clear");
+        Check(!Sim.LogLines.Any(l => l.StartsWith("ERR")), "bad arguments don't throw");
+        typeof(Oxide.Plugins.NewsBroadcasterTest).GetField("NewsBroadcaster", helperFlags).SetValue(helper, null);
+        Check(nbtest(admin, "nbtest.seed").Contains("NewsBroadcaster is not loaded"), "without NewsBroadcaster it says so instead of failing");
+        helperCall("Unload", new object[0]);
+        Sim.HookListeners.Clear();
+
+        // ---------------------------------------------------------------
+        Section("Console arguments are StringView on current Rust");
+        Fresh();
+        Post("Raid base event this weekend", "Bring friends");
+        Post("Wipe day", "Fresh map");
+        H.Console(admin, "news.admin.themes 0");
+        var themeButtons = H.Commands(admin).Where(command => command.StartsWith("news.admin.settheme ")).ToList();
+        bool everyTheme = themeButtons.Count == 6;
+        foreach (var button in themeButtons)
+        {
+            H.Console(admin, button);
+            string picked = (string)H.AGet(H.Config, "SelectedTheme");
+            everyTheme &= button.StartsWith("news.admin.settheme " + picked + " ") && H.HasElement(admin, "NewsBroadcasterUI.Themes");
+        }
+        Check(everyTheme && !H.ChatOf(admin).Any(m => m.Contains("not found") || m.Contains("StringView")), "clicking each of the 6 theme cards picks that theme");
+        H.Console(player, "news.page 0 reset");
+        Nav(player, "news.search raid base event");
+        Sim.Advance(1);
+        Check(H.Texts(player).Any(t => t.Contains("RAID BASE EVENT")) && !H.Texts(player).Any(t => t.Contains("WIPE DAY")), "an archive search of several words finds the post");
+        H.Console(admin, "news.admin");
+        Nav(admin, "news.admin.search wipe day");
+        Sim.Advance(1);
+        Check(H.Texts(admin).Any(t => t.Contains("WIPE DAY")) && !H.Texts(admin).Any(t => t.Contains("RAID BASE")), "a News Management search of several words finds the post");
+        Check(!Sim.ConsoleReplies.Concat(Sim.ChatLog.Values.SelectMany(l => l)).Concat(Sim.Clients.Values.SelectMany(c => c.Elements).Select(e => e.ToString())).Any(t => t.Contains("StringView")),
+            "no reply, chat line or screen shows 'StringView'");
+
+        // ---------------------------------------------------------------
         Section("Garbage input: every command, every caller");
         Fresh();
         Sim.Permission.CreateGroup("vip", "VIP", 0);

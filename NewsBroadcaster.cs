@@ -839,6 +839,21 @@ namespace Oxide.Plugins
             return values;
         }
 
+        private static int ArgCount(ConsoleSystem.Arg arg) => arg.Args == null ? 0 : arg.Args.Length;
+
+        private static string JoinArgs(ConsoleSystem.Arg arg, int from, int to)
+        {
+            if (from >= to) return string.Empty;
+            if (to - from == 1) return arg.GetString(from);
+            var text = new StringBuilder();
+            for (int i = from; i < to; i++)
+            {
+                if (i > from) text.Append(' ');
+                text.Append(arg.GetString(i));
+            }
+            return text.ToString();
+        }
+
         private string AuthorOf(ConsoleSystem.Arg arg) => arg.Connection != null ? arg.Connection.username : config.General.ServerName;
 
         private HashSet<string> GetAdminSelection(ulong userId)
@@ -1952,7 +1967,7 @@ namespace Oxide.Plugins
             var player = arg.Player();
             if (!RequireView(player)) return;
 
-            string query = arg.Args == null ? string.Empty : string.Join(" ", arg.Args).Trim();
+            string query = JoinArgs(arg, 0, ArgCount(arg)).Trim();
             GetArchiveFilter(player.userID).Query = LimitText(query, MaxSearchChars).Trim();
             archivePages[player.userID] = 0;
             RedrawThrottled(player, UiScreen.Archive);
@@ -2235,7 +2250,7 @@ namespace Oxide.Plugins
             var player = AdminPlayer(arg);
             if (player == null) return;
 
-            string query = arg.Args == null ? string.Empty : string.Join(" ", arg.Args);
+            string query = JoinArgs(arg, 0, ArgCount(arg));
             var view = GetAdminView(player.userID);
             view.Query = LimitText(query.Trim(), MaxSearchChars).Trim();
             view.Page = 0;
@@ -2682,7 +2697,7 @@ namespace Oxide.Plugins
             }
             else
             {
-                value = string.Join(" ", arg.Args, 1, arg.Args.Length - 1);
+                value = JoinArgs(arg, 1, arg.Args.Length);
             }
 
             var ann = session.Draft;
@@ -5244,8 +5259,8 @@ namespace Oxide.Plugins
             }
 
             int words = arg.Args.Length, page = 0;
-            if (words > 1 && int.TryParse(arg.Args[words - 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out page)) words--;
-            string themeName = string.Join(" ", arg.Args, 0, words).Trim('"', '\\', ' ');
+            if (words > 1 && int.TryParse(arg.GetString(words - 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out page)) words--;
+            string themeName = JoinArgs(arg, 0, words).Trim('"', '\\', ' ');
             string matchedTheme = null;
             foreach (string key in config.Themes.Keys)
                 if (string.Equals(key, themeName, StringComparison.OrdinalIgnoreCase)) { matchedTheme = key; break; }
